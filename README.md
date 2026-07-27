@@ -89,10 +89,16 @@ parts are swappable:
   interference *independently* (per-gate path-weight vs net ledger, per-state
   destruction map; diagonals provably destroy 0; H·H destroys exactly 1.0);
   [`DeviceState`](src/backend/device.rs) reproduces the physical operation
-  order of a real machine — coupling [`Topology`] (linear/ring/grid/custom),
-  SWAP-routing that walks entanglement stepwise through adjacency with a
-  persistent logical→physical mapping, per-qubit latency clocks, and a full
-  physical op log — while answering in logical indices identical to dense.
+  order of a real machine — coupling [`Topology`] with real register
+  geometries (`heavy_hex_falcon27`, `sycamore_like`, `complete` all-to-all,
+  plus linear/ring/grid/custom), SWAP-routing that walks entanglement
+  stepwise through adjacency with a persistent logical→physical mapping,
+  per-qubit latency clocks driven by a [`LatencyMap`] (era-representative
+  `DurationModel` presets + per-site/per-edge calibration overrides), an
+  injectable inner representation (chip-scale geometry over a sparse
+  inner: GHZ across all 54 Sycamore sites), a full physical op log, and
+  `elapsed`/`serial_time` as the measured parallelism ratio — while
+  answering in logical indices identical to dense.
 - **Local frames** ([`FramedState`](src/backend/frames.rs)) — deferred
   per-qubit basis changes as representation metadata over *any* inner
   backend: 1q gates absorb for free (inverse pairs cancel without touching
@@ -261,7 +267,8 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 244 tests (240 across twenty-two suites + 4 doctests);
+`cargo test` runs 250 tests (43 unit + 203 across twenty-two integration
+suites + 4 doctests);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
 entirely trivial accessors and defensive guards:
 
@@ -320,6 +327,17 @@ entirely trivial accessors and defensive guards:
   armed time budgets abort a single dense gate mid-sweep, the mera SVD
   path and scheduled runs — promptly, with measured elapsed times — and
   the identical runs complete once the budget lifts.
+- **device_geometries** — real machines reproduced structurally
+  (Falcon-27 heavy-hex: 27 sites, 28 couplers, degree ≤ 3, the known
+  adjacencies; Sycamore-class 54-site diagonal lattice; ion-trap
+  all-to-all) and operationally: swap cost is a property of the coupling
+  map while the amplitudes stay bit-for-bit on the reference; a
+  per-coupler latency override on the critical path moves the clock by
+  *exactly* the override and off-path overrides move nothing;
+  parallelism is the measured `serial_time/elapsed` ratio; the three era
+  clocks rescale an *identical* physical op sequence; chip-scale
+  geometry (GHZ across all 54 Sycamore sites) runs over a sparse inner
+  in under a megabyte.
 - **gate_matrices** — every standard gate vs literature values; exact
   per-algebra gate-support lists.
 - **gate_identities** — HXH = Z and friends, SWAP = 3·CX, the Nielsen–Chuang
@@ -481,7 +499,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  verify_models, frames_demo, clifford_space, clifford_lift,
                  coarse_register (mera + Ball), absolute_reference (D[ω]
                  vs every backend), adaptive_feedback (recursive trees +
-                 frame repair), capacity_probe (real walls, measured)
+                 frame repair), capacity_probe (real walls, measured),
+                 device_reproduction (real geometries × latency maps)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

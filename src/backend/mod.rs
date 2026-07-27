@@ -34,7 +34,7 @@ pub use clifford_frame::{
     CLIFFORD_RECOGNITION_MAX,
 };
 pub use dense::{DenseState, DENSE_MAX_QUBITS};
-pub use device::{ArityPolicy, DeviceState, DurationModel, PhysicalOp, Topology};
+pub use device::{ArityPolicy, DeviceState, DurationModel, LatencyMap, PhysicalOp, Topology};
 pub use factored::{FactoredState, FACTORED_MAX_QUBITS, FACTOR_MAX_QUBITS};
 pub use frames::{FrameStats, FramedState, FRAME_CONJUGATION_MAX};
 pub use interference::{InterferenceRecord, InterferenceState};

@@ -95,8 +95,8 @@ pub mod prelude {
         max_amplitude_deviation, pauli_expectation, AdaptiveState, ArityPolicy, Backend,
         BackendRegistry, CliffordFrameStats, CliffordFramedState, DenseState, DeviceState,
         DurationModel, FactoredState, FrameStats, FramedState, InterferenceRecord,
-        InterferenceState, MeraConfig, MeraState, MpsConfig, MpsState, PauliString, PhysicalOp,
-        SparseState, Topology,
+        InterferenceState, LatencyMap, MeraConfig, MeraState, MpsConfig, MpsState, PauliString,
+        PhysicalOp, SparseState, Topology,
     };
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
     pub use crate::conformance::{

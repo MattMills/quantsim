@@ -233,11 +233,28 @@ entries, each a small self-contained `Scalar` impl plus tests:
 
 ## Operational-model extensions
 
-- **Device realism** — the `DeviceState` routing/latency model is exact and
-  noiseless; natural next steps are per-edge gate fidelities and idle
-  decoherence (needs the density/trajectory machinery below), calibration
-  data import, and smarter routing (lookahead / SABRE-style) measured
-  against the current greedy BFS walk by `swap_count`/`elapsed`.
+- **Device realism — geometry + latency maps SHIPPED**: `Topology` now
+  reproduces real register geometries (`heavy_hex_falcon27` — the IBM
+  Falcon-r4 lattice, 27 sites / 28 couplers / degree ≤ 3;
+  `sycamore_like` diagonal lattices; `complete` trapped-ion all-to-all)
+  and `LatencyMap` carries their operation-latency maps: era-preset
+  `DurationModel`s (`ibm_falcon_like` / `sycamore_like` /
+  `ion_trap_like`, ns ticks) plus per-site and per-edge calibration
+  overrides. `DeviceState::with_latency` injects the inner
+  representation (chip-scale geometry over a sparse inner), and
+  `serial_time`/`elapsed` measures how much parallelism the geometry
+  admitted (`tests/device_geometries.rs`,
+  `examples/device_reproduction.rs`). The model stays exact and
+  noiseless; next rungs, in order of leverage:
+  - **latency-aware routing** — routing is still latency-blind BFS by
+    edge count; the ring demonstration in `device_reproduction`
+    measures the cost (an equal-hop detour around a 10×-slow coupler
+    goes unused). A Dijkstra walk over `LatencyMap` swap costs, then
+    lookahead / SABRE-style, measured against the BFS baseline by
+    `swap_count`/`elapsed`.
+  - calibration data import (per-coupler CSV/JSON → `LatencyMap`).
+  - per-edge gate fidelities and idle decoherence (needs the
+    density/trajectory machinery below).
 - **Interference histories** — `InterferenceState` aggregates per gate and
   per output state; a Feynman-path variant keeping (bounded) contribution
   histories would let destructive interference be attributed to *pairs of

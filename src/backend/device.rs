@@ -25,6 +25,27 @@
 //! between rejecting them ([`ArityPolicy::Reject`]) and applying them as
 //! "virtual" ops with a latency charge ([`ArityPolicy::Virtual`], default —
 //! keeps the full gate registry usable while you study routing).
+//!
+//! **Reproducing existing machines.** [`Topology`] ships the coupling
+//! maps of real register geometries — [`Topology::heavy_hex_falcon27`]
+//! (the 27-qubit IBM Falcon-r4 heavy-hex lattice),
+//! [`Topology::sycamore_like`] (the diagonal-coupler lattice of the
+//! Sycamore family), [`Topology::complete`] (trapped-ion all-to-all) —
+//! and [`LatencyMap`] carries their operation-latency maps: a base
+//! [`DurationModel`] (era-representative presets:
+//! [`DurationModel::ibm_falcon_like`], [`DurationModel::sycamore_like`],
+//! [`DurationModel::ion_trap_like`]; ticks are nanoseconds) plus
+//! **per-site and per-edge overrides**, because real calibration data is
+//! heterogeneous. [`DeviceState::with_latency`] additionally takes the
+//! inner state representation by value, so chip-scale geometry (GHZ
+//! across all 54 Sycamore sites) runs over a sparse inner instead of a
+//! 2^54 dense vector. [`DeviceState::elapsed`] is the schedule length
+//! under per-qubit clocks and [`DeviceState::serial_time`] the
+//! no-parallelism total — their ratio measures how much parallelism the
+//! geometry admitted. Routing is currently latency-blind (BFS by edge
+//! count); the slow-edge demonstration in
+//! `examples/device_reproduction.rs` measures the cost of that, which
+//! is the roadmap motivation for latency-aware routing.
 
 use super::{validate_apply, validate_apply_diagonal, Backend};
 use crate::backend::dense::DenseState;
@@ -77,6 +98,133 @@ impl Topology {
             }
         }
         Self::custom(n, &edges).expect("grid edges are valid")
+    }
+
+    /// All-to-all connectivity on `n` sites — the trapped-ion register
+    /// geometry (every pair shares a gate; routing never swaps).
+    pub fn complete(n: usize) -> Self {
+        let mut edges = Vec::new();
+        for a in 0..n {
+            for b in (a + 1)..n {
+                edges.push((a, b));
+            }
+        }
+        Self::custom(n, &edges).expect("complete-graph edges are valid")
+    }
+
+    /// The 27-qubit heavy-hex coupling map of the IBM Falcon r4 family
+    /// (the lattice of e.g. the Montreal/Mumbai-class devices): 28
+    /// couplers, maximum degree 3.
+    pub fn heavy_hex_falcon27() -> Self {
+        const EDGES: [(usize, usize); 28] = [
+            (0, 1),
+            (1, 2),
+            (1, 4),
+            (2, 3),
+            (3, 5),
+            (4, 7),
+            (5, 8),
+            (6, 7),
+            (7, 10),
+            (8, 9),
+            (8, 11),
+            (10, 12),
+            (11, 14),
+            (12, 13),
+            (12, 15),
+            (13, 14),
+            (14, 16),
+            (15, 18),
+            (16, 19),
+            (17, 18),
+            (18, 21),
+            (19, 20),
+            (19, 22),
+            (21, 23),
+            (22, 25),
+            (23, 24),
+            (24, 25),
+            (25, 26),
+        ];
+        Self::custom(27, &EDGES).expect("falcon-27 edges are valid")
+    }
+
+    /// The induced sub-map of [`Topology::heavy_hex_falcon27`] on its
+    /// first `n` sites (a connected corner of the chip for `n ≥ 2`) —
+    /// the "qubit selection" step of running a small circuit on a big
+    /// device.
+    pub fn heavy_hex_falcon_corner(n: usize) -> Result<Self> {
+        let full = Self::heavy_hex_falcon27();
+        if n == 0 || n > full.num_sites() {
+            return Err(Error::QubitOutOfRange {
+                qubit: n,
+                num_qubits: full.num_sites(),
+            });
+        }
+        let mut edges = Vec::new();
+        for a in 0..n {
+            for &b in &full.adjacency[a] {
+                if b < n && a < b {
+                    edges.push((a, b));
+                }
+            }
+        }
+        Self::custom(n, &edges)
+    }
+
+    /// A diagonal-coupler lattice of the Sycamore family: `rows × cols`
+    /// sites, each coupled to its vertical neighbor and one alternating
+    /// diagonal neighbor per row parity (maximum degree 4).
+    /// `sycamore_like(6, 9)` is the 54-site Sycamore-class geometry.
+    pub fn sycamore_like(rows: usize, cols: usize) -> Self {
+        let n = rows * cols;
+        let site = |r: usize, c: usize| r * cols + c;
+        let mut edges = Vec::new();
+        for r in 0..rows.saturating_sub(1) {
+            for c in 0..cols {
+                edges.push((site(r, c), site(r + 1, c)));
+                if r % 2 == 0 {
+                    if c + 1 < cols {
+                        edges.push((site(r, c), site(r + 1, c + 1)));
+                    }
+                } else if c > 0 {
+                    edges.push((site(r, c), site(r + 1, c - 1)));
+                }
+            }
+        }
+        Self::custom(n, &edges).expect("sycamore-like edges are valid")
+    }
+
+    /// Maximum vertex degree — 3 for heavy-hex, 4 for the diagonal
+    /// lattice, `n − 1` for all-to-all.
+    pub fn max_degree(&self) -> usize {
+        self.adjacency.iter().map(|a| a.len()).max().unwrap_or(0)
+    }
+
+    /// Number of undirected couplers.
+    pub fn num_edges(&self) -> usize {
+        self.adjacency.iter().map(|a| a.len()).sum::<usize>() / 2
+    }
+
+    /// Whether every site can reach every other through couplers.
+    pub fn is_connected(&self) -> bool {
+        if self.n == 0 {
+            return true;
+        }
+        let mut seen = vec![false; self.n];
+        let mut queue = std::collections::VecDeque::from([0usize]);
+        seen[0] = true;
+        let mut count = 1;
+        while let Some(site) = queue.pop_front() {
+            for &next in &self.adjacency[site] {
+                if !seen[next] {
+                    seen[next] = true;
+                    count += 1;
+                    queue.push_back(next);
+                }
+            }
+        }
+        count == self.n
     }
 
     /// Arbitrary coupling map from an edge list.
@@ -164,6 +312,130 @@ impl Default for DurationModel {
     }
 }
 
+impl DurationModel {
+    /// Era-representative superconducting timings of the IBM Falcon
+    /// family, in nanoseconds (1q ≈ 35 ns, CX ≈ 450 ns, SWAP = 3·CX,
+    /// readout ≈ 860 ns). Representative of published calibrations of
+    /// that hardware generation, not a specific machine's live data.
+    pub fn ibm_falcon_like() -> Self {
+        DurationModel {
+            one_q: 35,
+            two_q: 450,
+            swap: 1350,
+            measure: 860,
+        }
+    }
+
+    /// Era-representative Sycamore-class timings, in nanoseconds
+    /// (1q ≈ 25 ns, 2q ≈ 32 ns, SWAP = 3·2q, readout ≈ 1 µs).
+    pub fn sycamore_like() -> Self {
+        DurationModel {
+            one_q: 25,
+            two_q: 32,
+            swap: 96,
+            measure: 1000,
+        }
+    }
+
+    /// Era-representative trapped-ion timings, in nanoseconds
+    /// (1q ≈ 10 µs, 2q ≈ 210 µs, readout ≈ 130 µs). All-to-all
+    /// connectivity means the SWAP entry is rarely exercised.
+    pub fn ion_trap_like() -> Self {
+        DurationModel {
+            one_q: 10_000,
+            two_q: 210_000,
+            swap: 630_000,
+            measure: 130_000,
+        }
+    }
+}
+
+/// A device's operation-latency map: a base [`DurationModel`] plus
+/// per-site (1q, measure) and per-edge (2q, SWAP) overrides — the shape
+/// real calibration data takes, where every coupler has its own gate
+/// time.
+#[derive(Debug, Clone)]
+pub struct LatencyMap {
+    base: DurationModel,
+    one_q: std::collections::HashMap<usize, u64>,
+    two_q: std::collections::HashMap<(usize, usize), u64>,
+    swap: std::collections::HashMap<(usize, usize), u64>,
+    measure: std::collections::HashMap<usize, u64>,
+}
+
+impl From<DurationModel> for LatencyMap {
+    fn from(base: DurationModel) -> Self {
+        LatencyMap {
+            base,
+            one_q: std::collections::HashMap::new(),
+            two_q: std::collections::HashMap::new(),
+            swap: std::collections::HashMap::new(),
+            measure: std::collections::HashMap::new(),
+        }
+    }
+}
+
+fn edge_key(a: usize, b: usize) -> (usize, usize) {
+    (a.min(b), a.max(b))
+}
+
+impl LatencyMap {
+    /// A map with uniform base durations and no overrides.
+    pub fn uniform(base: DurationModel) -> Self {
+        base.into()
+    }
+
+    /// The base model (used for un-overridden sites/edges and the
+    /// virtual arity-≥3 charge).
+    pub fn base(&self) -> DurationModel {
+        self.base
+    }
+
+    /// Override the single-qubit duration at one site.
+    pub fn set_one_q(&mut self, site: usize, ticks: u64) -> &mut Self {
+        self.one_q.insert(site, ticks);
+        self
+    }
+
+    /// Override the two-qubit duration on one edge (undirected).
+    pub fn set_two_q(&mut self, a: usize, b: usize, ticks: u64) -> &mut Self {
+        self.two_q.insert(edge_key(a, b), ticks);
+        self
+    }
+
+    /// Override the SWAP duration on one edge (undirected).
+    pub fn set_swap(&mut self, a: usize, b: usize, ticks: u64) -> &mut Self {
+        self.swap.insert(edge_key(a, b), ticks);
+        self
+    }
+
+    /// Override the measurement duration at one site.
+    pub fn set_measure(&mut self, site: usize, ticks: u64) -> &mut Self {
+        self.measure.insert(site, ticks);
+        self
+    }
+
+    /// Effective single-qubit duration at a site.
+    pub fn one_q_at(&self, site: usize) -> u64 {
+        *self.one_q.get(&site).unwrap_or(&self.base.one_q)
+    }
+
+    /// Effective two-qubit duration on an edge.
+    pub fn two_q_at(&self, a: usize, b: usize) -> u64 {
+        *self.two_q.get(&edge_key(a, b)).unwrap_or(&self.base.two_q)
+    }
+
+    /// Effective SWAP duration on an edge.
+    pub fn swap_at(&self, a: usize, b: usize) -> u64 {
+        *self.swap.get(&edge_key(a, b)).unwrap_or(&self.base.swap)
+    }
+
+    /// Effective measurement duration at a site.
+    pub fn measure_at(&self, site: usize) -> u64 {
+        *self.measure.get(&site).unwrap_or(&self.base.measure)
+    }
+}
+
 /// What to do with gates wider than the native two-qubit limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ArityPolicy {
@@ -188,13 +460,13 @@ pub struct PhysicalOp {
 }
 
 /// The device-model backend. See the module docs.
-#[derive(Debug, Clone)]
 pub struct DeviceState<S: Scalar> {
     topology: Topology,
-    durations: DurationModel,
+    latency: LatencyMap,
     policy: ArityPolicy,
-    /// Physically-indexed amplitudes.
-    inner: DenseState<S>,
+    /// Physically-indexed amplitudes, in any representation (dense by
+    /// default; sparse makes chip-scale geometry affordable).
+    inner: Box<dyn Backend<S>>,
     logical_to_physical: Vec<usize>,
     physical_to_logical: Vec<usize>,
     clocks: Vec<u64>,
@@ -204,20 +476,52 @@ pub struct DeviceState<S: Scalar> {
 
 impl<S: Scalar> DeviceState<S> {
     /// `|0…0⟩` on the given topology with logical qubit `q` initially at
-    /// physical site `q`.
+    /// physical site `q`, over a dense inner state.
     pub fn new(topology: Topology, durations: DurationModel, policy: ArityPolicy) -> Result<Self> {
         let n = topology.num_sites();
+        let inner: Box<dyn Backend<S>> = Box::new(DenseState::new(n)?);
+        Self::with_latency(topology, durations.into(), policy, inner)
+    }
+
+    /// Full-control constructor: a per-site/per-edge [`LatencyMap`] and
+    /// the inner representation by value — `Box::new(SparseState::new(n)?)`
+    /// runs chip-scale geometry without a `2^n` dense vector.
+    pub fn with_latency(
+        topology: Topology,
+        latency: LatencyMap,
+        policy: ArityPolicy,
+        inner: Box<dyn Backend<S>>,
+    ) -> Result<Self> {
+        let n = topology.num_sites();
+        if inner.num_qubits() != n {
+            return Err(Error::WidthMismatch {
+                circuit: n,
+                backend: inner.num_qubits(),
+            });
+        }
         Ok(DeviceState {
-            inner: DenseState::new(n)?,
+            inner,
             logical_to_physical: (0..n).collect(),
             physical_to_logical: (0..n).collect(),
             clocks: vec![0; n],
             log: Vec::new(),
             swaps: 0,
             topology,
-            durations,
+            latency,
             policy,
         })
+    }
+
+    /// Sum of every physical op's duration — the schedule length a
+    /// fully serial machine would need. `serial_time / elapsed` is the
+    /// parallelism the geometry actually admitted.
+    pub fn serial_time(&self) -> u64 {
+        self.log.iter().map(|op| op.end - op.start).sum()
+    }
+
+    /// The operation-latency map in effect.
+    pub fn latency(&self) -> &LatencyMap {
+        &self.latency
     }
 
     /// Total schedule length so far (max per-qubit clock).
@@ -268,7 +572,8 @@ impl<S: Scalar> DeviceState<S> {
         self.physical_to_logical[b] = la;
         self.logical_to_physical[la] = b;
         self.logical_to_physical[lb] = a;
-        self.stamp("swap", vec![a, b], self.durations.swap);
+        let ticks = self.latency.swap_at(a, b);
+        self.stamp("swap", vec![a, b], ticks);
         self.swaps += 1;
         Ok(())
     }
@@ -336,13 +641,15 @@ impl<S: Scalar> Backend<S> for DeviceState<S> {
             1 => {
                 let p = self.logical_to_physical[qubits[0]];
                 self.inner.apply(matrix, &[p])?;
-                self.stamp("gate1q", vec![p], self.durations.one_q);
+                let ticks = self.latency.one_q_at(p);
+                self.stamp("gate1q", vec![p], ticks);
                 Ok(())
             }
             2 => {
                 let (pa, pb) = self.route_pair(qubits[0], qubits[1])?;
                 self.inner.apply(matrix, &[pa, pb])?;
-                self.stamp("gate2q", vec![pa, pb], self.durations.two_q);
+                let ticks = self.latency.two_q_at(pa, pb);
+                self.stamp("gate2q", vec![pa, pb], ticks);
                 Ok(())
             }
             k => {
@@ -356,11 +663,8 @@ impl<S: Scalar> Backend<S> for DeviceState<S> {
                     .map(|&q| self.logical_to_physical[q])
                     .collect();
                 self.inner.apply(matrix, &sites)?;
-                self.stamp(
-                    format!("virtual{k}q"),
-                    sites,
-                    self.durations.two_q * k as u64,
-                );
+                let ticks = self.latency.base().two_q * k as u64;
+                self.stamp(format!("virtual{k}q"), sites, ticks);
                 Ok(())
             }
         }
@@ -372,14 +676,16 @@ impl<S: Scalar> Backend<S> for DeviceState<S> {
             1 => {
                 let p = self.logical_to_physical[qubits[0]];
                 self.inner.apply_diagonal(entries, &[p])?;
-                self.stamp("diag1q", vec![p], self.durations.one_q);
+                let ticks = self.latency.one_q_at(p);
+                self.stamp("diag1q", vec![p], ticks);
                 Ok(())
             }
             2 => {
                 // A two-qubit diagonal is still an interaction: route it.
                 let (pa, pb) = self.route_pair(qubits[0], qubits[1])?;
                 self.inner.apply_diagonal(entries, &[pa, pb])?;
-                self.stamp("diag2q", vec![pa, pb], self.durations.two_q);
+                let ticks = self.latency.two_q_at(pa, pb);
+                self.stamp("diag2q", vec![pa, pb], ticks);
                 Ok(())
             }
             k => {
@@ -393,11 +699,8 @@ impl<S: Scalar> Backend<S> for DeviceState<S> {
                     .map(|&q| self.logical_to_physical[q])
                     .collect();
                 self.inner.apply_diagonal(entries, &sites)?;
-                self.stamp(
-                    format!("virtual{k}q"),
-                    sites,
-                    self.durations.two_q * k as u64,
-                );
+                let ticks = self.latency.base().two_q * k as u64;
+                self.stamp(format!("virtual{k}q"), sites, ticks);
                 Ok(())
             }
         }
@@ -415,7 +718,8 @@ impl<S: Scalar> Backend<S> for DeviceState<S> {
     fn project(&mut self, qubit: usize, outcome: bool, renorm: f64) {
         let p = self.logical_to_physical[qubit];
         self.inner.project(p, outcome, renorm);
-        self.stamp("measure", vec![p], self.durations.measure);
+        let ticks = self.latency.measure_at(p);
+        self.stamp("measure", vec![p], ticks);
     }
 
     fn reset(&mut self) {
