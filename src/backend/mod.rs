@@ -18,6 +18,7 @@
 //! [`BackendRegistry`], exactly like research gates in the gate registry.
 
 mod adaptive;
+mod clifford_frame;
 mod dense;
 mod device;
 mod factored;
@@ -27,6 +28,10 @@ mod mps;
 mod sparse;
 
 pub use adaptive::AdaptiveState;
+pub use clifford_frame::{
+    CliffordFrameStats, CliffordFramedState, PauliString, CLIFFORD_DIAGONAL_MAX,
+    CLIFFORD_RECOGNITION_MAX,
+};
 pub use dense::{DenseState, DENSE_MAX_QUBITS};
 pub use device::{ArityPolicy, DeviceState, DurationModel, PhysicalOp, Topology};
 pub use factored::{FactoredState, FACTORED_MAX_QUBITS, FACTOR_MAX_QUBITS};

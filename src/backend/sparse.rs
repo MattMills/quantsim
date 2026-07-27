@@ -43,6 +43,104 @@ impl<S: Scalar> SparseState<S> {
     pub fn entries(&self) -> impl Iterator<Item = (u64, S)> + '_ {
         self.map.iter().map(|(&i, &a)| (i, a))
     }
+
+    /// Apply the Pauli-axis rotation `exp(−iθ/2 · σP)` natively, where `P`
+    /// is the Hermitian Pauli string with X-support `x_mask`, Z-support
+    /// `z_mask` (qubits in both are Y), and `σ = −1` when `negate` is set.
+    ///
+    /// Cost is `O(support)` with at most 2× support growth — independent of
+    /// the string's weight, which is what makes Clifford-frame simulation
+    /// pay: arbitrarily long conjugated axes stay cheap. Pure-Z strings are
+    /// diagonal and grow nothing. Requires an algebra containing `i`
+    /// (the rotation coefficient is `−i sin`); fails loudly otherwise.
+    pub fn apply_pauli_rotation(
+        &mut self,
+        theta: f64,
+        x_mask: u64,
+        z_mask: u64,
+        negate: bool,
+    ) -> Result<()> {
+        let width_mask = if self.num_qubits == 64 {
+            u64::MAX
+        } else {
+            (1u64 << self.num_qubits) - 1
+        };
+        if x_mask & !width_mask != 0 || z_mask & !width_mask != 0 {
+            return Err(Error::QubitOutOfRange {
+                qubit: (64 - (x_mask | z_mask).leading_zeros()) as usize,
+                num_qubits: self.num_qubits,
+            });
+        }
+        let theta = if negate { -theta } else { theta };
+        let (c, s) = ((theta / 2.0).cos(), (theta / 2.0).sin());
+        if x_mask == 0 {
+            // Diagonal: amp ← e^{−iθ/2·(−1)^{|idx∧z|}} · amp.
+            let plus = S::try_from_c64(crate::math::c64(c, -s)).ok_or_else(|| {
+                Error::UnsupportedForAlgebra {
+                    gate: "pauli rotation".into(),
+                    algebra: S::algebra_name(),
+                }
+            })?;
+            let minus = S::try_from_c64(crate::math::c64(c, s)).ok_or_else(|| {
+                Error::UnsupportedForAlgebra {
+                    gate: "pauli rotation".into(),
+                    algebra: S::algebra_name(),
+                }
+            })?;
+            for (idx, a) in self.map.iter_mut() {
+                let sign = (idx & z_mask).count_ones() & 1 == 1;
+                *a = if sign { minus * *a } else { plus * *a };
+            }
+            return Ok(());
+        }
+        // ⟨idx⊕x| σP |idx⟩ per entry; cos keeps, −i·sin scatters. The
+        // scatter coefficient is −i·s·i^k where k counts the element's
+        // quarter-turns: Z contributes (−1)^bit on z-only qubits (k += 2),
+        // Y contributes +i on |0⟩ and −i on |1⟩. Only two values of k occur
+        // (its parity is fixed by the string's Y-count), so both are
+        // precomputed — and the embedding failure over algebras without the
+        // needed imaginary part (e.g. an X-string over ℝ, while Y-strings
+        // stay real) surfaces before the state is touched.
+        let cos_s = S::from_re(c);
+        let y_mask = x_mask & z_mask;
+        let z_only = z_mask & !x_mask;
+        let y_total = y_mask.count_ones();
+        let k_lo = y_total & 1;
+        let unit = |k: u32| match k & 3 {
+            0 => crate::math::c64(1.0, 0.0),
+            1 => crate::math::c64(0.0, 1.0),
+            2 => crate::math::c64(-1.0, 0.0),
+            _ => crate::math::c64(0.0, -1.0),
+        };
+        let base = S::try_from_c64(unit(k_lo) * crate::math::c64(0.0, -s)).ok_or_else(|| {
+            Error::UnsupportedForAlgebra {
+                gate: "pauli rotation".into(),
+                algebra: S::algebra_name(),
+            }
+        })?;
+        let mut out = FxHashMap::default();
+        out.reserve(self.map.len() * 2);
+        for (&idx, &a) in &self.map {
+            if c != 0.0 {
+                let slot = out.entry(idx).or_insert_with(S::zero);
+                *slot = *slot + cos_s * a;
+            }
+            if s != 0.0 {
+                // i^{y_total} · (−i)^{2·y_ones} = i^{y_total − 2·y_ones}
+                let y_ones = (idx & y_mask).count_ones();
+                let mut k = (y_total as i32 - 2 * y_ones as i32).rem_euclid(4) as u32;
+                if (idx & z_only).count_ones() & 1 == 1 {
+                    k = (k + 2) & 3;
+                }
+                let coeff = if k == k_lo { base } else { -base };
+                let slot = out.entry(idx ^ x_mask).or_insert_with(S::zero);
+                *slot = *slot + coeff * a;
+            }
+        }
+        out.retain(|_, a| a.abs_sqr() > PRUNE_TOL);
+        self.map = out;
+        Ok(())
+    }
 }
 
 impl<S: Scalar> Backend<S> for SparseState<S> {

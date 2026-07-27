@@ -70,6 +70,19 @@ parts are swappable:
   stored support at **1** where raw sparse pays `2^n` peak (tested at
   >100×). `adopt_frame` rewrites representation without touching physics —
   the concrete mechanism behind computation-transparent structure insertion.
+- **Clifford frames** ([`CliffordFramedState`](src/backend/clifford_frame.rs))
+  — the frame group upgraded from ⊗U(2) to the full Clifford group, held as
+  a stabilizer tableau + replay log over a sparse core. Gates are
+  *numerically recognized* and routed: Cliffords absorb into the frame
+  (pure metadata — Gottesman–Knill falls out: 50-qubit Clifford streams at
+  stored support 1), Pauli-axis rotations conjugate through the tableau
+  onto **native sparse Pauli-string rotations** (`O(support)`, ≤2× growth,
+  weight-independent), diagonals Walsh-decompose into Z-string rotations,
+  generic 1q gates split ZYZ; anything else flushes and goes raw. The
+  stored cost is bounded by `2^t` in the **T-count** `t` — not width, not
+  gate count (measured: t=10 at n=20 peaks at 128 amplitudes where raw
+  sparse pays 2^20) — making "magic" the measured currency left over once
+  the Clifford part of a circuit becomes free.
 - **VOLK-style selection** ([`harness::select_backend`]) — profile candidate
   backends on your workload on *this* machine and pick the best by time or
   memory, with fidelity as a hard gate: a fast-but-wrong kernel is rejected
@@ -170,11 +183,17 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 180 tests (176 across fifteen suites + 4 doctests); line
-coverage is 92.6% (94.1% region) via `cargo llvm-cov`, with the remaining
+`cargo test` runs 196 tests (192 across sixteen suites + 4 doctests); line
+coverage is 90.8% (91.7% region) via `cargo llvm-cov`, with the remaining
 gap almost entirely trivial accessors and defensive guards:
 
 - **conventions** — bit order and control placement pinned on basis states.
+- **clifford_frames** — the native sparse Pauli-string rotation kernel vs
+  dense matrices over every Pauli mixture and sign (and the ℝ-subset rule:
+  odd-Y strings are real); full-registry conformance through the frame;
+  Gottesman–Knill at width 40; the `2^t` T-count bound with raw-sparse
+  comparison; replay-log ordering under interleaved absorb/rotate, exact
+  to global phase.
 - **gate_matrices** — every standard gate vs literature values; exact
   per-algebra gate-support lists.
 - **gate_identities** — HXH = Z and friends, SWAP = 3·CX, the Nielsen–Chuang
@@ -309,20 +328,21 @@ src/
   registry.rs    GateRegistry<S>: validated registration, aliases
   circuit.rs     Circuit<S> (chainable builders, raw + diagonal kernels,
                  append), BoundCircuit<S> (bind-time validation, inverse())
-  backend/       Backend<S> trait + dense / sparse / adaptive / factored,
+  backend/       Backend<S> trait + dense / sparse / adaptive / factored /
+                 mps / interference / device / frames / clifford_frame,
                  BackendRegistry<S>, pauli_expectation
   schedule.rs    evented scheduler: simultaneous loops, events, feedback
-                 (backends also: factored, interference, device, mps)
   conformance.rs registry-wide backend verification (research safety net)
   harness.rs     workload benchmarking with in-run correctness checks
   discovery.rs   point stabilizers, signal threads, transparency reports
   library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           fifteen integration suites (see Testing)
+tests/           sixteen integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
-                 research_mode, evented_memory, width_scaling
+                 research_mode, evented_memory, width_scaling,
+                 verify_models, frames_demo, clifford_space
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at
@@ -330,9 +350,11 @@ runtime; `proptest` and `criterion` for development.
 
 ## Where this is going
 
-See [ROADMAP.md](ROADMAP.md): matrix product states (the `Backend` trait is
-already shaped for them, including overridable native sampling), truncated
-p-adic amplitudes (the `scale`/`born_weight` split is the designed seam),
-dual numbers and other non-Cayley–Dickson scalars, mid-circuit measurement
-as circuit ops, noise channels, and gate fusion (gated on
-`Scalar::ASSOCIATIVE`, which is `false` from octonions onward for a reason).
+See [ROADMAP.md](ROADMAP.md): stabilizer-rank compression and native Pauli
+measurement for the Clifford frame (the crude `2^t` product bound is not the
+≈`2^{0.4t}` state of the art — the gap is measurable here), per-factor and
+MPS-bond-gauge frames, truncated p-adic amplitudes (the
+`scale`/`born_weight` split is the designed seam), dual numbers and other
+non-Cayley–Dickson scalars, mid-circuit measurement as circuit ops, noise
+channels, and gate fusion (gated on `Scalar::ASSOCIATIVE`, which is `false`
+from octonions onward for a reason).

@@ -67,16 +67,16 @@ fn main() -> Result<()> {
     let stored_support = framed.stored_nonzero_count();
     let framed_peak = framed.peak_inner_memory();
 
-    println!("               {:>14} {:>14}", "raw sparse", "framed sparse");
+    println!(
+        "               {:>14} {:>14}",
+        "raw sparse", "framed sparse"
+    );
     println!(
         "peak memory    {:>14} {:>14}",
         fmt_bytes(raw_peak),
         fmt_bytes(framed_peak)
     );
-    println!(
-        "wall time      {:>12.2?} {:>12.2?}",
-        raw_time, framed_time
-    );
+    println!("wall time      {:>12.2?} {:>12.2?}", raw_time, framed_time);
     println!("stored support {:>14} {:>14}", "-", stored_support);
     println!(
         "\nframed execution: {} absorbed 1q, {} diagonalized 2q, {} dense-conjugated, {} flushes",
@@ -101,11 +101,17 @@ fn main() -> Result<()> {
     }
     state.flush()?; // |+…+⟩ materialized: support 4096
     println!("adopt_frame demo (12 qubits, |+…+⟩):");
-    println!("  stored support before adoption: {}", state.stored_nonzero_count());
+    println!(
+        "  stored support before adoption: {}",
+        state.stored_nonzero_count()
+    );
     for q in 0..12 {
         state.adopt_frame(q, &h)?;
     }
-    println!("  stored support after adopting H frames: {}", state.stored_nonzero_count());
+    println!(
+        "  stored support after adopting H frames: {}",
+        state.stored_nonzero_count()
+    );
     println!(
         "  physical amplitude |0…0⟩ still {:.6} (= 1/√4096 = {:.6})",
         state.amplitude(0).re,

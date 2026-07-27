@@ -108,12 +108,29 @@ host:
   flush, `adopt_frame`/`release_frame`, stats and peak-inner-memory
   instrumentation; conformance-verified over sparse/dense/mps inners.
   Measured payoff: transverse-field bulk at stored support 1 vs 2^n raw
-  (>100× peak memory). Next rungs: **per-factor multi-qubit frames**
-  (frames over a factor's whole region — can absorb CX-like inject/remove
-  pairs, making parity signal threads representation-free), **Clifford
-  frames** (track stabilizer-group conjugation symbolically instead of
-  2×2 matrices — turns whole Clifford prefixes into metadata), and **MPS
-  bond gauges** (the tensor-network analogue).
+  (>100× peak memory).
+- **Clifford frames — SHIPPED** (`CliffordFramedState`): the frame group
+  upgraded to the full Clifford group as a stabilizer tableau (images of
+  `X_q`/`Z_q` under `C†(·)C` as signed u64-mask Pauli strings) plus a
+  replay log for flush — synthesis of a minimal Clifford circuit from the
+  tableau is deliberately deferred (see next rungs). Gates are recognized
+  numerically (Pauli-basis decomposition, `O(8^k)` for k ≤ 3): Clifford →
+  absorb; single-axis → native sparse Pauli rotation through the tableau
+  (`SparseState::apply_pauli_rotation`, `O(support)`, ≤2× growth,
+  weight-independent); diagonal k ≤ 5 → Walsh–Hadamard Z-string split;
+  generic 1q → ZYZ; else flush + raw. Measured: pure-Clifford streams at
+  stored support 1 (Gottesman–Knill via frames, 50 qubits, µs); Clifford+T
+  scaffolds bounded by 2^t in T-count t with t=10/n=20 peaking at 128 vs
+  2^20 raw sparse; deviation vs dense at machine precision. Next rungs:
+  **stabilizer-rank compression** (the stored state as a sum over
+  stabilizer states, ≈2^{0.4t} vs the crude 2^t product bound — the gap is
+  now measurable), **native Pauli measurement** (measure through the
+  tableau without materializing the frame), **log compaction** (tableau →
+  minimal Clifford circuit synthesis, replacing replay of the full log),
+  **per-factor multi-qubit frames** (frames over a factor's whole region —
+  can absorb CX-like inject/remove pairs, making parity signal threads
+  representation-free), and **MPS bond gauges** (the tensor-network
+  analogue).
 - **Scheduling-aware geometry** — the evented scheduler knows *when*
   regions interact; a lookahead pass could pre-plan merges/splits (or
   memory swap-outs) to minimize peak factor width over the whole schedule.
@@ -171,6 +188,9 @@ entries, each a small self-contained `Scalar` impl plus tests:
 
 - GPU backends: worth doing only after the CPU dense path stops being the
   bottleneck for the widths we care about.
-- Stabilizer/Clifford fast path: valuable, but it is a *third* simulation
-  paradigm (group-theoretic, not amplitude-based); it deserves its own
-  design pass against the `Backend` trait rather than a bolt-on.
+- A *standalone* tableau-only stabilizer backend: the hybrid shipped
+  instead (`CliffordFramedState` — tableau metadata over amplitude
+  storage), which degrades gracefully on non-Clifford gates rather than
+  refusing them. A pure group-theoretic backend only wins once circuits
+  are Clifford-only end to end, where the hybrid already stores one
+  amplitude.
