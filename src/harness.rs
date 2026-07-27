@@ -230,6 +230,104 @@ impl fmt::Display for BenchmarkReport {
     }
 }
 
+/// What [`select_backend`] optimizes among the verified candidates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SelectionCriterion {
+    /// Fastest wall time (default).
+    #[default]
+    Time,
+    /// Smallest final-state footprint.
+    Memory,
+}
+
+/// Outcome of a VOLK-style runtime selection.
+#[derive(Debug, Clone)]
+pub struct SelectionReport {
+    /// The winning backend, if any candidate survived verification.
+    pub chosen: Option<String>,
+    /// The criterion used.
+    pub criterion: SelectionCriterion,
+    /// `(backend, reason)` for every candidate that was ruled out.
+    pub rejected: Vec<(String, String)>,
+    /// Whether the winner was verified against the reference (false when
+    /// the reference could not run the workload at all).
+    pub verified: bool,
+    /// The underlying measurements.
+    pub bench: BenchmarkReport,
+}
+
+/// Profile `candidates` on `workload` on *this* machine and pick the best
+/// one that reproduces the reference — runtime kernel selection in the
+/// VOLK style, with fidelity as a hard gate, not an assumption:
+///
+/// * candidates that error out are rejected;
+/// * candidates whose final state deviates from the reference by more than
+///   `tol` are rejected **regardless of speed**;
+/// * among survivors, the best by `criterion` wins. If the reference cannot
+///   run the workload (e.g. dense past its width limit), survivors are
+///   unverified and the report says so.
+pub fn select_backend<S: Scalar>(
+    sim: &Simulator<S>,
+    workload: &Workload<S>,
+    candidates: &[&str],
+    cfg: &BenchConfig,
+    criterion: SelectionCriterion,
+    tol: f64,
+) -> Result<SelectionReport> {
+    let bench = compare_backends(sim, std::slice::from_ref(workload), candidates, cfg)?;
+    let mut rejected = Vec::new();
+    let mut survivors: Vec<&RunRecord> = Vec::new();
+    let mut any_verified = false;
+    for record in &bench.records {
+        if cfg
+            .reference
+            .as_deref()
+            .is_some_and(|r| r == record.backend)
+            && !candidates.contains(&record.backend.as_str())
+        {
+            continue;
+        }
+        if let Some(error) = &record.error {
+            rejected.push((record.backend.clone(), format!("failed to run: {error}")));
+            continue;
+        }
+        match record.deviation {
+            Some(dev) if dev > tol => {
+                rejected.push((
+                    record.backend.clone(),
+                    format!("deviates from reference by {dev:.3e} > {tol:.1e}"),
+                ));
+                continue;
+            }
+            Some(_) => any_verified = true,
+            None => {}
+        }
+        survivors.push(record);
+    }
+    // Prefer verified survivors when any exist.
+    if any_verified {
+        survivors.retain(|r| r.deviation.is_some());
+    }
+    let chosen = survivors
+        .iter()
+        .filter(|r| r.seconds.is_some())
+        .min_by(|a, b| match criterion {
+            SelectionCriterion::Time => a
+                .seconds
+                .unwrap_or(f64::INFINITY)
+                .total_cmp(&b.seconds.unwrap_or(f64::INFINITY)),
+            SelectionCriterion::Memory => a.memory_bytes.cmp(&b.memory_bytes),
+        })
+        .map(|r| r.backend.clone());
+    Ok(SelectionReport {
+        chosen,
+        criterion,
+        rejected,
+        verified: any_verified,
+        bench,
+    })
+}
+
 /// Run every workload on every backend, timing each and checking the final
 /// state against the reference where the reference can run it.
 pub fn compare_backends<S: Scalar>(

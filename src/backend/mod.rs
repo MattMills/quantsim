@@ -19,12 +19,16 @@
 
 mod adaptive;
 mod dense;
+mod device;
 mod factored;
+mod interference;
 mod sparse;
 
 pub use adaptive::AdaptiveState;
 pub use dense::{DenseState, DENSE_MAX_QUBITS};
+pub use device::{ArityPolicy, DeviceState, DurationModel, PhysicalOp, Topology};
 pub use factored::{FactoredState, FACTORED_MAX_QUBITS, FACTOR_MAX_QUBITS};
+pub use interference::{InterferenceRecord, InterferenceState};
 pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
 
 use std::collections::HashMap;

@@ -109,6 +109,22 @@ entries, each a small self-contained `Scalar` impl plus tests:
   research.
 - **Group algebras** ℝ[G] for small finite G.
 
+## Operational-model extensions
+
+- **Device realism** — the `DeviceState` routing/latency model is exact and
+  noiseless; natural next steps are per-edge gate fidelities and idle
+  decoherence (needs the density/trajectory machinery below), calibration
+  data import, and smarter routing (lookahead / SABRE-style) measured
+  against the current greedy BFS walk by `swap_count`/`elapsed`.
+- **Interference histories** — `InterferenceState` aggregates per gate and
+  per output state; a Feynman-path variant keeping (bounded) contribution
+  histories would let destructive interference be attributed to *pairs of
+  paths*, at exponential cost in tracked paths — a good fit for the sparse
+  representation where path counts stay small.
+- **Selection persistence** — `select_backend` profiles per call; caching
+  choices per (workload shape, width, machine) à la VOLK profiles is a
+  small serialization feature once serde lands.
+
 ## Simulator features
 
 - Mid-circuit measurement **as circuit operations** (classical registers and

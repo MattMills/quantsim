@@ -86,8 +86,9 @@ pub use sim::Simulator;
 /// One-stop imports for typical use.
 pub mod prelude {
     pub use crate::backend::{
-        max_amplitude_deviation, pauli_expectation, AdaptiveState, Backend, BackendRegistry,
-        DenseState, FactoredState, SparseState,
+        max_amplitude_deviation, pauli_expectation, AdaptiveState, ArityPolicy, Backend,
+        BackendRegistry, DenseState, DeviceState, DurationModel, FactoredState, InterferenceRecord,
+        InterferenceState, PhysicalOp, SparseState, Topology,
     };
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
     pub use crate::conformance::{
@@ -99,7 +100,10 @@ pub mod prelude {
     };
     pub use crate::error::{Error, Result};
     pub use crate::gates::{FixedGate, GateDef, ParamGate, Pauli};
-    pub use crate::harness::{compare_backends, BenchConfig, BenchmarkReport, Workload};
+    pub use crate::harness::{
+        compare_backends, select_backend, BenchConfig, BenchmarkReport, SelectionCriterion,
+        SelectionReport, Workload,
+    };
     pub use crate::library;
     pub use crate::math::{c64, cis, GateMatrix};
     pub use crate::registry::GateRegistry;

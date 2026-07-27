@@ -48,6 +48,19 @@ parts are swappable:
   graph (inject a signal here, remove it there) that are
   computation-neutral only as a whole unit, with their geometric cost
   measured on the factored backend.
+- **Operational models** — [`InterferenceState`](src/backend/interference.rs)
+  evolves exactly like dense while accounting constructive and destructive
+  interference *independently* (per-gate path-weight vs net ledger, per-state
+  destruction map; diagonals provably destroy 0; H·H destroys exactly 1.0);
+  [`DeviceState`](src/backend/device.rs) reproduces the physical operation
+  order of a real machine — coupling [`Topology`] (linear/ring/grid/custom),
+  SWAP-routing that walks entanglement stepwise through adjacency with a
+  persistent logical→physical mapping, per-qubit latency clocks, and a full
+  physical op log — while answering in logical indices identical to dense.
+- **VOLK-style selection** ([`harness::select_backend`]) — profile candidate
+  backends on your workload on *this* machine and pick the best by time or
+  memory, with fidelity as a hard gate: a fast-but-wrong kernel is rejected
+  on measured deviation, never chosen.
 
 BQP support: the standard registry contains a universal set (`h`, `t`, `cx`,
 …), so any BQP circuit family runs exactly on the dense backend — at the
