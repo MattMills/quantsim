@@ -265,6 +265,53 @@ impl DOmega {
     }
 }
 
+impl std::fmt::Display for DOmega {
+    /// Render as `(c₀ + c₁ω + c₂ω² + c₃ω³)/√2^k`, omitting zero terms
+    /// (`0` for the zero element, no denominator when `k = 0`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut terms = String::new();
+        for (i, (&coeff, unit)) in self.c.iter().zip(["", "ω", "ω²", "ω³"]).enumerate() {
+            if coeff == 0 {
+                continue;
+            }
+            if terms.is_empty() {
+                if coeff < 0 {
+                    terms.push('−');
+                }
+            } else if coeff < 0 {
+                terms.push_str(" − ");
+            } else {
+                terms.push_str(" + ");
+            }
+            let mag = coeff.unsigned_abs();
+            if mag != 1 || i == 0 {
+                terms.push_str(&mag.to_string());
+            }
+            terms.push_str(unit);
+        }
+        if terms.is_empty() {
+            return write!(f, "0");
+        }
+        match self.k {
+            0 => write!(f, "{terms}"),
+            1 => {
+                if terms.contains(' ') {
+                    write!(f, "({terms})/√2")
+                } else {
+                    write!(f, "{terms}/√2")
+                }
+            }
+            k => {
+                if terms.contains(' ') {
+                    write!(f, "({terms})/√2^{k}")
+                } else {
+                    write!(f, "{terms}/√2^{k}")
+                }
+            }
+        }
+    }
+}
+
 /// An exact real number `(int + sqrt2·√2)/2^k` — the form Born weights
 /// take in `D[ω]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -324,6 +371,38 @@ impl ExactReal {
     pub fn to_f64(self) -> f64 {
         (self.int as f64 + self.sqrt2 as f64 * std::f64::consts::SQRT_2)
             / (2f64).powi(self.k as i32)
+    }
+}
+
+impl std::fmt::Display for ExactReal {
+    /// Render as `(int + sqrt2·√2)/2^k`, omitting zero terms.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut terms = String::new();
+        if self.int != 0 || self.sqrt2 == 0 {
+            terms.push_str(&self.int.to_string());
+        }
+        if self.sqrt2 != 0 {
+            if !terms.is_empty() {
+                terms.push_str(if self.sqrt2 < 0 { " − " } else { " + " });
+            } else if self.sqrt2 < 0 {
+                terms.push('−');
+            }
+            let mag = self.sqrt2.unsigned_abs();
+            if mag != 1 {
+                terms.push_str(&mag.to_string());
+            }
+            terms.push_str("√2");
+        }
+        match self.k {
+            0 => write!(f, "{terms}"),
+            k => {
+                if terms.contains(' ') {
+                    write!(f, "({terms})/2^{k}")
+                } else {
+                    write!(f, "{terms}/2^{k}")
+                }
+            }
+        }
     }
 }
 
@@ -815,6 +894,41 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn display_renders_canonical_forms() {
+        assert_eq!(DOmega::zero().to_string(), "0");
+        assert_eq!(DOmega::int(1).to_string(), "1");
+        assert_eq!(DOmega::int(-3).to_string(), "−3");
+        assert_eq!(DOmega::inv_sqrt2_pow(1).to_string(), "1/√2");
+        assert_eq!(DOmega::omega_pow(1).to_string(), "ω");
+        assert_eq!(DOmega::omega_pow(5).to_string(), "−ω");
+        assert_eq!(
+            DOmega::omega_pow(1)
+                .sub(DOmega::omega_pow(3))
+                .unwrap()
+                .to_string(),
+            "ω − ω³"
+        );
+        assert_eq!(
+            ExactReal {
+                int: 1,
+                sqrt2: 0,
+                k: 1
+            }
+            .to_string(),
+            "1/2^1"
+        );
+        assert_eq!(
+            ExactReal {
+                int: 1,
+                sqrt2: 2,
+                k: 3
+            }
+            .to_string(),
+            "(1 + 2√2)/2^3"
+        );
     }
 
     #[test]

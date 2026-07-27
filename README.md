@@ -445,7 +445,10 @@ tests/           twenty-one integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
-                 verify_models, frames_demo, clifford_space, clifford_lift
+                 verify_models, frames_demo, clifford_space, clifford_lift,
+                 coarse_register (mera + Ball), absolute_reference (D[ω]
+                 vs every backend), adaptive_feedback (recursive trees +
+                 frame repair)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

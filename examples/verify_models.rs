@@ -68,8 +68,19 @@ fn main() -> Result<()> {
             inner: DenseState::new(n)?,
         }))
     })?;
+    sim.backends_mut().register("framed-sparse", |n| {
+        Ok(Box::new(FramedState::new(Box::new(
+            SparseState::<C64>::new(n)?,
+        ))))
+    })?;
+    sim.backends_mut().register("clifford-framed", |n| {
+        Ok(Box::new(CliffordFramedState::<C64>::new(n)?))
+    })?;
 
     // ════════════════════ 1. Conformance, printed ════════════════════
+    // Every shipped representation — including the frame wrappers and the
+    // hierarchical backend — against the dense reference, over the whole
+    // registry. Same harness, no exceptions.
     println!("════ 1. conformance sweeps (live, not cached) ════\n");
     let cfg = ConformanceConfig::default();
     for backend in [
@@ -77,11 +88,23 @@ fn main() -> Result<()> {
         "adaptive",
         "factored",
         "mps",
+        "mera",
         "interference",
         "device-linear",
         "device-ring",
+        "framed-sparse",
+        "clifford-framed",
     ] {
         let report = verify_backend(&sim, backend, &cfg)?;
+        print!("{report}");
+    }
+
+    // The algebra axis goes through the same harness: the Ball scalar
+    // (certified midpoint ± radius) runs the identical sweeps — midpoint
+    // physics is C64 physics, radii ride along.
+    let ball_sim: Simulator<Ball> = Simulator::new();
+    for backend in ["sparse", "mera"] {
+        let report = verify_backend(&ball_sim, backend, &cfg)?;
         print!("{report}");
     }
 
@@ -211,7 +234,7 @@ fn main() -> Result<()> {
     let report = select_backend(
         &sim,
         &workload,
-        &["dense", "sparse", "factored", "noop"],
+        &["dense", "sparse", "factored", "mps", "mera", "noop"],
         &BenchConfig::default(),
         SelectionCriterion::Time,
         1e-9,
@@ -229,7 +252,7 @@ fn main() -> Result<()> {
     let report = select_backend(
         &sim,
         &Workload::qft(10),
-        &["dense", "sparse", "adaptive"],
+        &["dense", "sparse", "adaptive", "mps", "mera"],
         &BenchConfig::default(),
         SelectionCriterion::Time,
         1e-9,
@@ -248,7 +271,7 @@ fn main() -> Result<()> {
     let report = select_backend(
         &sim,
         &Workload::from_circuit("local-pairs-34", pairs),
-        &["sparse", "factored"],
+        &["sparse", "factored", "mps", "mera"],
         &BenchConfig::default(),
         SelectionCriterion::Memory,
         1e-9,

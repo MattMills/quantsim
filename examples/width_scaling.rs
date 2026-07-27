@@ -94,18 +94,20 @@ fn main() {
     }
     algebra_row::<f64>();
     algebra_row::<C64>();
+    algebra_row::<Ball>();
     algebra_row::<SplitComplex>();
     algebra_row::<Quaternion>();
     algebra_row::<Octonion>();
     algebra_row::<Sedenion>();
+    println!("  (Ball = C64 midpoint + certified radius: 1.5× the complex footprint)");
 
     println!();
     println!("== Factored: cost tracks entanglement clusters, not register width ==");
     println!();
     println!("(a) width sweep, entanglement held local (pairs): linear in width");
     println!(
-        "{:>6} {:>16} {:>18} {:>14} {:>14}",
-        "qubits", "factored", "largest cluster", "sparse", "mps"
+        "{:>6} {:>16} {:>18} {:>14} {:>14} {:>14}",
+        "qubits", "factored", "largest cluster", "sparse", "mps", "mera"
     );
     for n in [8usize, 16, 24, 32, 40, 48, 56] {
         let mut pairs = Circuit::new(n);
@@ -123,12 +125,14 @@ fn main() {
             "(skipped)".into()
         };
         let mps = sim.run_on("mps", &pairs).unwrap();
+        let mera = sim.run_on("mera", &pairs).unwrap();
         println!(
-            "{n:>6} {:>16} {:>12} qubits {:>14} {:>14}",
+            "{n:>6} {:>16} {:>12} qubits {:>14} {:>14} {:>14}",
             fmt_bytes(state.memory_bytes()),
             factored.largest_factor_qubits(),
             sparse,
-            fmt_bytes(mps.memory_bytes())
+            fmt_bytes(mps.memory_bytes()),
+            fmt_bytes(mera.memory_bytes())
         );
     }
     println!();
@@ -172,7 +176,15 @@ fn main() {
         fmt_bytes(s.memory_bytes()),
         fmt_bytes(m.memory_bytes())
     );
-    println!("  — three orthogonal compression axes: clusters, support, Schmidt rank.");
+    let mera16 = sim.run_on("mera", &library::ghz(16)).unwrap();
+    let mera_state = mera16.as_any().downcast_ref::<MeraState<C64>>().unwrap();
+    println!(
+        "  mera holds GHZ(16) at {} resting (hierarchy bond {}; the chain's one\n  root-crossing gate transiently paid a {}-element block — the rung-1 cost)",
+        fmt_bytes(mera16.memory_bytes()),
+        mera_state.max_bond_dimension(),
+        mera_state.peak_block_elements()
+    );
+    println!("  — four orthogonal compression axes: clusters, support, Schmidt rank, hierarchy.");
 
     println!();
     println!("== Estimate vs process RSS, in actuality (dense C64) ==");
