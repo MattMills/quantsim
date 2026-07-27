@@ -49,6 +49,23 @@ pub fn qft<S: Scalar>(n: usize) -> Circuit<S> {
     c
 }
 
+/// Inverse quantum Fourier transform on `n` qubits: the exact op-by-op
+/// reversal of [`qft`] with negated phases.
+pub fn iqft<S: Scalar>(n: usize) -> Circuit<S> {
+    let mut c = Circuit::new(n);
+    for k in (0..n / 2).rev() {
+        c.swap(k, n - 1 - k);
+    }
+    for j in 0..n {
+        for m in 0..j {
+            let angle = -std::f64::consts::PI / (1u64 << (j - m)) as f64;
+            c.cp(m, j, angle);
+        }
+        c.h(j);
+    }
+    c
+}
+
 /// A multi-controlled Z on all `n` qubits as a raw diagonal matrix
 /// (`diag(1, …, 1, −1)`); real-valued, so it exists over every algebra.
 pub fn mcz_matrix<S: Scalar>(n: usize) -> Result<GateMatrix<S>> {
