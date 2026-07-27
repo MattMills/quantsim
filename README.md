@@ -23,6 +23,13 @@ parts are swappable:
   application instead of `O(4^k)`, which is the difference between a 262 KiB
   and a 4 GiB MCZ at k = 14.
 
+- **Research mode** — a [`conformance`](src/conformance.rs) module that
+  verifies *any* backend against the reference across *every* registered
+  gate (custom sets discovered automatically), and a
+  [`harness`](src/harness.rs) that benchmarks backends on named workloads
+  with correctness re-checked in the same run. New representations and gate
+  sets either pass measurably or fail with the offending gate named.
+
 BQP support: the standard registry contains a universal set (`h`, `t`, `cx`,
 …), so any BQP circuit family runs exactly on the dense backend — at the
 unavoidable `O(2^n)` memory cost in width `n`, which the width benchmarks
@@ -197,6 +204,56 @@ qubits       estimate      RSS delta      (dense C64)
 algebra (dense, n=16):  R 512 KiB · C 1 MiB · H 2 MiB · O 4 MiB · S 8 MiB
 ```
 
+## Research mode: verify, then measure
+
+The workflow for a new gate set or a new backend (an MPS, a p-adic
+representation, your `bbq-custom-gate-set-37`):
+
+```rust
+use quantsim::prelude::*;
+
+let mut sim: Simulator = Simulator::new();
+sim.registry_mut().register_parametric("bbq_fsim", /* … */)?;   // your set
+sim.backends_mut().register("mps", |n| /* … */)?;               // your backend
+
+// 1. Conformance: sweeps EVERY registered gate (yours included) at random
+//    params/orderings/widths against the reference, plus registry-drawn
+//    random circuits, Born-weight conservation, sampling equality and
+//    measurement collapse. Structured report, per-gate deviations.
+let report = verify_backend(&sim, "mps", &ConformanceConfig::default())?;
+assert!(report.passed(), "{report}");
+
+// 2. Benchmark: named workloads × backends → time, memory, support size,
+//    speedup and memory ratios — with amplitudes re-verified in the run.
+let bench = compare_backends(&sim, &[Workload::ghz(20), Workload::qft(12)],
+                             &["dense", "sparse", "mps"], &BenchConfig::default())?;
+println!("{bench}");
+# Ok::<(), quantsim::Error>(())
+```
+
+Real output from `cargo run --release --example research_mode` (fSim-style
+"bbq-37" set layered over the standard library):
+
+```
+conformance: 'sparse' vs reference 'dense' over C — PASSED
+  41 gates (246 cases), 24 random circuits; max deviation 0.00e0, weight drift 6.66e-16
+
+workload ghz-20:
+  backend              time       memory   nonzeros    speedup       mem×    deviation
+  dense           211.47 ms     16.0 MiB          2      1.00×       1.0×        0.0e0
+  sparse           16.42 µs      125.0 B          2  12876.67×  134218.0×        0.0e0
+workload bbq37-random-10q:
+  dense           880.25 µs     16.0 KiB       1024      1.00×       1.0×        0.0e0
+  sparse            1.37 ms     50.0 KiB       1024      0.64×       0.3×        0.0e0
+  adaptive        559.98 µs     16.0 KiB       1024      1.57×       1.0×        0.0e0
+```
+
+The harness reports losses as plainly as wins (sparse is *worse* on
+saturated states; adaptive tracks the better side), and the conformance
+suite is itself tested against a deliberately sabotaged backend — the
+report must localize the corruption to the exact gates it breaks
+(`tests/conformance_harness.rs`).
+
 ## Layout
 
 ```
@@ -205,17 +262,19 @@ src/
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
   gates/         GateDef trait, FixedGate/ParamGate, standard library
   registry.rs    GateRegistry<S>: validated registration, aliases
-  circuit.rs     Circuit<S> (chainable builders, raw matrices, append),
-                 BoundCircuit<S> (bind-time validation, inverse())
+  circuit.rs     Circuit<S> (chainable builders, raw + diagonal kernels,
+                 append), BoundCircuit<S> (bind-time validation, inverse())
   backend/       Backend<S> trait + dense / sparse / adaptive,
                  BackendRegistry<S>, pauli_expectation
-  library.rs     bell, ghz, qft, iqft, grover, mcz, random_circuit
+  conformance.rs registry-wide backend verification (research safety net)
+  harness.rs     workload benchmarking with in-run correctness checks
+  library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           nine integration suites (see Testing)
+tests/           eleven integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
-                 width_scaling
+                 research_mode, width_scaling
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

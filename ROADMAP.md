@@ -27,6 +27,13 @@ The `Backend<S>` trait was shaped with MPS in mind:
 - `memory_bytes` reports `Σ bond dimensions`, which is the whole point:
   width benchmarks will show polynomial memory on low-entanglement circuits.
 
+The validation and measurement side is already in place: when an MPS
+backend lands it registers by name and goes through
+`conformance::verify_backend` (registry-wide gate sweep + invariants,
+tested to catch sabotaged backends) and `harness::compare_backends`
+(time/memory/support vs reference with in-run correctness checks) with no
+new harness code.
+
 Blockers and plan:
 
 1. **SVD, dependency-free.** Truncation needs a singular value

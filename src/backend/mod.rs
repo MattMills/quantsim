@@ -260,6 +260,21 @@ pub fn pauli_expectation<S: Scalar>(state: &dyn Backend<S>, ops: &[(usize, Pauli
     }
 }
 
+/// Largest entrywise amplitude distance between two states, scanned over
+/// the union of their supports — `O(nnz)` on both sides, so it works at
+/// widths where a full `2^n` sweep does not. The workhorse of backend
+/// conformance checking.
+pub fn max_amplitude_deviation<S: Scalar>(a: &dyn Backend<S>, b: &dyn Backend<S>) -> f64 {
+    let mut dev = 0.0f64;
+    a.for_each_nonzero(&mut |i, x| {
+        dev = dev.max((x - b.amplitude(i)).abs_sqr().sqrt());
+    });
+    b.for_each_nonzero(&mut |i, x| {
+        dev = dev.max((x - a.amplitude(i)).abs_sqr().sqrt());
+    });
+    dev
+}
+
 type BackendCtor<S> = Box<dyn Fn(usize) -> Result<Box<dyn Backend<S>>> + Send + Sync>;
 
 /// A name → constructor catalog of state representations, mirroring the

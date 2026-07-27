@@ -61,8 +61,10 @@
 
 pub mod backend;
 pub mod circuit;
+pub mod conformance;
 pub mod error;
 pub mod gates;
+pub mod harness;
 pub mod library;
 pub mod math;
 pub mod registry;
@@ -82,11 +84,16 @@ pub use sim::Simulator;
 /// One-stop imports for typical use.
 pub mod prelude {
     pub use crate::backend::{
-        pauli_expectation, AdaptiveState, Backend, BackendRegistry, DenseState, SparseState,
+        max_amplitude_deviation, pauli_expectation, AdaptiveState, Backend, BackendRegistry,
+        DenseState, SparseState,
     };
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
+    pub use crate::conformance::{
+        random_registry_circuit, verify_backend, ConformanceConfig, ConformanceReport,
+    };
     pub use crate::error::{Error, Result};
     pub use crate::gates::{FixedGate, GateDef, ParamGate, Pauli};
+    pub use crate::harness::{compare_backends, BenchConfig, BenchmarkReport, Workload};
     pub use crate::library;
     pub use crate::math::{c64, cis, GateMatrix};
     pub use crate::registry::GateRegistry;
