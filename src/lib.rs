@@ -115,7 +115,8 @@ pub mod prelude {
         CComplex, Octonion, Quaternion, Scalar, Sedenion, SplitComplex, C64, CD,
     };
     pub use crate::schedule::{
-        GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace, ScheduledKernel, TimedOp,
+        FeedbackOp, GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace,
+        ScheduledKernel, TimedOp,
     };
     pub use crate::sim::Simulator;
 }
