@@ -254,6 +254,133 @@ fn research_backend_via_registry() {
 }
 
 #[test]
+fn default_apply_diagonal_materializes_for_custom_backends() {
+    // CountingBackend does not override apply_diagonal, so a diagonal op
+    // exercises the trait's default (materialize the matrix, then apply) —
+    // custom research backends must keep working without knowing about
+    // structured kernels.
+    let mut sim: Simulator = Simulator::new();
+    sim.backends_mut()
+        .register("counting", |n| {
+            Ok(Box::new(CountingBackend {
+                inner: DenseState::new(n)?,
+                applied: 0,
+            }))
+        })
+        .unwrap();
+    let mut c = Circuit::new(3);
+    c.h(0)
+        .h(1)
+        .h(2)
+        .diagonal("flip5", library::phase_flip(3, 5), vec![0, 1, 2])
+        .h(2);
+    let via_counting = sim.run_on("counting", &c).unwrap();
+    let via_dense = sim.run(&c).unwrap();
+    for i in 0..8u64 {
+        assert!(
+            via_counting
+                .amplitude(i)
+                .approx_eq(via_dense.amplitude(i), TOL),
+            "idx {i}"
+        );
+    }
+    // The fallback still routed through apply(): all 5 ops counted.
+    let counting = via_counting
+        .as_any()
+        .downcast_ref::<CountingBackend>()
+        .unwrap();
+    assert_eq!(counting.applied, 5);
+    // And the default validates dimensions before materializing.
+    let mut bad = DenseState::<C64>::new(2).unwrap();
+    struct Plain(DenseState<C64>);
+    impl Backend<C64> for Plain {
+        fn name(&self) -> &str {
+            "plain"
+        }
+        fn num_qubits(&self) -> usize {
+            self.0.num_qubits()
+        }
+        fn apply(&mut self, m: &GateMatrix<C64>, q: &[usize]) -> Result<()> {
+            self.0.apply(m, q)
+        }
+        fn amplitude(&self, i: u64) -> C64 {
+            self.0.amplitude(i)
+        }
+        fn for_each_nonzero(&self, f: &mut dyn FnMut(u64, C64)) {
+            self.0.for_each_nonzero(f)
+        }
+        fn project(&mut self, q: usize, o: bool, r: f64) {
+            self.0.project(q, o, r)
+        }
+        fn reset(&mut self) {
+            self.0.reset()
+        }
+        fn load(&mut self, e: &[(u64, C64)]) -> Result<()> {
+            self.0.load(e)
+        }
+        fn memory_bytes(&self) -> usize {
+            self.0.memory_bytes()
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+    let mut plain = Plain(std::mem::replace(&mut bad, DenseState::new(1).unwrap()));
+    let err = plain
+        .apply_diagonal(&[c64(1.0, 0.0); 3], &[0, 1])
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::BadDimension {
+            expected: 4,
+            got: 3
+        }
+    ));
+}
+
+#[test]
+fn gate_def_param_validation_direct() {
+    // The defensive checks inside GateDef implementations, hit directly
+    // (bind normally validates first, so these arms need explicit coverage).
+    let fixed = FixedGate::new(
+        "fg",
+        "a fixed gate",
+        GateMatrix::<C64>::identity(2).unwrap(),
+    );
+    assert_eq!(fixed.name(), "fg");
+    assert_eq!(fixed.description(), "a fixed gate");
+    assert_eq!(fixed.arity(), 1);
+    assert_eq!(fixed.param_count(), 0);
+    assert!(fixed.matrix(&[]).is_ok());
+    assert!(matches!(
+        fixed.matrix(&[1.0]).unwrap_err(),
+        Error::ParamCountMismatch {
+            expected: 0,
+            got: 1,
+            ..
+        }
+    ));
+
+    let param = ParamGate::new("pg", "a param gate", 1, 2, |p: &[f64]| {
+        let _ = p;
+        GateMatrix::<C64>::identity(2)
+    });
+    assert_eq!(param.name(), "pg");
+    assert_eq!(param.description(), "a param gate");
+    assert_eq!(param.arity(), 1);
+    assert_eq!(param.param_count(), 2);
+    assert!(param.matrix(&[0.1, 0.2]).is_ok());
+    assert!(matches!(
+        param.matrix(&[0.1]).unwrap_err(),
+        Error::ParamCountMismatch {
+            expected: 2,
+            got: 1,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn simulator_apply_single_gates() {
     let sim: Simulator = Simulator::new();
     let mut state = DenseState::<C64>::new(2).unwrap();

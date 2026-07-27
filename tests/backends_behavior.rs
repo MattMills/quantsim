@@ -261,6 +261,9 @@ fn exotic_algebra_measurement_can_fail_meaningfully() {
         .unwrap();
     let err = state.measure(0, &mut Prng::new(0)).unwrap_err();
     assert!(matches!(err, Error::InvalidState(_)));
+    // Sampling refuses for the same reason.
+    let err = state.sample(16, &mut Prng::new(0)).unwrap_err();
+    assert!(matches!(err, Error::InvalidState(_)));
     // A timelike state measures fine.
     state.load(&[(0, SplitComplex::new(1.0, 0.5))]).unwrap();
     let outcome = state.measure(0, &mut Prng::new(0)).unwrap();

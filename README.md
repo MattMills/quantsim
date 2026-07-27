@@ -118,7 +118,9 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 122 tests across nine suites plus doctests:
+`cargo test` runs 129 tests (125 across ten suites + 4 doctests); line
+coverage is 92.6% (94.1% region) via `cargo llvm-cov`, with the remaining
+gap almost entirely trivial accessors and defensive guards:
 
 - **conventions** — bit order and control placement pinned on basis states.
 - **gate_matrices** — every standard gate vs literature values; exact
@@ -136,9 +138,12 @@ surfaces both instead of papering over them.
   (94.53% at n=3, k=2); Deutsch–Jozsa; Bernstein–Vazirani; superdense
   coding; teleportation with real mid-circuit measurement and feed-forward;
   GHZ/Mermin correlations; sedenion Born-drift by construction.
-- **backends_behavior / registry_behavior / memory_scaling** — measurement
-  statistics, sampling determinism across representations, adaptive
-  promotion, research-extension workflows, and the memory assertions below.
+- **backends_behavior / registry_behavior / memory_scaling /
+  error_display** — measurement statistics, sampling determinism across
+  representations, adaptive promotion, research-extension workflows
+  (including the trait-default `apply_diagonal` fallback for custom
+  backends), every error variant's rendered message, and the memory
+  assertions below.
 
 ## Benchmarks and width (memory) scaling
 
