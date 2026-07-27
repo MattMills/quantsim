@@ -64,6 +64,7 @@ pub mod circuit;
 pub mod conformance;
 pub mod discovery;
 pub mod error;
+pub mod exact;
 pub mod gates;
 pub mod harness;
 pub mod library;
@@ -101,6 +102,7 @@ pub mod prelude {
         Insertion, StabilizerCheck, TransparencyReport,
     };
     pub use crate::error::{Error, Result};
+    pub use crate::exact::{DOmega, ExactReal, ExactState};
     pub use crate::gates::{FixedGate, GateDef, ParamGate, Pauli};
     pub use crate::harness::{
         compare_backends, select_backend, BenchConfig, BenchmarkReport, SelectionCriterion,
