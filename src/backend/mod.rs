@@ -24,6 +24,7 @@ mod device;
 mod factored;
 mod frames;
 mod interference;
+mod mera;
 mod mps;
 mod sparse;
 
@@ -37,6 +38,7 @@ pub use device::{ArityPolicy, DeviceState, DurationModel, PhysicalOp, Topology};
 pub use factored::{FactoredState, FACTORED_MAX_QUBITS, FACTOR_MAX_QUBITS};
 pub use frames::{FrameStats, FramedState, FRAME_CONJUGATION_MAX};
 pub use interference::{InterferenceRecord, InterferenceState};
+pub use mera::{MeraConfig, MeraState, MERA_LOAD_MAX_QUBITS, MERA_MAX_QUBITS};
 pub use mps::{MpsConfig, MpsState, MPS_LOAD_MAX_QUBITS, MPS_MAX_QUBITS, MPS_MAX_WINDOW};
 pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
 
@@ -314,8 +316,9 @@ impl<S: Scalar> BackendRegistry<S> {
     }
 
     /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"`,
-    /// `"factored"` and `"mps"` backends. (`"mps"` requires a commutative
-    /// division algebra and reports an error at creation elsewhere.)
+    /// `"factored"`, `"mps"` and `"mera"` backends. (`"mps"` and `"mera"`
+    /// require a commutative division algebra and report an error at
+    /// creation elsewhere.)
     pub fn standard() -> Self {
         let mut reg = Self::new();
         reg.register("dense", |n| Ok(Box::new(DenseState::<S>::new(n)?)))
@@ -327,6 +330,8 @@ impl<S: Scalar> BackendRegistry<S> {
         reg.register("factored", |n| Ok(Box::new(FactoredState::<S>::new(n)?)))
             .expect("fresh registry");
         reg.register("mps", |n| Ok(Box::new(MpsState::<S>::new(n)?)))
+            .expect("fresh registry");
+        reg.register("mera", |n| Ok(Box::new(MeraState::<S>::new(n)?)))
             .expect("fresh registry");
         reg
     }

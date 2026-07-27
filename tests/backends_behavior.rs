@@ -8,7 +8,7 @@ use common::*;
 use quantsim::prelude::*;
 use std::f64::consts::FRAC_1_SQRT_2;
 
-const BACKENDS: [&str; 5] = ["dense", "sparse", "adaptive", "factored", "mps"];
+const BACKENDS: [&str; 6] = ["dense", "sparse", "adaptive", "factored", "mps", "mera"];
 
 #[test]
 fn initial_state_is_all_zeros() {
@@ -74,7 +74,7 @@ fn sampling_matches_probabilities_and_is_backend_independent() {
     }
     // Same seed, other representations: byte-identical counts, because
     // sampling accumulates weights in basis order on every backend.
-    for name in ["sparse", "adaptive", "factored", "mps"] {
+    for name in ["sparse", "adaptive", "factored", "mps", "mera"] {
         let state = run_named(name, &c);
         let counts = state.sample(8192, &mut Prng::new(42)).unwrap();
         assert_eq!(counts, dense_counts, "{name} sampling differs from dense");
