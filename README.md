@@ -74,8 +74,11 @@ parts are swappable:
   — the frame group upgraded from ⊗U(2) to the full Clifford group, held as
   a stabilizer tableau + replay log over a sparse core. Gates are
   *numerically recognized* and routed: Cliffords absorb into the frame
-  (pure metadata — Gottesman–Knill falls out: 50-qubit Clifford streams at
-  stored support 1), Pauli-axis rotations conjugate through the tableau
+  (pure metadata — Gottesman–Knill's **evolution sector** falls out:
+  50-qubit Clifford streams at stored support 1; readout still flushes,
+  and the absorbed set is proven **exactly** the Clifford subgroup by a
+  bidirectional sweep against an independent dense Pauli-normalizer check,
+  so nothing non-Clifford rides free), Pauli-axis rotations conjugate through the tableau
   onto **native sparse Pauli-string rotations** (`O(support)`, ≤2× growth,
   weight-independent), diagonals Walsh-decompose into Z-string rotations,
   generic 1q gates split ZYZ; anything else flushes and goes raw. The
@@ -183,7 +186,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 196 tests (192 across sixteen suites + 4 doctests); line
+`cargo test` runs 199 tests (195 across sixteen suites + 4 doctests); line
 coverage is 90.8% (91.7% region) via `cargo llvm-cov`, with the remaining
 gap almost entirely trivial accessors and defensive guards:
 
@@ -191,9 +194,15 @@ gap almost entirely trivial accessors and defensive guards:
 - **clifford_frames** — the native sparse Pauli-string rotation kernel vs
   dense matrices over every Pauli mixture and sign (and the ℝ-subset rule:
   odd-Y strings are real); full-registry conformance through the frame;
-  Gottesman–Knill at width 40; the `2^t` T-count bound with raw-sparse
-  comparison; replay-log ordering under interleaved absorb/rotate, exact
-  to global phase.
+  the `2^t` T-count bound with raw-sparse comparison; replay-log ordering
+  under interleaved absorb/rotate, exact to global phase. Plus the
+  **Gottesman–Knill honesty proofs**: absorption ⟺ Clifford membership,
+  bidirectionally, against an independent dense Pauli-normalizer ground
+  truth over the whole registry (and at Clifford angles of parametric
+  gates); width/depth cost of the free sector asserted polynomial
+  (support 1 at width 63, log-linear at depth 4000); and the boundary
+  pinned from both sides — T scatters amplitudes the moment it arrives,
+  and readout flushes where a true tableau simulator stays polynomial.
 - **gate_matrices** — every standard gate vs literature values; exact
   per-algebra gate-support lists.
 - **gate_identities** — HXH = Z and friends, SWAP = 3·CX, the Nielsen–Chuang

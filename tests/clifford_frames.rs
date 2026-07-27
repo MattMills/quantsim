@@ -238,6 +238,246 @@ fn clifford_circuits_stay_support_one_at_any_width() {
     assert!(dev < 1e-9, "clifford stream deviates: {dev}");
 }
 
+/// Independent Clifford-membership ground truth, sharing **no code** with
+/// the backend's recognizer: `M` is Clifford iff it normalizes the Pauli
+/// group, iff every conjugated generator `M†·P_b·M` equals ±(some Pauli
+/// string) — checked here by dense matrix products and entrywise
+/// comparison against every signed candidate.
+fn is_clifford_dense(m: &GateMatrix<C64>, k: usize) -> bool {
+    let d = 1usize << k;
+    let labels_of = |px: usize, pz: usize| -> Vec<char> {
+        (0..k)
+            .map(|b| match ((px >> b) & 1, (pz >> b) & 1) {
+                (0, 0) => 'i',
+                (1, 0) => 'x',
+                (0, 1) => 'z',
+                _ => 'y',
+            })
+            .collect()
+    };
+    let dag = m.dagger();
+    for b in 0..k {
+        for (px, pz) in [(1usize << b, 0usize), (0, 1usize << b)] {
+            let gen = pauli_matrix(&labels_of(px, pz));
+            let a = dag.matmul(&gen).matmul(m);
+            let mut matched = false;
+            'candidates: for cx in 0..d {
+                for cz in 0..d {
+                    let cand = pauli_matrix(&labels_of(cx, cz));
+                    for sign in [1.0, -1.0] {
+                        let mut ok = true;
+                        'entries: for r in 0..d {
+                            for c in 0..d {
+                                if (a.get(r, c) - cand.get(r, c).scale(sign)).norm() > 1e-9 {
+                                    ok = false;
+                                    break 'entries;
+                                }
+                            }
+                        }
+                        if ok {
+                            matched = true;
+                            break 'candidates;
+                        }
+                    }
+                }
+            }
+            if !matched {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+#[test]
+fn absorption_is_exactly_the_clifford_subgroup() {
+    // The honesty proof behind the Gottesman–Knill label, gate side: the
+    // metadata-free sector (absorption) accepts a gate IFF an independent
+    // dense ground truth says it is Clifford — bidirectional, over every
+    // registered gate, with membership *computed*, not read off a list.
+    // The recognizer cannot exceed the Clifford group by construction
+    // (its acceptance test is Pauli-normalizer membership); this pins the
+    // implementation to that construction.
+    let reg = GateRegistry::<C64>::standard();
+    let generic = [0.7365, 1.2113, -0.5871]; // far from Clifford angles
+    let mut absorbed_names = Vec::new();
+    let mut rejected_names = Vec::new();
+    for name in reg.names() {
+        let def = reg.resolve(&name).unwrap();
+        let k = def.arity();
+        if k > CLIFFORD_RECOGNITION_MAX {
+            continue; // outside the recognizer's stated scope
+        }
+        let m = def.matrix(&generic[..def.param_count()]).unwrap();
+        let truth = is_clifford_dense(&m, k);
+
+        let mut state = CliffordFramedState::<C64>::new(k).unwrap();
+        state.apply(&m, &(0..k).collect::<Vec<_>>()).unwrap();
+        let absorbed = state.stats().absorbed_clifford == 1;
+        assert_eq!(
+            absorbed, truth,
+            "{name}: recognizer ({absorbed}) disagrees with dense ground truth ({truth})"
+        );
+        if absorbed {
+            absorbed_names.push(name);
+        } else {
+            rejected_names.push(name);
+        }
+    }
+    // Spot-check both buckets against the textbook.
+    for name in ["h", "s", "sdg", "sx", "x", "y", "z", "cx", "cz", "swap"] {
+        assert!(
+            absorbed_names.iter().any(|n| n == name),
+            "{name} must absorb"
+        );
+    }
+    for name in ["t", "tdg", "rz", "rx", "u", "cp", "ccx", "ccz"] {
+        assert!(
+            rejected_names.iter().any(|n| n == name),
+            "{name} must not absorb at generic parameters"
+        );
+    }
+
+    // Membership is semantic, not name-based: the same parametric gates
+    // absorb exactly at Clifford angles — and the ground truth agrees.
+    use std::f64::consts::{FRAC_PI_2, PI};
+    for (name, params) in [
+        ("rz", vec![FRAC_PI_2]),
+        ("rx", vec![PI]),
+        ("cp", vec![PI]),
+        ("p", vec![-FRAC_PI_2]),
+    ] {
+        let def = reg.resolve(name).unwrap();
+        let m = def.matrix(&params).unwrap();
+        assert!(
+            is_clifford_dense(&m, def.arity()),
+            "{name}({params:?}) is Clifford by ground truth"
+        );
+        let mut state = CliffordFramedState::<C64>::new(def.arity()).unwrap();
+        state
+            .apply(&m, &(0..def.arity()).collect::<Vec<_>>())
+            .unwrap();
+        assert_eq!(
+            state.stats().absorbed_clifford,
+            1,
+            "{name}({params:?}) must absorb"
+        );
+    }
+}
+
+#[test]
+fn clifford_evolution_cost_is_polynomial_in_width_and_depth() {
+    // GK's evolution sector, cost side: a Clifford stream's only costs are
+    // the tableau (linear in width) and the replay log (linear in depth).
+    // The amplitude side stays at support 1 at every width the masks
+    // allow — no hidden exponential anywhere in the free sector.
+    let reg = GateRegistry::<C64>::standard();
+    let stream = |n: usize, gates: usize, seed: u64| -> Circuit {
+        let mut c: Circuit = Circuit::new(n);
+        let mut rng = Prng::new(seed);
+        for _ in 0..gates {
+            let q = (rng.next_u64() % n as u64) as usize;
+            let r = ((q + 1) + (rng.next_u64() % (n as u64 - 1)) as usize) % n;
+            match rng.next_u64() % 6 {
+                0 => c.h(q),
+                1 => c.s(q),
+                2 => c.x(q),
+                3 => c.z(q),
+                4 => c.cx(q, r),
+                _ => c.cz(q, r),
+            };
+        }
+        c
+    };
+    for n in [16usize, 32, 48, 63] {
+        let mut state = CliffordFramedState::<C64>::new(n).unwrap();
+        stream(n, 300, 3)
+            .bind(&reg)
+            .unwrap()
+            .run(&mut state)
+            .unwrap();
+        assert_eq!(state.stored_nonzero_count(), 1, "width {n}");
+        assert_eq!(state.peak_stored_support(), 1, "width {n}");
+        assert!(
+            state.memory_bytes() < 256 * 1024,
+            "width {n}: {} bytes is not width-flat",
+            state.memory_bytes()
+        );
+    }
+    let mut state = CliffordFramedState::<C64>::new(63).unwrap();
+    stream(63, 4000, 4)
+        .bind(&reg)
+        .unwrap()
+        .run(&mut state)
+        .unwrap();
+    assert_eq!(state.frame_gates(), 4000, "log is the depth-linear cost");
+    assert_eq!(state.stored_nonzero_count(), 1);
+    assert!(
+        state.memory_bytes() < 2 * 1024 * 1024,
+        "depth 4000: {} bytes is not log-linear",
+        state.memory_bytes()
+    );
+}
+
+#[test]
+fn the_frame_matches_gottesman_knill_evolution_but_not_readout() {
+    // Two-sided boundary for the GK label. Side 1 — no free magic: T
+    // cannot absorb (T†XT = (X−Y)/√2 leaves the Pauli group), so the cost
+    // of a non-Clifford gate lands on amplitudes the moment it arrives.
+    let reg = GateRegistry::<C64>::standard();
+    let h = reg.resolve("h").unwrap().matrix(&[]).unwrap();
+    let t = reg.resolve("t").unwrap().matrix(&[]).unwrap();
+    let mut state = CliffordFramedState::<C64>::new(1).unwrap();
+    state.apply(&h, &[0]).unwrap();
+    state.apply(&t, &[0]).unwrap();
+    let stats = state.stats();
+    assert_eq!(stats.absorbed_clifford, 1, "only H absorbed");
+    assert_eq!(stats.axis_rotations, 1, "T went to the amplitude side");
+    assert_eq!(
+        state.stored_nonzero_count(),
+        2,
+        "T through an H-frame scatters the stored state (support 1 → 2)"
+    );
+
+    // Side 2 — the label is scoped to *evolution*: amplitude readout of a
+    // scrambled stabilizer state flushes and pays the physical support,
+    // where a true GK tableau simulator answers measurement queries in
+    // polynomial time. Until native Pauli measurement lands (roadmap),
+    // that readout gap is the honest boundary of the claim.
+    let n = 14;
+    let mut circuit: Circuit = Circuit::new(n);
+    for q in 0..n {
+        circuit.h(q);
+    }
+    let mut rng = Prng::new(31);
+    for _ in 0..200 {
+        let q = (rng.next_u64() % n as u64) as usize;
+        let r = ((q + 1) + (rng.next_u64() % (n as u64 - 1)) as usize) % n;
+        match rng.next_u64() % 6 {
+            0 => circuit.h(q),
+            1 => circuit.s(q),
+            2 => circuit.x(q),
+            3 => circuit.z(q),
+            4 => circuit.cx(q, r),
+            _ => circuit.cz(q, r),
+        };
+    }
+    let mut state = CliffordFramedState::<C64>::new(n).unwrap();
+    circuit.bind(&reg).unwrap().run(&mut state).unwrap();
+    assert_eq!(state.stored_nonzero_count(), 1, "evolution was metadata");
+    assert_eq!(state.peak_stored_support(), 1);
+
+    let _ = state.amplitude(0); // one readout query
+    let stats = state.stats();
+    assert_eq!(stats.flushes, 1);
+    assert_eq!(stats.replayed_gates, n + 200);
+    assert!(
+        state.peak_stored_support() >= 1 << (n - 2),
+        "readout materialized the stabilizer state: {}",
+        state.peak_stored_support()
+    );
+}
+
 /// Scaffold: an H-layer, then a seeded Clifford stream with `t` T gates
 /// spliced in at even spacing.
 fn clifford_t_circuit(n: usize, cliffords: usize, t: usize, seed: u64) -> Circuit {

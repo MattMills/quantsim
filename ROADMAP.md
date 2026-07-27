@@ -121,11 +121,19 @@ host:
   generic 1q → ZYZ; else flush + raw. Measured: pure-Clifford streams at
   stored support 1 (Gottesman–Knill via frames, 50 qubits, µs); Clifford+T
   scaffolds bounded by 2^t in T-count t with t=10/n=20 peaking at 128 vs
-  2^20 raw sparse; deviation vs dense at machine precision. Next rungs:
+  2^20 raw sparse; deviation vs dense at machine precision. The
+  Gottesman–Knill label is proven honest from both sides in
+  `tests/clifford_frames.rs`: the absorbed set is *exactly* the Clifford
+  subgroup (bidirectional sweep against an independent dense
+  Pauli-normalizer check — the free sector cannot exceed GK by
+  construction), and the claim is scoped to *evolution* — readout flushes
+  and pays physical support today, where a true tableau simulator answers
+  measurement queries in poly time. Next rungs:
   **stabilizer-rank compression** (the stored state as a sum over
   stabilizer states, ≈2^{0.4t} vs the crude 2^t product bound — the gap is
   now measurable), **native Pauli measurement** (measure through the
-  tableau without materializing the frame), **log compaction** (tableau →
+  tableau without materializing the frame — this is what would close the
+  readout half of Gottesman–Knill), **log compaction** (tableau →
   minimal Clifford circuit synthesis, replacing replay of the full log),
   **per-factor multi-qubit frames** (frames over a factor's whole region —
   can absorb CX-like inject/remove pairs, making parity signal threads

@@ -48,7 +48,7 @@ fn clifford_t_circuit(n: usize, cliffords: usize, t: usize, seed: u64) -> Circui
 fn main() -> Result<()> {
     let reg = GateRegistry::<C64>::standard();
 
-    // ── 1. Gottesman–Knill through the frame: pure Clifford, 50 qubits ──
+    // ── 1. Gottesman–Knill's *evolution* sector through the frame ──
     let n = 50;
     let circuit = clifford_t_circuit(n, 400, 0, 7);
     let bound = circuit.bind(&reg)?;
@@ -67,7 +67,8 @@ fn main() -> Result<()> {
         fmt_bytes(state.memory_bytes()),
         elapsed
     );
-    println!("  (dense would need 2^50 amplitudes = 16 PiB)\n");
+    println!("  (dense would need 2^50 amplitudes = 16 PiB; note: evolution");
+    println!("   only — no amplitude was read. Readout flushes; see section 4.)\n");
 
     // ── 2. The exchange rate: cost = f(T-count), width and gates fixed ──
     let n = 20;
@@ -129,6 +130,78 @@ fn main() -> Result<()> {
     bound.run(&mut dense)?;
     let deviation = max_amplitude_deviation(&dense, &framed);
     println!("verification at {n} qubits, t=6: peak stored support {peak}, deviation vs dense {deviation:.2e}");
+
+    // ── 4. The honest boundary: exactly Gottesman–Knill, never more ──
+    // 4a. The free sector is the Pauli normalizer and nothing else. The
+    //     machine partitions the whole registry by the mechanism it
+    //     actually used (absorption is checked against an independent
+    //     dense ground truth in tests/clifford_frames.rs).
+    let generic = [0.7365, 1.2113, -0.5871];
+    let mut buckets: [(&str, Vec<String>); 5] = [
+        ("absorbed (Clifford, metadata only)", Vec::new()),
+        ("axis rotation (amplitudes touched)", Vec::new()),
+        ("Walsh Z-strings (amplitudes touched)", Vec::new()),
+        ("ZYZ split (amplitudes touched)", Vec::new()),
+        ("flush + raw", Vec::new()),
+    ];
+    let mut names = reg.names();
+    names.sort();
+    for name in names {
+        let def = reg.resolve(&name)?;
+        let k = def.arity();
+        let m = def.matrix(&generic[..def.param_count()])?;
+        let mut probe = CliffordFramedState::<C64>::new(k)?;
+        probe.apply(&m, &(0..k).collect::<Vec<_>>())?;
+        let s = probe.stats();
+        let bucket = if s.absorbed_clifford == 1 {
+            0
+        } else if s.axis_rotations == 1 {
+            1
+        } else if s.diagonal_rotations > 0 {
+            2
+        } else if s.zyz_decompositions == 1 {
+            3
+        } else {
+            4
+        };
+        buckets[bucket].1.push(name);
+    }
+    println!("\nregistry partition at generic parameters (the machine's own free sector):");
+    for (label, members) in &buckets {
+        println!("  {label}: {}", members.join(" "));
+    }
+
+    // 4b. Why T can never absorb: its conjugation leaves the Pauli group.
+    let e = cis(std::f64::consts::FRAC_PI_4);
+    let (a01, a10) = (e, e.conj()); // A = T†XT has these off-diagonals
+    let c_x = (a01 + a10) / 2.0;
+    let c_y = (c64(0.0, 1.0) * (a01 - a10)) / 2.0;
+    println!(
+        "\nT†·X·T = {:+.3}·X {:+.3}·Y — coefficients not in {{±1}}, so T is outside",
+        c_x.re, c_y.re
+    );
+    println!("the Pauli normalizer: absorption *must* refuse it (unit-tested), and its");
+    println!("cost lands on amplitudes. No free magic — else this loop would prove BQP=BPP.");
+
+    // 4c. The label's scope: evolution is polynomial; readout is not yet.
+    let n = 16;
+    let bound = clifford_t_circuit(n, 300, 0, 13).bind(&reg)?;
+    let mut state = CliffordFramedState::<C64>::new(n)?;
+    bound.run(&mut state)?;
+    let before = state.peak_stored_support();
+    let start = std::time::Instant::now();
+    let _ = state.amplitude(0); // one readout query
+    let flush_time = start.elapsed();
+    println!("\nreadout boundary at {n} qubits: peak stored support {before} during evolution,");
+    println!(
+        "  {} after one amplitude() call ({:.2?} flush) — a true tableau simulator",
+        state.peak_stored_support(),
+        flush_time
+    );
+    println!("  answers measurement queries in poly time; this frame does not yet");
+    println!("  (native Pauli measurement is the roadmap rung). The GK claim is");
+    println!("  scoped to evolution, and the tests pin both sides of that boundary.");
+
     println!("\nThe frame walks the Clifford part of the circuit through");
     println!("Sp(2n, F2) as metadata; what the amplitudes pay for is the");
     println!("non-Clifford residue. The cost currency is the T-count.");

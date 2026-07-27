@@ -10,7 +10,18 @@
 //! * **Clifford gates absorb** into the frame (`C ← g·C`): a tableau
 //!   update and a log push, zero amplitude work. A circuit of Clifford
 //!   gates keeps the stored support at **1** at any width the sparse map
-//!   allows — Gottesman–Knill reproduced by the frame mechanism.
+//!   allows — the *evolution* sector of Gottesman–Knill reproduced by the
+//!   frame mechanism. Two scope statements keep that label honest. The
+//!   free sector cannot exceed the Clifford group: absorption's acceptance
+//!   test — every conjugated generator must land on a single ±1 Pauli — is
+//!   the definition of Pauli-normalizer membership (verified bidirectionally
+//!   against an independent dense ground truth over the whole registry in
+//!   `tests/clifford_frames.rs`), so a non-Clifford gate *cannot* ride for
+//!   free; anything else would be a BQP = BPP claim. And the sector is
+//!   evolution only: amplitude readout of the held state still flushes and
+//!   pays the physical support, where a true tableau simulator answers
+//!   measurement queries in polynomial time — native Pauli measurement is
+//!   the roadmap rung that would close that gap.
 //! * **Pauli-axis rotations conjugate**: `exp(−iθ/2·P)` becomes
 //!   `exp(−iθ/2·C†PC)`, another signed Pauli string read off the tableau,
 //!   applied natively by [`SparseState::apply_pauli_rotation`] in
