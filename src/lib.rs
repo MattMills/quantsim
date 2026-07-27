@@ -87,8 +87,9 @@ pub use sim::Simulator;
 pub mod prelude {
     pub use crate::backend::{
         max_amplitude_deviation, pauli_expectation, AdaptiveState, ArityPolicy, Backend,
-        BackendRegistry, DenseState, DeviceState, DurationModel, FactoredState, InterferenceRecord,
-        InterferenceState, MpsConfig, MpsState, PhysicalOp, SparseState, Topology,
+        BackendRegistry, DenseState, DeviceState, DurationModel, FactoredState, FrameStats,
+        FramedState, InterferenceRecord, InterferenceState, MpsConfig, MpsState, PhysicalOp,
+        SparseState, Topology,
     };
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
     pub use crate::conformance::{

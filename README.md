@@ -60,6 +60,16 @@ parts are swappable:
   SWAP-routing that walks entanglement stepwise through adjacency with a
   persistent logical→physical mapping, per-qubit latency clocks, and a full
   physical op log — while answering in logical indices identical to dense.
+- **Local frames** ([`FramedState`](src/backend/frames.rs)) — deferred
+  per-qubit basis changes as representation metadata over *any* inner
+  backend: 1q gates absorb for free (inverse pairs cancel without touching
+  amplitudes), multi-qubit gates are conjugated into the frame and take the
+  diagonal fast path when the frame diagonalizes them, observation flushes
+  lazily. Entanglement is local-unitary-invariant — frames buy the
+  *basis-dependent* costs: an `h`/`rx`/`rxx` transverse-field bulk keeps
+  stored support at **1** where raw sparse pays `2^n` peak (tested at
+  >100×). `adopt_frame` rewrites representation without touching physics —
+  the concrete mechanism behind computation-transparent structure insertion.
 - **VOLK-style selection** ([`harness::select_backend`]) — profile candidate
   backends on your workload on *this* machine and pick the best by time or
   memory, with fidelity as a hard gate: a fast-but-wrong kernel is rejected
@@ -160,7 +170,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 173 tests (169 across fourteen suites + 4 doctests); line
+`cargo test` runs 180 tests (176 across fifteen suites + 4 doctests); line
 coverage is 92.6% (94.1% region) via `cargo llvm-cov`, with the remaining
 gap almost entirely trivial accessors and defensive guards:
 
@@ -309,7 +319,7 @@ src/
   library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           fourteen integration suites (see Testing)
+tests/           fifteen integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling

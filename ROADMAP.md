@@ -103,12 +103,17 @@ host:
 - **Beyond rank-1 splits** — Schmidt-rank-k factor boundaries (bond
   indices), at which point `FactoredState` *becomes* a general tensor
   network; needs the Jacobi SVD planned for MPS.
-- **Local frames/gauges** — per-factor basis changes stored as metadata
-  rather than applied. This is the mechanism by which *transparent
-  insertions* (see `discovery`) could genuinely reduce future cost: today
-  a state-preserving insertion cannot change the state trajectory, only
-  the representation — frames make representation a first-class degree of
-  freedom that structure-insertion can optimize.
+- **Local frames/gauges — per-qubit SHIPPED** (`FramedState`): deferred
+  1q basis metadata over any inner backend, absorption/conjugation/lazy
+  flush, `adopt_frame`/`release_frame`, stats and peak-inner-memory
+  instrumentation; conformance-verified over sparse/dense/mps inners.
+  Measured payoff: transverse-field bulk at stored support 1 vs 2^n raw
+  (>100× peak memory). Next rungs: **per-factor multi-qubit frames**
+  (frames over a factor's whole region — can absorb CX-like inject/remove
+  pairs, making parity signal threads representation-free), **Clifford
+  frames** (track stabilizer-group conjugation symbolically instead of
+  2×2 matrices — turns whole Clifford prefixes into metadata), and **MPS
+  bond gauges** (the tensor-network analogue).
 - **Scheduling-aware geometry** — the evented scheduler knows *when*
   regions interact; a lookahead pass could pre-plan merges/splits (or
   memory swap-outs) to minimize peak factor width over the whole schedule.
