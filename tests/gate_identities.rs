@@ -13,50 +13,164 @@ use quantsim::prelude::*;
 fn pauli_conjugations_by_h() {
     // HXH = Z, HZH = X, HYH = −Y (up to global phase −1 on the Y case: use
     // exact equality — HYH = −Y holds exactly, so compare against y + phase).
-    assert_equiv(1, |c| { c.h(0).x(0).h(0); }, |c| { c.z(0); });
-    assert_equiv(1, |c| { c.h(0).z(0).h(0); }, |c| { c.x(0); });
-    assert_equiv_up_to_phase(1, |c| { c.h(0).y(0).h(0); }, |c| { c.y(0); });
+    assert_equiv(
+        1,
+        |c| {
+            c.h(0).x(0).h(0);
+        },
+        |c| {
+            c.z(0);
+        },
+    );
+    assert_equiv(
+        1,
+        |c| {
+            c.h(0).z(0).h(0);
+        },
+        |c| {
+            c.x(0);
+        },
+    );
+    assert_equiv_up_to_phase(
+        1,
+        |c| {
+            c.h(0).y(0).h(0);
+        },
+        |c| {
+            c.y(0);
+        },
+    );
 }
 
 #[test]
 fn s_conjugation_turns_x_into_y() {
     // S X S† = Y.
-    assert_equiv(1, |c| { c.sdg(0).x(0).s(0); }, |c| { c.y(0); });
+    assert_equiv(
+        1,
+        |c| {
+            c.sdg(0).x(0).s(0);
+        },
+        |c| {
+            c.y(0);
+        },
+    );
 }
 
 #[test]
 fn phase_gate_powers() {
     // T² = S, S² = Z, √X² = X, (√X)† = sxdg.
-    assert_equiv(1, |c| { c.t(0).t(0); }, |c| { c.s(0); });
-    assert_equiv(1, |c| { c.s(0).s(0); }, |c| { c.z(0); });
-    assert_equiv(1, |c| { c.sx(0).sx(0); }, |c| { c.x(0); });
-    assert_equiv(1, |c| { c.sx(0).sxdg(0); }, |_| {});
-    assert_equiv(1, |c| { c.t(0).tdg(0); }, |_| {});
+    assert_equiv(
+        1,
+        |c| {
+            c.t(0).t(0);
+        },
+        |c| {
+            c.s(0);
+        },
+    );
+    assert_equiv(
+        1,
+        |c| {
+            c.s(0).s(0);
+        },
+        |c| {
+            c.z(0);
+        },
+    );
+    assert_equiv(
+        1,
+        |c| {
+            c.sx(0).sx(0);
+        },
+        |c| {
+            c.x(0);
+        },
+    );
+    assert_equiv(
+        1,
+        |c| {
+            c.sx(0).sxdg(0);
+        },
+        |_| {},
+    );
+    assert_equiv(
+        1,
+        |c| {
+            c.t(0).tdg(0);
+        },
+        |_| {},
+    );
     // S = diag(1, i) is *not* self-inverse: S⁴ = I.
-    assert_equiv(1, |c| { c.s(0).s(0).s(0).s(0); }, |_| {});
+    assert_equiv(
+        1,
+        |c| {
+            c.s(0).s(0).s(0).s(0);
+        },
+        |_| {},
+    );
 }
 
 #[test]
 fn swap_is_three_cnots() {
-    assert_equiv(2, |c| { c.swap(0, 1); }, |c| { c.cx(0, 1).cx(1, 0).cx(0, 1); });
+    assert_equiv(
+        2,
+        |c| {
+            c.swap(0, 1);
+        },
+        |c| {
+            c.cx(0, 1).cx(1, 0).cx(0, 1);
+        },
+    );
 }
 
 #[test]
 fn cz_is_h_conjugated_cx() {
-    assert_equiv(2, |c| { c.cz(0, 1); }, |c| { c.h(1).cx(0, 1).h(1); });
+    assert_equiv(
+        2,
+        |c| {
+            c.cz(0, 1);
+        },
+        |c| {
+            c.h(1).cx(0, 1).h(1);
+        },
+    );
     // CZ is symmetric in its qubits.
-    assert_equiv(2, |c| { c.cz(0, 1); }, |c| { c.cz(1, 0); });
+    assert_equiv(
+        2,
+        |c| {
+            c.cz(0, 1);
+        },
+        |c| {
+            c.cz(1, 0);
+        },
+    );
 }
 
 #[test]
 fn cx_direction_reversal_via_hadamards() {
-    assert_equiv(2, |c| { c.cx(1, 0); }, |c| { c.h(0).h(1).cx(0, 1).h(0).h(1); });
+    assert_equiv(
+        2,
+        |c| {
+            c.cx(1, 0);
+        },
+        |c| {
+            c.h(0).h(1).cx(0, 1).h(0).h(1);
+        },
+    );
 }
 
 #[test]
 fn iswap_decomposition() {
     // iSWAP = SWAP · (S ⊗ S) · CZ  (circuit order: cz, s, s, swap).
-    assert_equiv(2, |c| { c.iswap(0, 1); }, |c| { c.cz(0, 1).s(0).s(1).swap(0, 1); });
+    assert_equiv(
+        2,
+        |c| {
+            c.iswap(0, 1);
+        },
+        |c| {
+            c.cz(0, 1).s(0).s(1).swap(0, 1);
+        },
+    );
 }
 
 #[test]
@@ -91,21 +205,77 @@ fn toffoli_standard_decomposition() {
 #[test]
 fn ccz_from_toffoli() {
     // CCZ = H(t) · CCX · H(t), and is symmetric under any qubit ordering.
-    assert_equiv(3, |c| { c.ccz(0, 1, 2); }, |c| { c.h(2).ccx(0, 1, 2).h(2); });
-    assert_equiv(3, |c| { c.ccz(0, 1, 2); }, |c| { c.ccz(2, 0, 1); });
+    assert_equiv(
+        3,
+        |c| {
+            c.ccz(0, 1, 2);
+        },
+        |c| {
+            c.h(2).ccx(0, 1, 2).h(2);
+        },
+    );
+    assert_equiv(
+        3,
+        |c| {
+            c.ccz(0, 1, 2);
+        },
+        |c| {
+            c.ccz(2, 0, 1);
+        },
+    );
 }
 
 #[test]
 fn rotation_composition_and_conjugation() {
     let (a, b) = (0.87, -1.93);
     // Additivity (exact for the exp(−iθP/2) convention).
-    assert_equiv(1, |c| { c.rz(0, a).rz(0, b); }, |c| { c.rz(0, a + b); });
-    assert_equiv(1, |c| { c.rx(0, a).rx(0, b); }, |c| { c.rx(0, a + b); });
-    assert_equiv(1, |c| { c.ry(0, a).ry(0, b); }, |c| { c.ry(0, a + b); });
+    assert_equiv(
+        1,
+        |c| {
+            c.rz(0, a).rz(0, b);
+        },
+        |c| {
+            c.rz(0, a + b);
+        },
+    );
+    assert_equiv(
+        1,
+        |c| {
+            c.rx(0, a).rx(0, b);
+        },
+        |c| {
+            c.rx(0, a + b);
+        },
+    );
+    assert_equiv(
+        1,
+        |c| {
+            c.ry(0, a).ry(0, b);
+        },
+        |c| {
+            c.ry(0, a + b);
+        },
+    );
     // Basis change: RX(θ) = H RZ(θ) H.
-    assert_equiv(1, |c| { c.rx(0, a); }, |c| { c.h(0).rz(0, a).h(0); });
+    assert_equiv(
+        1,
+        |c| {
+            c.rx(0, a);
+        },
+        |c| {
+            c.h(0).rz(0, a).h(0);
+        },
+    );
     // RZ vs phase gate: p(θ) = e^{iθ/2} rz(θ).
-    assert_equiv_up_to_phase(1, |c| { c.p(0, a); }, |c| { c.rz(0, a); });
+    assert_equiv_up_to_phase(
+        1,
+        |c| {
+            c.p(0, a);
+        },
+        |c| {
+            c.rz(0, a);
+        },
+    );
 }
 
 #[test]
@@ -172,7 +342,11 @@ fn controlled_gate_with_control_zero_is_identity() {
     // Prepare q0 = |0⟩ definitively, scramble only q1: controlled ops do
     // nothing.
     let mut with = Circuit::new(2);
-    with.u(1, 0.9, 0.4, 1.7).cx(0, 1).cz(0, 1).crz(0, 1, 2.2).ch(0, 1);
+    with.u(1, 0.9, 0.4, 1.7)
+        .cx(0, 1)
+        .cz(0, 1)
+        .crz(0, 1, 2.2)
+        .ch(0, 1);
     let mut without = Circuit::new(2);
     without.u(1, 0.9, 0.4, 1.7);
     let (sa, sb) = (run_dense(&with), run_dense(&without));

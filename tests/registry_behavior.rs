@@ -13,10 +13,22 @@ fn xy_matrix(theta: f64) -> GateMatrix<C64> {
     GateMatrix::from_vec(
         4,
         vec![
-            o, l, l, l,
-            l, c64(c, 0.0), c64(0.0, -s), l,
-            l, c64(0.0, -s), c64(c, 0.0), l,
-            l, l, l, o,
+            o,
+            l,
+            l,
+            l,
+            l,
+            c64(c, 0.0),
+            c64(0.0, -s),
+            l,
+            l,
+            c64(0.0, -s),
+            c64(c, 0.0),
+            l,
+            l,
+            l,
+            l,
+            o,
         ],
     )
     .unwrap()
@@ -49,7 +61,9 @@ fn research_gate_registration_and_use() {
 #[test]
 fn duplicate_and_unknown_gates_error() {
     let mut reg: GateRegistry = GateRegistry::standard();
-    let err = reg.register_fixed("h", "clash", GateMatrix::identity(2).unwrap()).unwrap_err();
+    let err = reg
+        .register_fixed("h", "clash", GateMatrix::identity(2).unwrap())
+        .unwrap_err();
     assert!(matches!(err, Error::DuplicateGate(name) if name == "h"));
 
     let err = reg.alias("cx", "swap").unwrap_err();
@@ -68,7 +82,9 @@ fn non_unitary_matrices_rejected() {
     let mut reg: GateRegistry = GateRegistry::new();
     let mut bad = GateMatrix::<C64>::identity(2).unwrap();
     bad.set(0, 0, c64(2.0, 0.0));
-    let err = reg.register_fixed("bad", "not unitary", bad.clone()).unwrap_err();
+    let err = reg
+        .register_fixed("bad", "not unitary", bad.clone())
+        .unwrap_err();
     assert!(matches!(err, Error::NotUnitary { deviation, .. } if deviation > 1.0));
 
     // Raw matrices are checked at bind time too.
@@ -85,27 +101,50 @@ fn dimension_and_arity_validation() {
     let err = reg
         .register_parametric("wrong_dim", "", 2, 0, |_| GateMatrix::identity(2))
         .unwrap_err();
-    assert!(matches!(err, Error::BadDimension { expected: 4, got: 2 }));
+    assert!(matches!(
+        err,
+        Error::BadDimension {
+            expected: 4,
+            got: 2
+        }
+    ));
 
     let reg: GateRegistry = GateRegistry::standard();
     let mut c = Circuit::new(3);
     c.gate("cx", Vec::new(), vec![0, 1, 2]);
-    assert!(matches!(c.bind(&reg).unwrap_err(), Error::ArityMismatch { expected: 2, got: 3, .. }));
+    assert!(matches!(
+        c.bind(&reg).unwrap_err(),
+        Error::ArityMismatch {
+            expected: 2,
+            got: 3,
+            ..
+        }
+    ));
 
     let mut c = Circuit::new(1);
     c.gate("rx", Vec::new(), vec![0]);
     assert!(matches!(
         c.bind(&reg).unwrap_err(),
-        Error::ParamCountMismatch { expected: 1, got: 0, .. }
+        Error::ParamCountMismatch {
+            expected: 1,
+            got: 0,
+            ..
+        }
     ));
 
     let mut c = Circuit::new(2);
     c.gate("cx", Vec::new(), vec![0, 5]);
-    assert!(matches!(c.bind(&reg).unwrap_err(), Error::QubitOutOfRange { qubit: 5, .. }));
+    assert!(matches!(
+        c.bind(&reg).unwrap_err(),
+        Error::QubitOutOfRange { qubit: 5, .. }
+    ));
 
     let mut c = Circuit::new(2);
     c.gate("cx", Vec::new(), vec![1, 1]);
-    assert!(matches!(c.bind(&reg).unwrap_err(), Error::DuplicateQubits { .. }));
+    assert!(matches!(
+        c.bind(&reg).unwrap_err(),
+        Error::DuplicateQubits { .. }
+    ));
 }
 
 #[test]
@@ -126,7 +165,10 @@ fn gate_def_trait_objects_work_directly() {
                 2,
                 &[c64(1.0, 0.0), c64(0.0, 0.0), c64(0.0, 0.0), c64(-1.0, 0.0)],
             )
-            .ok_or(Error::UnsupportedForAlgebra { gate: "my_z".into(), algebra: "?".into() })
+            .ok_or(Error::UnsupportedForAlgebra {
+                gate: "my_z".into(),
+                algebra: "?".into(),
+            })
         }
     }
     let mut reg: GateRegistry = GateRegistry::new();
@@ -181,19 +223,29 @@ fn research_backend_via_registry() {
     let mut sim: Simulator = Simulator::new();
     sim.backends_mut()
         .register("counting", |n| {
-            Ok(Box::new(CountingBackend { inner: DenseState::new(n)?, applied: 0 }))
+            Ok(Box::new(CountingBackend {
+                inner: DenseState::new(n)?,
+                applied: 0,
+            }))
         })
         .unwrap();
-    assert_eq!(sim.backends().names(), vec!["adaptive", "counting", "dense", "sparse"]);
+    assert_eq!(
+        sim.backends().names(),
+        vec!["adaptive", "counting", "dense", "sparse"]
+    );
 
     let c = library::ghz(4);
     let state = sim.run_on("counting", &c).unwrap();
     let counting = state.as_any().downcast_ref::<CountingBackend>().unwrap();
     assert_eq!(counting.applied, c.len());
     // And it simulates correctly while counting.
-    assert!(state.amplitude(0).approx_eq(c64(std::f64::consts::FRAC_1_SQRT_2, 0.0), TOL));
+    assert!(state
+        .amplitude(0)
+        .approx_eq(c64(std::f64::consts::FRAC_1_SQRT_2, 0.0), TOL));
 
-    let err = sim.backends_mut().register("dense", |n| Ok(Box::new(DenseState::new(n)?)));
+    let err = sim
+        .backends_mut()
+        .register("dense", |n| Ok(Box::new(DenseState::new(n)?)));
     assert!(matches!(err.unwrap_err(), Error::DuplicateBackend(_)));
     match sim.run_on("no_such_backend", &c) {
         Err(Error::UnknownBackend(name)) => assert_eq!(name, "no_such_backend"),
@@ -227,7 +279,9 @@ fn quaternionic_research_gate() {
     let mut m = GateMatrix::<Quaternion>::identity(2).unwrap();
     m.set(1, 1, j);
     let mut sim = Simulator::<Quaternion>::new();
-    sim.registry_mut().register_fixed("jphase", "diag(1, j)", m).unwrap();
+    sim.registry_mut()
+        .register_fixed("jphase", "diag(1, j)", m)
+        .unwrap();
 
     let mut c: Circuit<Quaternion> = Circuit::new(1);
     c.h(0).gate("jphase", Vec::new(), vec![0]);
@@ -235,5 +289,8 @@ fn quaternionic_research_gate() {
     // Amplitude of |1⟩ is j/√2: coefficients [0, 0, 1/√2, 0].
     let coeffs = state.amplitude(1).coeffs();
     assert!((coeffs[2] - std::f64::consts::FRAC_1_SQRT_2).abs() < TOL);
-    assert!((state.total_weight() - 1.0).abs() < TOL, "j-phase preserves Born weight");
+    assert!(
+        (state.total_weight() - 1.0).abs() < TOL,
+        "j-phase preserves Born weight"
+    );
 }

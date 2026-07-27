@@ -53,7 +53,9 @@ impl<S: Scalar> Default for GateRegistry<S> {
 impl<S: Scalar> GateRegistry<S> {
     /// An empty registry.
     pub fn new() -> Self {
-        GateRegistry { gates: HashMap::new() }
+        GateRegistry {
+            gates: HashMap::new(),
+        }
     }
 
     /// A registry pre-loaded with every standard gate the algebra supports.
@@ -87,11 +89,17 @@ impl<S: Scalar> GateRegistry<S> {
         let m = def.matrix(&probe)?;
         let expected = 1usize << def.arity();
         if m.dim() != expected {
-            return Err(Error::BadDimension { expected, got: m.dim() });
+            return Err(Error::BadDimension {
+                expected,
+                got: m.dim(),
+            });
         }
         let dev = m.unitarity_deviation();
         if dev > UNITARY_TOL {
-            return Err(Error::NotUnitary { label: name, deviation: dev });
+            return Err(Error::NotUnitary {
+                label: name,
+                deviation: dev,
+            });
         }
         self.gates.insert(name, def);
         Ok(())
@@ -116,7 +124,13 @@ impl<S: Scalar> GateRegistry<S> {
         param_count: usize,
         build: impl Fn(&[f64]) -> Result<GateMatrix<S>> + Send + Sync + 'static,
     ) -> Result<()> {
-        self.register(Arc::new(ParamGate::new(name, description, arity, param_count, build)))
+        self.register(Arc::new(ParamGate::new(
+            name,
+            description,
+            arity,
+            param_count,
+            build,
+        )))
     }
 
     /// Add an alias for an existing gate.
@@ -137,7 +151,8 @@ impl<S: Scalar> GateRegistry<S> {
 
     /// Look up a gate, failing with [`Error::UnknownGate`].
     pub fn resolve(&self, name: &str) -> Result<Arc<dyn GateDef<S>>> {
-        self.get(name).ok_or_else(|| Error::UnknownGate(name.to_string()))
+        self.get(name)
+            .ok_or_else(|| Error::UnknownGate(name.to_string()))
     }
 
     /// Whether a gate (or alias) with this name exists.

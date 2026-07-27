@@ -79,7 +79,7 @@ pub fn mcz_matrix<S: Scalar>(n: usize) -> Result<GateMatrix<S>> {
 /// `iterations` rounds of oracle + diffusion. The optimal iteration count is
 /// roughly `π/4 · √(2^n)`.
 pub fn grover<S: Scalar>(n: usize, marked: u64, iterations: usize) -> Result<Circuit<S>> {
-    assert!(n >= 1 && n <= 32, "grover: unreasonable width");
+    assert!((1..=32).contains(&n), "grover: unreasonable width");
     assert!(marked < (1u64 << n), "grover: marked state out of range");
     let mcz = mcz_matrix::<S>(n)?;
     let all: Vec<usize> = (0..n).collect();

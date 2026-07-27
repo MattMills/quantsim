@@ -88,7 +88,10 @@ fn bell_sampling_never_yields_odd_parity() {
         let counts = state.sample(4096, &mut Prng::new(7)).unwrap();
         assert_eq!(*counts.get(&0b01).unwrap_or(&0), 0, "{name}");
         assert_eq!(*counts.get(&0b10).unwrap_or(&0), 0, "{name}");
-        let (z, o) = (*counts.get(&0b00).unwrap_or(&0), *counts.get(&0b11).unwrap_or(&0));
+        let (z, o) = (
+            *counts.get(&0b00).unwrap_or(&0),
+            *counts.get(&0b11).unwrap_or(&0),
+        );
         assert_eq!(z + o, 4096);
         assert!((1792..=2304).contains(&z), "{name}: {z} zeros"); // 4σ ≈ 256
     }
@@ -109,8 +112,11 @@ fn project_manual() {
 #[test]
 fn load_and_reset() {
     let w = 1.0 / (3.0f64).sqrt();
-    let entries: Vec<(u64, C64)> =
-        vec![(0b001, c64(w, 0.0)), (0b010, c64(0.0, w)), (0b100, c64(-w, 0.0))];
+    let entries: Vec<(u64, C64)> = vec![
+        (0b001, c64(w, 0.0)),
+        (0b010, c64(0.0, w)),
+        (0b100, c64(-w, 0.0)),
+    ];
     for name in BACKENDS {
         let mut state = sim().backends().create(name, 3).unwrap();
         state.load(&entries).unwrap();
@@ -176,23 +182,63 @@ fn sparse_stays_exact_on_stabilizer_circuits() {
 fn pauli_expectations() {
     use Pauli::*;
     let bell = run_dense(&library::bell());
-    assert_close(pauli_expectation(bell.as_ref(), &[(0, Z), (1, Z)]).unwrap().re, 1.0, TOL);
-    assert_close(pauli_expectation(bell.as_ref(), &[(0, X), (1, X)]).unwrap().re, 1.0, TOL);
-    assert_close(pauli_expectation(bell.as_ref(), &[(0, Y), (1, Y)]).unwrap().re, -1.0, TOL);
-    assert_close(pauli_expectation(bell.as_ref(), &[(0, Z)]).unwrap().re, 0.0, TOL);
-    assert_close(pauli_expectation(bell.as_ref(), &[(0, I), (1, Z)]).unwrap().re, 0.0, TOL);
+    assert_close(
+        pauli_expectation(bell.as_ref(), &[(0, Z), (1, Z)])
+            .unwrap()
+            .re,
+        1.0,
+        TOL,
+    );
+    assert_close(
+        pauli_expectation(bell.as_ref(), &[(0, X), (1, X)])
+            .unwrap()
+            .re,
+        1.0,
+        TOL,
+    );
+    assert_close(
+        pauli_expectation(bell.as_ref(), &[(0, Y), (1, Y)])
+            .unwrap()
+            .re,
+        -1.0,
+        TOL,
+    );
+    assert_close(
+        pauli_expectation(bell.as_ref(), &[(0, Z)]).unwrap().re,
+        0.0,
+        TOL,
+    );
+    assert_close(
+        pauli_expectation(bell.as_ref(), &[(0, I), (1, Z)])
+            .unwrap()
+            .re,
+        0.0,
+        TOL,
+    );
 
     let mut plus = Circuit::new(1);
     plus.h(0);
     let plus = run_dense(&plus);
-    assert_close(pauli_expectation(plus.as_ref(), &[(0, X)]).unwrap().re, 1.0, TOL);
-    assert_close(pauli_expectation(plus.as_ref(), &[(0, Z)]).unwrap().re, 0.0, TOL);
+    assert_close(
+        pauli_expectation(plus.as_ref(), &[(0, X)]).unwrap().re,
+        1.0,
+        TOL,
+    );
+    assert_close(
+        pauli_expectation(plus.as_ref(), &[(0, Z)]).unwrap().re,
+        0.0,
+        TOL,
+    );
 
     // T|+⟩: ⟨X⟩ = cos(π/4).
     let mut c = Circuit::new(1);
     c.h(0).t(0);
     let state = run_dense(&c);
-    assert_close(pauli_expectation(state.as_ref(), &[(0, X)]).unwrap().re, FRAC_1_SQRT_2, TOL);
+    assert_close(
+        pauli_expectation(state.as_ref(), &[(0, X)]).unwrap().re,
+        FRAC_1_SQRT_2,
+        TOL,
+    );
 
     // Y over ℝ cannot exist.
     let real_state = DenseState::<f64>::new(1).unwrap();
@@ -226,7 +272,10 @@ fn measure_out_of_range_errors() {
     let mut state = DenseState::<C64>::new(2).unwrap();
     assert!(matches!(
         state.measure(2, &mut Prng::new(0)),
-        Err(Error::QubitOutOfRange { qubit: 2, num_qubits: 2 })
+        Err(Error::QubitOutOfRange {
+            qubit: 2,
+            num_qubits: 2
+        })
     ));
 }
 
@@ -234,17 +283,26 @@ fn measure_out_of_range_errors() {
 fn width_limits_enforced() {
     assert!(matches!(
         DenseState::<C64>::new(33),
-        Err(Error::TooManyQubits { requested: 33, max: 32 })
+        Err(Error::TooManyQubits {
+            requested: 33,
+            max: 32
+        })
     ));
     assert!(SparseState::<C64>::new(63).is_ok());
-    assert!(matches!(SparseState::<C64>::new(64), Err(Error::TooManyQubits { .. })));
+    assert!(matches!(
+        SparseState::<C64>::new(64),
+        Err(Error::TooManyQubits { .. })
+    ));
     // Width mismatch between circuit and backend.
     let reg: GateRegistry = GateRegistry::standard();
     let bound = library::bell::<C64>().bind(&reg).unwrap();
     let mut state = DenseState::<C64>::new(3).unwrap();
     assert!(matches!(
         bound.run(&mut state),
-        Err(Error::WidthMismatch { circuit: 2, backend: 3 })
+        Err(Error::WidthMismatch {
+            circuit: 2,
+            backend: 3
+        })
     ));
 }
 
@@ -283,5 +341,8 @@ fn teleportation_with_mid_circuit_measurement() {
         assert!(a0.approx_eq(alpha, TOL), "seed {seed}: {a0} vs {alpha}");
         assert!(a1.approx_eq(beta, TOL), "seed {seed}: {a1} vs {beta}");
     }
-    assert!(outcomes_seen.len() >= 3, "expected varied Bell outcomes: {outcomes_seen:?}");
+    assert!(
+        outcomes_seen.len() >= 3,
+        "expected varied Bell outcomes: {outcomes_seen:?}"
+    );
 }

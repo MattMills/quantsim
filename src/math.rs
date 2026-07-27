@@ -42,7 +42,10 @@ impl<S: Scalar> GateMatrix<S> {
         if dim == 0 || !dim.is_power_of_two() {
             return Err(Error::NonPowerOfTwoDim(dim));
         }
-        Ok(GateMatrix { dim, data: vec![S::zero(); dim * dim] })
+        Ok(GateMatrix {
+            dim,
+            data: vec![S::zero(); dim * dim],
+        })
     }
 
     /// Identity matrix of the given power-of-two dimension.
@@ -60,7 +63,10 @@ impl<S: Scalar> GateMatrix<S> {
             return Err(Error::NonPowerOfTwoDim(dim));
         }
         if data.len() != dim * dim {
-            return Err(Error::BadDimension { expected: dim * dim, got: data.len() });
+            return Err(Error::BadDimension {
+                expected: dim * dim,
+                got: data.len(),
+            });
         }
         Ok(GateMatrix { dim, data })
     }
@@ -73,7 +79,10 @@ impl<S: Scalar> GateMatrix<S> {
     /// Panics if `entries.len() != dim * dim` or `dim` is not a power of two
     /// (programmer error in a gate definition).
     pub fn try_from_c64s(dim: usize, entries: &[C64]) -> Option<Self> {
-        assert!(dim.is_power_of_two(), "gate dimension must be a power of two");
+        assert!(
+            dim.is_power_of_two(),
+            "gate dimension must be a power of two"
+        );
         assert_eq!(entries.len(), dim * dim, "entry count must be dim^2");
         let mut data = Vec::with_capacity(entries.len());
         for &z in entries {
@@ -234,8 +243,11 @@ mod tests {
     }
 
     fn x() -> GateMatrix<C64> {
-        GateMatrix::try_from_c64s(2, &[c64(0.0, 0.0), c64(1.0, 0.0), c64(1.0, 0.0), c64(0.0, 0.0)])
-            .unwrap()
+        GateMatrix::try_from_c64s(
+            2,
+            &[c64(0.0, 0.0), c64(1.0, 0.0), c64(1.0, 0.0), c64(0.0, 0.0)],
+        )
+        .unwrap()
     }
 
     #[test]
@@ -271,10 +283,22 @@ mod tests {
         let expect = GateMatrix::from_vec(
             4,
             vec![
-                c64(1.0, 0.0), c64(0.0, 0.0), c64(0.0, 0.0), c64(0.0, 0.0),
-                c64(0.0, 0.0), c64(0.0, 0.0), c64(0.0, 0.0), c64(1.0, 0.0),
-                c64(0.0, 0.0), c64(0.0, 0.0), c64(1.0, 0.0), c64(0.0, 0.0),
-                c64(0.0, 0.0), c64(1.0, 0.0), c64(0.0, 0.0), c64(0.0, 0.0),
+                c64(1.0, 0.0),
+                c64(0.0, 0.0),
+                c64(0.0, 0.0),
+                c64(0.0, 0.0),
+                c64(0.0, 0.0),
+                c64(0.0, 0.0),
+                c64(0.0, 0.0),
+                c64(1.0, 0.0),
+                c64(0.0, 0.0),
+                c64(0.0, 0.0),
+                c64(1.0, 0.0),
+                c64(0.0, 0.0),
+                c64(0.0, 0.0),
+                c64(1.0, 0.0),
+                c64(0.0, 0.0),
+                c64(0.0, 0.0),
             ],
         )
         .unwrap();

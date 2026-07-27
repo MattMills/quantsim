@@ -34,7 +34,12 @@ pub fn assert_close(a: f64, b: f64, tol: f64) {
 pub fn scrambler(n: usize) -> Circuit {
     let mut c = Circuit::new(n);
     for q in 0..n {
-        c.u(q, 0.3 + 0.4 * q as f64, 1.1 - 0.2 * q as f64, 0.7 + 0.15 * q as f64);
+        c.u(
+            q,
+            0.3 + 0.4 * q as f64,
+            1.1 - 0.2 * q as f64,
+            0.7 + 0.15 * q as f64,
+        );
     }
     for q in 0..n.saturating_sub(1) {
         c.cx(q, q + 1);
@@ -84,6 +89,9 @@ pub fn assert_equiv_up_to_phase(
     assert_close(phase.norm(), 1.0, 1e-6);
     for i in 0..(1u64 << n) {
         let (x, y) = (sa.amplitude(i) * phase, sb.amplitude(i));
-        assert!(x.approx_eq(y, 1e-7), "amplitude {i} differs up to phase: {x} vs {y}");
+        assert!(
+            x.approx_eq(y, 1e-7),
+            "amplitude {i} differs up to phase: {x} vs {y}"
+        );
     }
 }

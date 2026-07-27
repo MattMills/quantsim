@@ -26,7 +26,10 @@ fn dense_memory_doubles_per_qubit() {
         let mem = state.memory_bytes();
         let ideal = amp << n;
         assert!(mem >= ideal, "n={n}: {mem} < {ideal}");
-        assert!(mem <= ideal + 512, "n={n}: overhead too large: {mem} vs {ideal}");
+        assert!(
+            mem <= ideal + 512,
+            "n={n}: overhead too large: {mem} vs {ideal}"
+        );
         // Doubling ratio, once past the widths where the constant struct
         // overhead is comparable to the amplitude vector itself.
         if n > 8 {
@@ -48,7 +51,10 @@ fn dense_memory_scales_with_algebra_dimension() {
     let sed = DenseState::<Sedenion>::new(n).unwrap().memory_bytes();
     let approx = |a: usize, b: usize, factor: f64| {
         let r = b as f64 / a as f64;
-        assert!((r / factor - 1.0).abs() < 0.05, "{a} vs {b}: ratio {r}, expected {factor}");
+        assert!(
+            (r / factor - 1.0).abs() < 0.05,
+            "{a} vs {b}: ratio {r}, expected {factor}"
+        );
     };
     approx(real, complex, 2.0);
     approx(complex, quat, 2.0);
@@ -69,7 +75,10 @@ fn sparse_ghz_memory_is_width_independent() {
     }
     let max = *footprints.iter().max().unwrap();
     let min = *footprints.iter().min().unwrap();
-    assert_eq!(max, min, "sparse GHZ footprint must not grow with width: {footprints:?}");
+    assert_eq!(
+        max, min,
+        "sparse GHZ footprint must not grow with width: {footprints:?}"
+    );
     assert!(max < 4096, "two-amplitude state should be tiny, got {max}");
 }
 
@@ -97,7 +106,10 @@ fn adaptive_tracks_the_cheaper_representation() {
     // Concentrated state: adaptive ≈ sparse ≪ dense.
     let ghz = sim.run_on("adaptive", &library::ghz(n)).unwrap();
     let dense_cost = DenseState::<C64>::new(n).unwrap().memory_bytes();
-    assert!(ghz.memory_bytes() * 100 < dense_cost, "GHZ via adaptive should be ≪ dense");
+    assert!(
+        ghz.memory_bytes() * 100 < dense_cost,
+        "GHZ via adaptive should be ≪ dense"
+    );
     // Saturated state: adaptive = dense exactly (plus enum wrapper).
     let uniform = sim.run_on("adaptive", &h_layer(n)).unwrap();
     assert!(uniform.memory_bytes() >= dense_cost);
@@ -129,7 +141,11 @@ fn sparse_tracks_support_size_through_a_circuit() {
     apply(&mut state, "z", &[3]);
     apply(&mut state, "s", &[4]);
     apply(&mut state, "t", &[5]);
-    assert_eq!(state.nonzero_count(), 4, "diagonal gates must not grow support");
+    assert_eq!(
+        state.nonzero_count(),
+        4,
+        "diagonal gates must not grow support"
+    );
 }
 
 #[test]
@@ -141,5 +157,9 @@ fn interference_can_shrink_sparse_support() {
     state.apply(&h, &[2]).unwrap();
     assert_eq!(state.nonzero_count(), 2);
     state.apply(&h, &[2]).unwrap();
-    assert_eq!(state.nonzero_count(), 1, "destructive interference must prune");
+    assert_eq!(
+        state.nonzero_count(),
+        1,
+        "destructive interference must prune"
+    );
 }

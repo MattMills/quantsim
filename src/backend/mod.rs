@@ -115,7 +115,10 @@ pub trait Backend<S: Scalar> {
     /// positive (possible for non-division algebras).
     fn measure(&mut self, qubit: usize, rng: &mut Prng) -> Result<bool> {
         if qubit >= self.num_qubits() {
-            return Err(Error::QubitOutOfRange { qubit, num_qubits: self.num_qubits() });
+            return Err(Error::QubitOutOfRange {
+                qubit,
+                num_qubits: self.num_qubits(),
+            });
         }
         let mut total = 0.0;
         let mut one_weight = 0.0;
@@ -127,7 +130,7 @@ pub trait Backend<S: Scalar> {
                 one_weight += w;
             }
         });
-        if !(total > 0.0) || !total.is_finite() {
+        if total <= 0.0 || !total.is_finite() {
             return Err(Error::InvalidState(format!(
                 "total Born weight {total} is not positive; cannot sample a measurement"
             )));
@@ -160,7 +163,7 @@ pub trait Backend<S: Scalar> {
             cumulative += e.1;
             e.1 = cumulative;
         }
-        if !(cumulative > 0.0) || !cumulative.is_finite() {
+        if cumulative <= 0.0 || !cumulative.is_finite() {
             return Err(Error::InvalidState(format!(
                 "total Born weight {cumulative} is not positive; cannot sample"
             )));
@@ -168,7 +171,9 @@ pub trait Backend<S: Scalar> {
         let mut counts: HashMap<u64, u64> = HashMap::new();
         for _ in 0..shots {
             let u = rng.next_f64() * cumulative;
-            let pos = entries.partition_point(|&(_, c)| c <= u).min(entries.len() - 1);
+            let pos = entries
+                .partition_point(|&(_, c)| c <= u)
+                .min(entries.len() - 1);
             *counts.entry(entries[pos].0).or_insert(0) += 1;
         }
         Ok(counts)
@@ -182,10 +187,7 @@ pub trait Backend<S: Scalar> {
 ///
 /// Inner-product convention: `⟨φ|ψ⟩ = Σ conj(φ_i) ψ_i`, products taken
 /// left-to-right (relevant for non-commutative and non-associative `S`).
-pub fn pauli_expectation<S: Scalar>(
-    state: &dyn Backend<S>,
-    ops: &[(usize, Pauli)],
-) -> Result<S> {
+pub fn pauli_expectation<S: Scalar>(state: &dyn Backend<S>, ops: &[(usize, Pauli)]) -> Result<S> {
     let n = state.num_qubits();
     let qubits: Vec<usize> = ops.iter().map(|&(q, _)| q).collect();
     crate::circuit::validate_targets(n, &qubits)?;
@@ -207,7 +209,11 @@ pub fn pauli_expectation<S: Scalar>(
                 Pauli::Y => {
                     target ^= 1 << q;
                     // Y|0⟩ = i|1⟩, Y|1⟩ = −i|0⟩.
-                    phase *= if bit { C64::new(0.0, -1.0) } else { C64::new(0.0, 1.0) };
+                    phase *= if bit {
+                        C64::new(0.0, -1.0)
+                    } else {
+                        C64::new(0.0, 1.0)
+                    };
                 }
                 Pauli::Z => {
                     if bit {
@@ -253,7 +259,9 @@ impl<S: Scalar> Default for BackendRegistry<S> {
 impl<S: Scalar> BackendRegistry<S> {
     /// An empty registry.
     pub fn new() -> Self {
-        BackendRegistry { ctors: HashMap::new() }
+        BackendRegistry {
+            ctors: HashMap::new(),
+        }
     }
 
     /// A registry with the built-in `"dense"`, `"sparse"` and `"adaptive"`
@@ -314,9 +322,15 @@ pub(crate) fn validate_apply<S: Scalar>(
     crate::circuit::validate_targets(num_qubits, qubits)?;
     let expected = 1usize
         .checked_shl(qubits.len() as u32)
-        .ok_or(Error::TooManyQubits { requested: qubits.len(), max: 63 })?;
+        .ok_or(Error::TooManyQubits {
+            requested: qubits.len(),
+            max: 63,
+        })?;
     if matrix.dim() != expected {
-        return Err(Error::BadDimension { expected, got: matrix.dim() });
+        return Err(Error::BadDimension {
+            expected,
+            got: matrix.dim(),
+        });
     }
     Ok(())
 }

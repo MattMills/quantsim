@@ -56,8 +56,16 @@ pub struct FixedGate<S: Scalar> {
 
 impl<S: Scalar> FixedGate<S> {
     /// Build a fixed gate. The registry validates unitarity on registration.
-    pub fn new(name: impl Into<String>, description: impl Into<String>, matrix: GateMatrix<S>) -> Self {
-        FixedGate { name: name.into(), description: description.into(), matrix }
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        matrix: GateMatrix<S>,
+    ) -> Self {
+        FixedGate {
+            name: name.into(),
+            description: description.into(),
+            matrix,
+        }
     }
 }
 
@@ -86,13 +94,16 @@ impl<S: Scalar> GateDef<S> for FixedGate<S> {
     }
 }
 
+/// Boxed builder closure used by [`ParamGate`].
+pub type MatrixBuilder<S> = Box<dyn Fn(&[f64]) -> Result<GateMatrix<S>> + Send + Sync>;
+
 /// A parametric gate defined by a builder closure.
 pub struct ParamGate<S: Scalar> {
     name: String,
     description: String,
     arity: usize,
     param_count: usize,
-    build: Box<dyn Fn(&[f64]) -> Result<GateMatrix<S>> + Send + Sync>,
+    build: MatrixBuilder<S>,
 }
 
 impl<S: Scalar> ParamGate<S> {

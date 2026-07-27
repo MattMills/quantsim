@@ -191,7 +191,12 @@ fn u_gate_columns() {
     c.u(0, theta, phi, lam);
     let s = run_dense(&c);
     assert_amp(s.as_ref(), 0, -lam.cos() * st, -lam.sin() * st);
-    assert_amp(s.as_ref(), 1, (phi + lam).cos() * ct, (phi + lam).sin() * ct);
+    assert_amp(
+        s.as_ref(),
+        1,
+        (phi + lam).cos() * ct,
+        (phi + lam).sin() * ct,
+    );
 }
 
 #[test]

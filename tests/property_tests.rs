@@ -51,7 +51,11 @@ fn arb_spec(n: usize) -> impl Strategy<Value = Spec> {
         let params = proptest::collection::vec(-6.3f64..6.3, np);
         let qubits =
             proptest::sample::subsequence((0..n).collect::<Vec<usize>>(), arity).prop_shuffle();
-        (params, qubits).prop_map(move |(params, qubits)| Spec { name, params, qubits })
+        (params, qubits).prop_map(move |(params, qubits)| Spec {
+            name,
+            params,
+            qubits,
+        })
     })
 }
 

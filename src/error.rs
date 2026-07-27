@@ -103,29 +103,52 @@ impl fmt::Display for Error {
             Error::DuplicateQubits { qubits } => {
                 write!(f, "duplicate qubit in target list {qubits:?}")
             }
-            Error::ArityMismatch { gate, expected, got } => {
+            Error::ArityMismatch {
+                gate,
+                expected,
+                got,
+            } => {
                 write!(f, "gate '{gate}' acts on {expected} qubit(s), got {got}")
             }
-            Error::ParamCountMismatch { gate, expected, got } => {
+            Error::ParamCountMismatch {
+                gate,
+                expected,
+                got,
+            } => {
                 write!(f, "gate '{gate}' takes {expected} parameter(s), got {got}")
             }
             Error::BadDimension { expected, got } => {
-                write!(f, "matrix dimension {got} does not match expected {expected}")
+                write!(
+                    f,
+                    "matrix dimension {got} does not match expected {expected}"
+                )
             }
             Error::NonPowerOfTwoDim(dim) => {
                 write!(f, "matrix dimension {dim} is not a power of two")
             }
             Error::NotUnitary { label, deviation } => {
-                write!(f, "matrix '{label}' is not unitary (deviation {deviation:.3e})")
+                write!(
+                    f,
+                    "matrix '{label}' is not unitary (deviation {deviation:.3e})"
+                )
             }
             Error::UnsupportedForAlgebra { gate, algebra } => {
-                write!(f, "gate '{gate}' cannot be constructed over algebra {algebra}")
+                write!(
+                    f,
+                    "gate '{gate}' cannot be constructed over algebra {algebra}"
+                )
             }
             Error::TooManyQubits { requested, max } => {
-                write!(f, "{requested} qubits requested, backend supports at most {max}")
+                write!(
+                    f,
+                    "{requested} qubits requested, backend supports at most {max}"
+                )
             }
             Error::WidthMismatch { circuit, backend } => {
-                write!(f, "circuit width {circuit} does not match backend width {backend}")
+                write!(
+                    f,
+                    "circuit width {circuit} does not match backend width {backend}"
+                )
             }
             Error::InvalidState(msg) => write!(f, "invalid state: {msg}"),
         }

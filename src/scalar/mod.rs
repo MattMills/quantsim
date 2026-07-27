@@ -129,7 +129,11 @@ pub trait Scalar:
     /// # Panics
     /// Panics if `k >= Self::DIM`.
     fn basis(k: usize) -> Self {
-        assert!(k < Self::DIM, "basis index {k} out of range for dim {}", Self::DIM);
+        assert!(
+            k < Self::DIM,
+            "basis index {k} out of range for dim {}",
+            Self::DIM
+        );
         let mut c = vec![0.0; Self::DIM];
         c[k] = 1.0;
         Self::from_coeffs(&c)

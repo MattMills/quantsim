@@ -55,21 +55,30 @@ impl<T: Scalar> CD<T> {
 impl<T: Scalar> std::ops::Add for CD<T> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
-        CD { a: self.a + rhs.a, b: self.b + rhs.b }
+        CD {
+            a: self.a + rhs.a,
+            b: self.b + rhs.b,
+        }
     }
 }
 
 impl<T: Scalar> std::ops::Sub for CD<T> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
-        CD { a: self.a - rhs.a, b: self.b - rhs.b }
+        CD {
+            a: self.a - rhs.a,
+            b: self.b - rhs.b,
+        }
     }
 }
 
 impl<T: Scalar> std::ops::Neg for CD<T> {
     type Output = Self;
     fn neg(self) -> Self {
-        CD { a: -self.a, b: -self.b }
+        CD {
+            a: -self.a,
+            b: -self.b,
+        }
     }
 }
 
@@ -78,7 +87,10 @@ impl<T: Scalar> std::ops::Mul for CD<T> {
     fn mul(self, rhs: Self) -> Self {
         let (a, b) = (self.a, self.b);
         let (c, d) = (rhs.a, rhs.b);
-        CD { a: a * c - d.conj() * b, b: d * a + b * c.conj() }
+        CD {
+            a: a * c - d.conj() * b,
+            b: d * a + b * c.conj(),
+        }
     }
 }
 
@@ -102,16 +114,28 @@ impl<T: Scalar> Scalar for CD<T> {
         }
     }
     fn zero() -> Self {
-        CD { a: T::zero(), b: T::zero() }
+        CD {
+            a: T::zero(),
+            b: T::zero(),
+        }
     }
     fn one() -> Self {
-        CD { a: T::one(), b: T::zero() }
+        CD {
+            a: T::one(),
+            b: T::zero(),
+        }
     }
     fn conj(self) -> Self {
-        CD { a: self.a.conj(), b: -self.b }
+        CD {
+            a: self.a.conj(),
+            b: -self.b,
+        }
     }
     fn scale(self, k: f64) -> Self {
-        CD { a: self.a.scale(k), b: self.b.scale(k) }
+        CD {
+            a: self.a.scale(k),
+            b: self.b.scale(k),
+        }
     }
     fn re(self) -> f64 {
         self.a.re()
@@ -126,7 +150,10 @@ impl<T: Scalar> Scalar for CD<T> {
         }
         // The base holds only reals; the doubling unit (0, 1) squares to −1
         // and serves as `i`, making CD<T> itself a complex embedding.
-        Some(CD { a: T::from_re(z.re), b: T::from_re(z.im) })
+        Some(CD {
+            a: T::from_re(z.re),
+            b: T::from_re(z.im),
+        })
     }
     fn coeffs(self) -> Vec<f64> {
         let mut c = self.a.coeffs();
@@ -135,11 +162,15 @@ impl<T: Scalar> Scalar for CD<T> {
     }
     fn from_coeffs(c: &[f64]) -> Self {
         assert_eq!(c.len(), Self::DIM, "CD algebra has dimension {}", Self::DIM);
-        CD { a: T::from_coeffs(&c[..T::DIM]), b: T::from_coeffs(&c[T::DIM..]) }
+        CD {
+            a: T::from_coeffs(&c[..T::DIM]),
+            b: T::from_coeffs(&c[T::DIM..]),
+        }
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::assertions_on_constants)] // algebra-flag pins are intentional
 mod tests {
     use super::*;
 
@@ -169,7 +200,10 @@ mod tests {
             assert!((ep * ep).approx_eq(-one, TOL), "e{p}^2 != -1");
             for q in (p + 1)..8 {
                 let eq = Octonion::basis(q);
-                assert!((ep * eq).approx_eq(-(eq * ep), TOL), "e{p}, e{q} should anticommute");
+                assert!(
+                    (ep * eq).approx_eq(-(eq * ep), TOL),
+                    "e{p}, e{q} should anticommute"
+                );
             }
         }
     }
@@ -182,8 +216,7 @@ mod tests {
         'outer: for p in 1..8 {
             for q in 1..8 {
                 for r in 1..8 {
-                    let (x, y, z) =
-                        (Octonion::basis(p), Octonion::basis(q), Octonion::basis(r));
+                    let (x, y, z) = (Octonion::basis(p), Octonion::basis(q), Octonion::basis(r));
                     if !((x * y) * z).approx_eq(x * (y * z), TOL) {
                         found = true;
                         break 'outer;
@@ -201,8 +234,11 @@ mod tests {
         for p in 0..4 {
             for q in 0..4 {
                 for r in 0..4 {
-                    let (x, y, z) =
-                        (Quaternion::basis(p), Quaternion::basis(q), Quaternion::basis(r));
+                    let (x, y, z) = (
+                        Quaternion::basis(p),
+                        Quaternion::basis(q),
+                        Quaternion::basis(r),
+                    );
                     assert!(((x * y) * z).approx_eq(x * (y * z), TOL));
                 }
             }
@@ -293,9 +329,8 @@ mod tests {
     #[test]
     fn norm_multiplicative_for_division_algebras_only() {
         let mut prng = crate::rng::Prng::new(23);
-        let mut rand_coeffs = |dim: usize| -> Vec<f64> {
-            (0..dim).map(|_| prng.next_f64() * 2.0 - 1.0).collect()
-        };
+        let mut rand_coeffs =
+            |dim: usize| -> Vec<f64> { (0..dim).map(|_| prng.next_f64() * 2.0 - 1.0).collect() };
         for _ in 0..100 {
             let x = Quaternion::from_coeffs(&rand_coeffs(4));
             let y = Quaternion::from_coeffs(&rand_coeffs(4));

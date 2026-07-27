@@ -25,7 +25,10 @@ impl<S: Scalar> DenseState<S> {
     /// `|0…0⟩` on `num_qubits` qubits.
     pub fn new(num_qubits: usize) -> Result<Self> {
         if num_qubits > DENSE_MAX_QUBITS {
-            return Err(Error::TooManyQubits { requested: num_qubits, max: DENSE_MAX_QUBITS });
+            return Err(Error::TooManyQubits {
+                requested: num_qubits,
+                max: DENSE_MAX_QUBITS,
+            });
         }
         let mut amps = vec![S::zero(); 1usize << num_qubits];
         amps[0] = S::one();
@@ -97,7 +100,10 @@ impl<S: Scalar> Backend<S> for DenseState<S> {
     }
 
     fn amplitude(&self, index: u64) -> S {
-        self.amps.get(index as usize).copied().unwrap_or_else(S::zero)
+        self.amps
+            .get(index as usize)
+            .copied()
+            .unwrap_or_else(S::zero)
     }
 
     fn for_each_nonzero(&self, f: &mut dyn FnMut(u64, S)) {

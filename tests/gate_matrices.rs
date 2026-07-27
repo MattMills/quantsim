@@ -29,15 +29,51 @@ fn expect(name: &str, got: &GateMatrix<C64>, entries: &[(f64, f64)]) {
 fn fixed_single_qubit_gates_match_literature() {
     let reg: GateRegistry = GateRegistry::standard();
     let s = FRAC_1_SQRT_2;
-    expect("id", &mat(&reg, "id", &[]), &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (1.0, 0.0)]);
-    expect("x", &mat(&reg, "x", &[]), &[(0.0, 0.0), (1.0, 0.0), (1.0, 0.0), (0.0, 0.0)]);
-    expect("y", &mat(&reg, "y", &[]), &[(0.0, 0.0), (0.0, -1.0), (0.0, 1.0), (0.0, 0.0)]);
-    expect("z", &mat(&reg, "z", &[]), &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (-1.0, 0.0)]);
-    expect("h", &mat(&reg, "h", &[]), &[(s, 0.0), (s, 0.0), (s, 0.0), (-s, 0.0)]);
-    expect("s", &mat(&reg, "s", &[]), &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 1.0)]);
-    expect("sdg", &mat(&reg, "sdg", &[]), &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, -1.0)]);
-    expect("t", &mat(&reg, "t", &[]), &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (s, s)]);
-    expect("tdg", &mat(&reg, "tdg", &[]), &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (s, -s)]);
+    expect(
+        "id",
+        &mat(&reg, "id", &[]),
+        &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (1.0, 0.0)],
+    );
+    expect(
+        "x",
+        &mat(&reg, "x", &[]),
+        &[(0.0, 0.0), (1.0, 0.0), (1.0, 0.0), (0.0, 0.0)],
+    );
+    expect(
+        "y",
+        &mat(&reg, "y", &[]),
+        &[(0.0, 0.0), (0.0, -1.0), (0.0, 1.0), (0.0, 0.0)],
+    );
+    expect(
+        "z",
+        &mat(&reg, "z", &[]),
+        &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (-1.0, 0.0)],
+    );
+    expect(
+        "h",
+        &mat(&reg, "h", &[]),
+        &[(s, 0.0), (s, 0.0), (s, 0.0), (-s, 0.0)],
+    );
+    expect(
+        "s",
+        &mat(&reg, "s", &[]),
+        &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 1.0)],
+    );
+    expect(
+        "sdg",
+        &mat(&reg, "sdg", &[]),
+        &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, -1.0)],
+    );
+    expect(
+        "t",
+        &mat(&reg, "t", &[]),
+        &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (s, s)],
+    );
+    expect(
+        "tdg",
+        &mat(&reg, "tdg", &[]),
+        &[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (s, -s)],
+    );
     expect(
         "sx",
         &mat(&reg, "sx", &[]),
@@ -108,7 +144,24 @@ fn two_qubit_gates_match_literature() {
     expect(
         "iswap",
         &mat(&reg, "iswap", &[]),
-        &[o, l, l, l, l, l, (0.0, 1.0), l, l, (0.0, 1.0), l, l, l, l, l, o],
+        &[
+            o,
+            l,
+            l,
+            l,
+            l,
+            l,
+            (0.0, 1.0),
+            l,
+            l,
+            (0.0, 1.0),
+            l,
+            l,
+            l,
+            l,
+            l,
+            o,
+        ],
     );
     // rzz(θ) = diag(e^{−iθ/2}, e^{+iθ/2}, e^{+iθ/2}, e^{−iθ/2})
     let th: f64 = 0.81;
@@ -117,10 +170,22 @@ fn two_qubit_gates_match_literature() {
         "rzz",
         &mat(&reg, "rzz", &[th]),
         &[
-            (c2, -s2), l, l, l,
-            l, (c2, s2), l, l,
-            l, l, (c2, s2), l,
-            l, l, l, (c2, -s2),
+            (c2, -s2),
+            l,
+            l,
+            l,
+            l,
+            (c2, s2),
+            l,
+            l,
+            l,
+            l,
+            (c2, s2),
+            l,
+            l,
+            l,
+            l,
+            (c2, -s2),
         ],
     );
     // rxx(π/2) has 1/√2 on the diagonal and −i/√2 on the anti-diagonal.
@@ -129,10 +194,22 @@ fn two_qubit_gates_match_literature() {
         "rxx(π/2)",
         &mat(&reg, "rxx", &[FRAC_PI_2]),
         &[
-            (s, 0.0), l, l, (0.0, -s),
-            l, (s, 0.0), (0.0, -s), l,
-            l, (0.0, -s), (s, 0.0), l,
-            (0.0, -s), l, l, (s, 0.0),
+            (s, 0.0),
+            l,
+            l,
+            (0.0, -s),
+            l,
+            (s, 0.0),
+            (0.0, -s),
+            l,
+            l,
+            (0.0, -s),
+            (s, 0.0),
+            l,
+            (0.0, -s),
+            l,
+            l,
+            (s, 0.0),
         ],
     );
     // ryy(π/2): +i/√2 in the outer anti-diagonal corners, −i/√2 inner.
@@ -140,10 +217,22 @@ fn two_qubit_gates_match_literature() {
         "ryy(π/2)",
         &mat(&reg, "ryy", &[FRAC_PI_2]),
         &[
-            (s, 0.0), l, l, (0.0, s),
-            l, (s, 0.0), (0.0, -s), l,
-            l, (0.0, -s), (s, 0.0), l,
-            (0.0, s), l, l, (s, 0.0),
+            (s, 0.0),
+            l,
+            l,
+            (0.0, s),
+            l,
+            (s, 0.0),
+            (0.0, -s),
+            l,
+            l,
+            (0.0, -s),
+            (s, 0.0),
+            l,
+            (0.0, s),
+            l,
+            l,
+            (s, 0.0),
         ],
     );
     // cp(π) = cz.
@@ -164,7 +253,8 @@ fn three_qubit_gates_are_correct_permutations() {
         for row in 0..8u64 {
             let want = if row == expected_row { 1.0 } else { 0.0 };
             assert!(
-                ccx.get(row as usize, col as usize).approx_eq(c64(want, 0.0), 1e-12),
+                ccx.get(row as usize, col as usize)
+                    .approx_eq(c64(want, 0.0), 1e-12),
                 "ccx[{row},{col}]"
             );
         }
@@ -183,7 +273,9 @@ fn three_qubit_gates_are_correct_permutations() {
             other => other,
         };
         assert!(
-            cswap.get(expected_row as usize, col as usize).approx_eq(c64(1.0, 0.0), 1e-12),
+            cswap
+                .get(expected_row as usize, col as usize)
+                .approx_eq(c64(1.0, 0.0), 1e-12),
             "cswap[{expected_row},{col}]"
         );
     }
@@ -192,9 +284,15 @@ fn three_qubit_gates_are_correct_permutations() {
 #[test]
 fn aliases_resolve_to_the_same_gates() {
     let reg: GateRegistry = GateRegistry::standard();
-    for (alias, canon) in
-        [("cnot", "cx"), ("toffoli", "ccx"), ("fredkin", "cswap"), ("phase", "p"), ("not", "x"), ("u3", "u"), ("cphase", "cp")]
-    {
+    for (alias, canon) in [
+        ("cnot", "cx"),
+        ("toffoli", "ccx"),
+        ("fredkin", "cswap"),
+        ("phase", "p"),
+        ("not", "x"),
+        ("u3", "u"),
+        ("cphase", "cp"),
+    ] {
         let pc = reg.resolve(canon).unwrap().param_count();
         let params: Vec<f64> = (0..pc).map(|i| 0.3 + i as f64).collect();
         assert!(
@@ -213,8 +311,9 @@ fn every_registered_gate_is_unitary_at_probe_params() {
     for name in reg.names() {
         let def = reg.resolve(&name).unwrap();
         for _ in 0..5 {
-            let params: Vec<f64> =
-                (0..def.param_count()).map(|_| rng.next_f64() * 12.0 - 6.0).collect();
+            let params: Vec<f64> = (0..def.param_count())
+                .map(|_| rng.next_f64() * 12.0 - 6.0)
+                .collect();
             let m = def.matrix(&params).unwrap();
             assert_eq!(m.dim(), 1 << def.arity(), "{name} dimension");
             let dev = m.unitarity_deviation();
@@ -236,8 +335,8 @@ fn algebra_gate_support_matrix() {
     // ℝ gets exactly the real-matrix subset.
     let real = GateRegistry::<f64>::standard().names();
     let expected = vec![
-        "ccx", "ccz", "ch", "cnot", "cry", "cswap", "cx", "cz", "fredkin", "h", "id", "not",
-        "ry", "swap", "toffoli", "x", "z",
+        "ccx", "ccz", "ch", "cnot", "cry", "cswap", "cx", "cz", "fredkin", "h", "id", "not", "ry",
+        "swap", "toffoli", "x", "z",
     ];
     assert_eq!(real, expected, "real registry: {real:?}");
     // Split-complex has no i either → same real subset.
@@ -255,8 +354,14 @@ fn unsupported_gate_reports_algebra() {
                 2,
                 &[c64(1.0, 0.0), c64(0.0, 0.0), c64(0.0, 0.0), c64(0.0, 1.0)],
             )
-            .ok_or(Error::UnsupportedForAlgebra { gate: "s_real".into(), algebra: "R".into() })
+            .ok_or(Error::UnsupportedForAlgebra {
+                gate: "s_real".into(),
+                algebra: "R".into(),
+            })
         })
         .unwrap_err();
-    assert!(matches!(err, Error::UnsupportedForAlgebra { .. }), "{err:?}");
+    assert!(
+        matches!(err, Error::UnsupportedForAlgebra { .. }),
+        "{err:?}"
+    );
 }

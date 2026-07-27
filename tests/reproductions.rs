@@ -2,11 +2,13 @@
 //! against their closed-form results. These are the BQP acceptance tests:
 //! if the simulator disagrees with any of them, something fundamental broke.
 
+#![allow(clippy::assertions_on_constants)] // algebra-flag pins are intentional
+
 mod common;
 
 use common::*;
 use quantsim::prelude::*;
-use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
+use std::f64::consts::{FRAC_1_SQRT_2, TAU};
 
 #[test]
 fn ghz_state_on_every_algebra() {
@@ -18,11 +20,15 @@ fn ghz_state_on_every_algebra() {
             let state = sim.run_on(backend, &library::ghz(4)).unwrap();
             let top = (1u64 << 4) - 1;
             assert!(
-                state.amplitude(0).approx_eq(S::from_re(FRAC_1_SQRT_2), 1e-9),
+                state
+                    .amplitude(0)
+                    .approx_eq(S::from_re(FRAC_1_SQRT_2), 1e-9),
                 "{}/{backend}",
                 S::algebra_name()
             );
-            assert!(state.amplitude(top).approx_eq(S::from_re(FRAC_1_SQRT_2), 1e-9));
+            assert!(state
+                .amplitude(top)
+                .approx_eq(S::from_re(FRAC_1_SQRT_2), 1e-9));
             assert_eq!(state.nonzero_count(), 2);
         }
     }
@@ -54,7 +60,10 @@ fn qft_matches_the_dft_formula() {
             let phase = TAU * (x * y % dim) as f64 / dim as f64;
             let expected = c64(norm * phase.cos(), norm * phase.sin());
             let got = state.amplitude(y);
-            assert!(got.approx_eq(expected, 1e-9), "x={x} y={y}: {got} vs {expected}");
+            assert!(
+                got.approx_eq(expected, 1e-9),
+                "x={x} y={y}: {got} vs {expected}"
+            );
         }
     }
 }
@@ -114,7 +123,10 @@ fn grover_agrees_across_backends() {
     for backend in ["sparse", "adaptive"] {
         let other = run_named(backend, &circuit);
         for i in 0..16u64 {
-            assert!(dense.amplitude(i).approx_eq(other.amplitude(i), 1e-9), "{backend} idx {i}");
+            assert!(
+                dense.amplitude(i).approx_eq(other.amplitude(i), 1e-9),
+                "{backend} idx {i}"
+            );
         }
     }
 }
@@ -139,7 +151,13 @@ fn deutsch_jozsa_constant_vs_balanced() {
 
     // Constant f ≡ 0 and f ≡ 1: query register is certainly all zeros.
     assert_close(all_zero_prob(&|_c| {}), 1.0, 1e-9);
-    assert_close(all_zero_prob(&|c| { c.x(n); }), 1.0, 1e-9);
+    assert_close(
+        all_zero_prob(&|c| {
+            c.x(n);
+        }),
+        1.0,
+        1e-9,
+    );
     // Balanced parity f(x) = x0 ⊕ x1 ⊕ x2: never all zeros.
     assert_close(
         all_zero_prob(&|c| {
@@ -149,7 +167,13 @@ fn deutsch_jozsa_constant_vs_balanced() {
         1e-9,
     );
     // Balanced f(x) = x1: never all zeros.
-    assert_close(all_zero_prob(&|c| { c.cx(1, n); }), 0.0, 1e-9);
+    assert_close(
+        all_zero_prob(&|c| {
+            c.cx(1, n);
+        }),
+        0.0,
+        1e-9,
+    );
 }
 
 #[test]
@@ -216,8 +240,11 @@ fn w_state_via_load_and_measurement_cascade() {
     // then check the defining property: measuring any qubit as 0 leaves the
     // remaining pair in a smaller W; measuring 1 collapses the rest to |00⟩.
     let w = 1.0 / 3.0f64.sqrt();
-    let entries: Vec<(u64, C64)> =
-        vec![(0b001, c64(w, 0.0)), (0b010, c64(w, 0.0)), (0b100, c64(w, 0.0))];
+    let entries: Vec<(u64, C64)> = vec![
+        (0b001, c64(w, 0.0)),
+        (0b010, c64(w, 0.0)),
+        (0b100, c64(w, 0.0)),
+    ];
     let mut state = DenseState::<C64>::new(3).unwrap();
     state.load(&entries).unwrap();
 
@@ -252,10 +279,16 @@ fn quaternion_and_octonion_runs_embed_complex_results() {
         let o = so.amplitude(i).coeffs();
         assert_close(q[0], z.re, 1e-9);
         assert_close(q[1], z.im, 1e-9);
-        assert!(q[2].abs() < 1e-9 && q[3].abs() < 1e-9, "leak into j/k at {i}");
+        assert!(
+            q[2].abs() < 1e-9 && q[3].abs() < 1e-9,
+            "leak into j/k at {i}"
+        );
         assert_close(o[0], z.re, 1e-9);
         assert_close(o[1], z.im, 1e-9);
-        assert!(o[2..].iter().all(|c| c.abs() < 1e-9), "leak into octonion units at {i}");
+        assert!(
+            o[2..].iter().all(|c| c.abs() < 1e-9),
+            "leak into octonion units at {i}"
+        );
     }
 }
 

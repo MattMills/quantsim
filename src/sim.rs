@@ -35,7 +35,10 @@ impl<S: Scalar> Simulator<S> {
     /// A simulator with the standard gate library (as far as the algebra
     /// supports it) and the built-in backends.
     pub fn new() -> Self {
-        Simulator { registry: GateRegistry::standard(), backends: BackendRegistry::standard() }
+        Simulator {
+            registry: GateRegistry::standard(),
+            backends: BackendRegistry::standard(),
+        }
     }
 
     /// Build from explicit registries.

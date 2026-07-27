@@ -65,7 +65,10 @@ pub struct Circuit<S: Scalar = C64> {
 impl<S: Scalar> Circuit<S> {
     /// An empty circuit on `num_qubits` qubits.
     pub fn new(num_qubits: usize) -> Self {
-        Circuit { num_qubits, ops: Vec::new() }
+        Circuit {
+            num_qubits,
+            ops: Vec::new(),
+        }
     }
 
     /// Circuit width.
@@ -96,7 +99,11 @@ impl<S: Scalar> Circuit<S> {
         params: impl Into<Vec<f64>>,
         qubits: impl Into<Vec<usize>>,
     ) -> &mut Self {
-        self.ops.push(Op::Named { name: name.into(), params: params.into(), qubits: qubits.into() });
+        self.ops.push(Op::Named {
+            name: name.into(),
+            params: params.into(),
+            qubits: qubits.into(),
+        });
         self
     }
 
@@ -107,7 +114,11 @@ impl<S: Scalar> Circuit<S> {
         matrix: GateMatrix<S>,
         qubits: impl Into<Vec<usize>>,
     ) -> &mut Self {
-        self.ops.push(Op::Raw { label: label.into(), matrix, qubits: qubits.into() });
+        self.ops.push(Op::Raw {
+            label: label.into(),
+            matrix,
+            qubits: qubits.into(),
+        });
         self
     }
 
@@ -141,7 +152,11 @@ impl<S: Scalar> Circuit<S> {
         for op in &self.ops {
             validate_targets(self.num_qubits, op.qubits())?;
             match op {
-                Op::Named { name, params, qubits } => {
+                Op::Named {
+                    name,
+                    params,
+                    qubits,
+                } => {
                     let def = registry.resolve(name)?;
                     if def.arity() != qubits.len() {
                         return Err(Error::ArityMismatch {
@@ -159,16 +174,30 @@ impl<S: Scalar> Circuit<S> {
                     }
                     let matrix = def.matrix(params)?;
                     debug_assert_eq!(matrix.dim(), 1 << qubits.len());
-                    gates.push(BoundGate { label: name.clone(), matrix, qubits: qubits.clone() });
+                    gates.push(BoundGate {
+                        label: name.clone(),
+                        matrix,
+                        qubits: qubits.clone(),
+                    });
                 }
-                Op::Raw { label, matrix, qubits } => {
+                Op::Raw {
+                    label,
+                    matrix,
+                    qubits,
+                } => {
                     let expected = 1usize << qubits.len();
                     if matrix.dim() != expected {
-                        return Err(Error::BadDimension { expected, got: matrix.dim() });
+                        return Err(Error::BadDimension {
+                            expected,
+                            got: matrix.dim(),
+                        });
                     }
                     let dev = matrix.unitarity_deviation();
                     if dev > UNITARY_TOL {
-                        return Err(Error::NotUnitary { label: label.clone(), deviation: dev });
+                        return Err(Error::NotUnitary {
+                            label: label.clone(),
+                            deviation: dev,
+                        });
                     }
                     gates.push(BoundGate {
                         label: label.clone(),
@@ -178,7 +207,10 @@ impl<S: Scalar> Circuit<S> {
                 }
             }
         }
-        Ok(BoundCircuit { num_qubits: self.num_qubits, gates })
+        Ok(BoundCircuit {
+            num_qubits: self.num_qubits,
+            gates,
+        })
     }
 }
 
@@ -187,12 +219,17 @@ impl<S: Scalar> Circuit<S> {
 pub(crate) fn validate_targets(num_qubits: usize, qubits: &[usize]) -> Result<()> {
     for &q in qubits {
         if q >= num_qubits {
-            return Err(Error::QubitOutOfRange { qubit: q, num_qubits });
+            return Err(Error::QubitOutOfRange {
+                qubit: q,
+                num_qubits,
+            });
         }
     }
     for (i, &a) in qubits.iter().enumerate() {
         if qubits[i + 1..].contains(&a) {
-            return Err(Error::DuplicateQubits { qubits: qubits.to_vec() });
+            return Err(Error::DuplicateQubits {
+                qubits: qubits.to_vec(),
+            });
         }
     }
     Ok(())
@@ -257,7 +294,10 @@ impl<S: Scalar> BoundCircuit<S> {
                 qubits: g.qubits.clone(),
             })
             .collect();
-        BoundCircuit { num_qubits: self.num_qubits, gates }
+        BoundCircuit {
+            num_qubits: self.num_qubits,
+            gates,
+        }
     }
 }
 

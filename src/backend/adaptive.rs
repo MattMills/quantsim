@@ -32,7 +32,9 @@ pub struct AdaptiveState<S: Scalar> {
 impl<S: Scalar> AdaptiveState<S> {
     /// `|0…0⟩` on `num_qubits` qubits (sparse representation).
     pub fn new(num_qubits: usize) -> Result<Self> {
-        Ok(AdaptiveState { repr: Repr::Sparse(SparseState::new(num_qubits)?) })
+        Ok(AdaptiveState {
+            repr: Repr::Sparse(SparseState::new(num_qubits)?),
+        })
     }
 
     /// Whether the state has promoted to the dense representation.

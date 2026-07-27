@@ -29,7 +29,10 @@ impl<S: Scalar> SparseState<S> {
     /// `|0…0⟩` on `num_qubits` qubits.
     pub fn new(num_qubits: usize) -> Result<Self> {
         if num_qubits > SPARSE_MAX_QUBITS {
-            return Err(Error::TooManyQubits { requested: num_qubits, max: SPARSE_MAX_QUBITS });
+            return Err(Error::TooManyQubits {
+                requested: num_qubits,
+                max: SPARSE_MAX_QUBITS,
+            });
         }
         let mut map = FxHashMap::default();
         map.insert(0u64, S::one());
@@ -118,7 +121,11 @@ impl<S: Scalar> Backend<S> for SparseState<S> {
     }
 
     fn load(&mut self, entries: &[(u64, S)]) -> Result<()> {
-        let limit = if self.num_qubits == 64 { u64::MAX } else { 1u64 << self.num_qubits };
+        let limit = if self.num_qubits == 64 {
+            u64::MAX
+        } else {
+            1u64 << self.num_qubits
+        };
         for &(i, _) in entries {
             if i >= limit {
                 return Err(Error::QubitOutOfRange {
