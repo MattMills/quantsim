@@ -62,6 +62,7 @@
 pub mod backend;
 pub mod circuit;
 pub mod conformance;
+pub mod discovery;
 pub mod error;
 pub mod gates;
 pub mod harness;
@@ -70,6 +71,7 @@ pub mod math;
 pub mod registry;
 pub mod rng;
 pub mod scalar;
+pub mod schedule;
 pub mod sim;
 
 pub use backend::{AdaptiveState, Backend, BackendRegistry, DenseState, SparseState};
@@ -85,11 +87,15 @@ pub use sim::Simulator;
 pub mod prelude {
     pub use crate::backend::{
         max_amplitude_deviation, pauli_expectation, AdaptiveState, Backend, BackendRegistry,
-        DenseState, SparseState,
+        DenseState, FactoredState, SparseState,
     };
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
     pub use crate::conformance::{
         random_registry_circuit, verify_backend, ConformanceConfig, ConformanceReport,
+    };
+    pub use crate::discovery::{
+        discover_stabilizers, stabilizes_state, state_deviation_up_to_phase, verify_transparent,
+        Insertion, StabilizerCheck, TransparencyReport,
     };
     pub use crate::error::{Error, Result};
     pub use crate::gates::{FixedGate, GateDef, ParamGate, Pauli};
@@ -100,6 +106,9 @@ pub mod prelude {
     pub use crate::rng::Prng;
     pub use crate::scalar::{
         CComplex, Octonion, Quaternion, Scalar, Sedenion, SplitComplex, C64, CD,
+    };
+    pub use crate::schedule::{
+        GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace, ScheduledKernel, TimedOp,
     };
     pub use crate::sim::Simulator;
 }

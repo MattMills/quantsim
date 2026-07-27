@@ -68,6 +68,32 @@ the `Scalar` shape *except* for the two places the trait currently assumes an
 Sparse-first: p-adic states of interest tend to be supported on few basis
 states, and the sparse backend needs nothing but the scalar to work.
 
+## Geometric decomposition research (on top of `FactoredState`)
+
+The factored backend ships the *hierarchical separation* substrate: exact
+merge-on-demand, exact post-measurement splits, rank-1 re-separation, and
+peak-cost instrumentation. The open research directions it was built to
+host:
+
+- **Geometric overdefinition** — overlapping regions holding redundant
+  marginals, so that entanglement across a cut can live in more than one
+  factor at once (the current partition is strict). Requires a consistency
+  rule between overlapping factors; the natural first target is
+  tree-structured overlaps (which is also the bridge to tree tensor
+  networks / MPS below).
+- **Beyond rank-1 splits** — Schmidt-rank-k factor boundaries (bond
+  indices), at which point `FactoredState` *becomes* a general tensor
+  network; needs the Jacobi SVD planned for MPS.
+- **Local frames/gauges** — per-factor basis changes stored as metadata
+  rather than applied. This is the mechanism by which *transparent
+  insertions* (see `discovery`) could genuinely reduce future cost: today
+  a state-preserving insertion cannot change the state trajectory, only
+  the representation — frames make representation a first-class degree of
+  freedom that structure-insertion can optimize.
+- **Scheduling-aware geometry** — the evented scheduler knows *when*
+  regions interact; a lookahead pass could pre-plan merges/splits (or
+  memory swap-outs) to minimize peak factor width over the whole schedule.
+
 ## Further non-Cayley–Dickson explorations
 
 `SplitComplex` establishes the pattern (indefinite Born form surfaced through

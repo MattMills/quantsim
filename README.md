@@ -29,6 +29,25 @@ parts are swappable:
   [`harness`](src/harness.rs) that benchmarks backends on named workloads
   with correctness re-checked in the same run. New representations and gate
   sets either pass measurably or fail with the offending gate named.
+- **Evented scheduling** ([`schedule`](src/schedule.rs)) — simultaneous
+  gate *loops* with periods and phases, one-shot events, and measurement
+  events whose outcomes enqueue further ops: circuit time as a message
+  queue, with deterministic same-tick ordering and an optional
+  must-be-disjoint overlap policy. Measurement-free schedules flatten to
+  circuits for equivalence testing.
+- **Factored geometry** ([`FactoredState`](src/backend/factored.rs)) — the
+  state as a product of factors over qubit regions: gates merge factors
+  only when they couple them, measurement splits them exactly, rank-1
+  detection re-separates disentangled qubits. Memory is the *sum* of
+  factor sizes — non-exponential while entanglement stays hierarchically
+  local (and honestly dense when it doesn't). The live factor partition and
+  lifetime peak costs are inspectable: entanglement geometry as data.
+- **Structure discovery** ([`discovery`](src/discovery.rs)) — find gates
+  that stabilize the current state (identity up to phase), and verify
+  n-wide **signal threads**: ops spliced at several points of the circuit
+  graph (inject a signal here, remove it there) that are
+  computation-neutral only as a whole unit, with their geometric cost
+  measured on the factored backend.
 
 BQP support: the standard registry contains a universal set (`h`, `t`, `cx`,
 …), so any BQP circuit family runs exactly on the dense backend — at the
@@ -264,17 +283,19 @@ src/
   registry.rs    GateRegistry<S>: validated registration, aliases
   circuit.rs     Circuit<S> (chainable builders, raw + diagonal kernels,
                  append), BoundCircuit<S> (bind-time validation, inverse())
-  backend/       Backend<S> trait + dense / sparse / adaptive,
+  backend/       Backend<S> trait + dense / sparse / adaptive / factored,
                  BackendRegistry<S>, pauli_expectation
+  schedule.rs    evented scheduler: simultaneous loops, events, feedback
   conformance.rs registry-wide backend verification (research safety net)
   harness.rs     workload benchmarking with in-run correctness checks
+  discovery.rs   point stabilizers, signal threads, transparency reports
   library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           eleven integration suites (see Testing)
+tests/           twelve integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
-                 research_mode, width_scaling
+                 research_mode, evented_memory, width_scaling
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

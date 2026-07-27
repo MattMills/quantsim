@@ -19,10 +19,12 @@
 
 mod adaptive;
 mod dense;
+mod factored;
 mod sparse;
 
 pub use adaptive::AdaptiveState;
 pub use dense::{DenseState, DENSE_MAX_QUBITS};
+pub use factored::{FactoredState, FACTORED_MAX_QUBITS, FACTOR_MAX_QUBITS};
 pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
 
 use std::collections::HashMap;
@@ -298,8 +300,8 @@ impl<S: Scalar> BackendRegistry<S> {
         }
     }
 
-    /// A registry with the built-in `"dense"`, `"sparse"` and `"adaptive"`
-    /// backends.
+    /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"` and
+    /// `"factored"` backends.
     pub fn standard() -> Self {
         let mut reg = Self::new();
         reg.register("dense", |n| Ok(Box::new(DenseState::<S>::new(n)?)))
@@ -307,6 +309,8 @@ impl<S: Scalar> BackendRegistry<S> {
         reg.register("sparse", |n| Ok(Box::new(SparseState::<S>::new(n)?)))
             .expect("fresh registry");
         reg.register("adaptive", |n| Ok(Box::new(AdaptiveState::<S>::new(n)?)))
+            .expect("fresh registry");
+        reg.register("factored", |n| Ok(Box::new(FactoredState::<S>::new(n)?)))
             .expect("fresh registry");
         reg
     }
@@ -399,6 +403,59 @@ pub(crate) fn sub_index(index: u64, qubits: &[usize]) -> usize {
         sub |= (((index >> q) & 1) as usize) << b;
     }
     sub
+}
+
+// In-place gate kernels over a flat amplitude slice, shared by the dense and
+// factored backends (the factored backend calls them with factor-local qubit
+// positions).
+
+pub(crate) fn apply_single_in_place<S: Scalar>(amps: &mut [S], m: &GateMatrix<S>, q: usize) {
+    let (m00, m01, m10, m11) = (m.get(0, 0), m.get(0, 1), m.get(1, 0), m.get(1, 1));
+    let mask = 1usize << q;
+    let half = amps.len() >> 1;
+    for i in 0..half {
+        let low = i & (mask - 1);
+        let i0 = ((i >> q) << (q + 1)) | low;
+        let i1 = i0 | mask;
+        let a0 = amps[i0];
+        let a1 = amps[i1];
+        amps[i0] = m00 * a0 + m01 * a1;
+        amps[i1] = m10 * a0 + m11 * a1;
+    }
+}
+
+pub(crate) fn apply_general_in_place<S: Scalar>(
+    amps: &mut [S],
+    m: &GateMatrix<S>,
+    qubits: &[usize],
+) {
+    let k = qubits.len();
+    let d = 1usize << k;
+    let mut sorted = qubits.to_vec();
+    sorted.sort_unstable();
+    let scatter = scatter_table(qubits);
+    let groups = amps.len() >> k;
+    let mdata = m.data();
+    let mut scratch = vec![S::zero(); d];
+    for g in 0..groups {
+        let base = expand_index(g as u64, &sorted);
+        for (j, slot) in scratch.iter_mut().enumerate() {
+            *slot = amps[(base | scatter[j]) as usize];
+        }
+        for r in 0..d {
+            let mut acc = S::zero();
+            for (l, &s) in scratch.iter().enumerate() {
+                acc = acc + mdata[r * d + l] * s;
+            }
+            amps[(base | scatter[r]) as usize] = acc;
+        }
+    }
+}
+
+pub(crate) fn apply_diagonal_in_place<S: Scalar>(amps: &mut [S], entries: &[S], qubits: &[usize]) {
+    for (i, a) in amps.iter_mut().enumerate() {
+        *a = entries[sub_index(i as u64, qubits)] * *a;
+    }
 }
 
 /// Expand `group` (an index over non-target bit patterns) into a full basis
