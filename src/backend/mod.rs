@@ -22,8 +22,8 @@ mod dense;
 mod sparse;
 
 pub use adaptive::AdaptiveState;
-pub use dense::DenseState;
-pub use sparse::SparseState;
+pub use dense::{DenseState, DENSE_MAX_QUBITS};
+pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
 
 use std::collections::HashMap;
 
@@ -52,6 +52,25 @@ pub trait Backend<S: Scalar> {
     /// Apply a `k`-qubit gate matrix to the given qubits
     /// (`qubits[b]` ↔ matrix sub-index bit `b`).
     fn apply(&mut self, matrix: &GateMatrix<S>, qubits: &[usize]) -> Result<()>;
+    /// Apply a diagonal unitary given as its `2^k` diagonal entries, indexed
+    /// by little-endian sub-index over `qubits`. Shipped backends run this
+    /// in `O(states)` with `O(2^k)` storage; the default implementation
+    /// materializes the full matrix and calls [`Backend::apply`], so custom
+    /// backends work unmodified but should override for large `k`.
+    fn apply_diagonal(&mut self, entries: &[S], qubits: &[usize]) -> Result<()> {
+        let d = entries.len();
+        if !d.is_power_of_two() || d != 1usize << qubits.len() {
+            return Err(Error::BadDimension {
+                expected: 1usize << qubits.len(),
+                got: d,
+            });
+        }
+        let mut m = GateMatrix::zeros(d)?;
+        for (i, &e) in entries.iter().enumerate() {
+            m.set(i, i, e);
+        }
+        self.apply(&m, qubits)
+    }
     /// Amplitude of a basis state.
     fn amplitude(&self, index: u64) -> S;
     /// Visit every stored nonzero amplitude as `(basis_index, amplitude)`.
@@ -333,6 +352,38 @@ pub(crate) fn validate_apply<S: Scalar>(
         });
     }
     Ok(())
+}
+
+/// Shared validation for diagonal application.
+pub(crate) fn validate_apply_diagonal<S: Scalar>(
+    num_qubits: usize,
+    entries: &[S],
+    qubits: &[usize],
+) -> Result<()> {
+    crate::circuit::validate_targets(num_qubits, qubits)?;
+    let expected = 1usize
+        .checked_shl(qubits.len() as u32)
+        .ok_or(Error::TooManyQubits {
+            requested: qubits.len(),
+            max: 63,
+        })?;
+    if entries.len() != expected {
+        return Err(Error::BadDimension {
+            expected,
+            got: entries.len(),
+        });
+    }
+    Ok(())
+}
+
+/// Extract the little-endian sub-index of `index` over `qubits`.
+#[inline]
+pub(crate) fn sub_index(index: u64, qubits: &[usize]) -> usize {
+    let mut sub = 0usize;
+    for (b, &q) in qubits.iter().enumerate() {
+        sub |= (((index >> q) & 1) as usize) << b;
+    }
+    sub
 }
 
 /// Expand `group` (an index over non-target bit patterns) into a full basis

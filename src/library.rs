@@ -66,8 +66,10 @@ pub fn iqft<S: Scalar>(n: usize) -> Circuit<S> {
     c
 }
 
-/// A multi-controlled Z on all `n` qubits as a raw diagonal matrix
+/// A multi-controlled Z on all `n` qubits as a dense matrix
 /// (`diag(1, …, 1, −1)`); real-valued, so it exists over every algebra.
+/// Costs `O(4^n)` storage — for anything beyond a handful of qubits use
+/// [`phase_flip`] with [`Circuit::diagonal`] instead.
 pub fn mcz_matrix<S: Scalar>(n: usize) -> Result<GateMatrix<S>> {
     let dim = 1usize << n;
     let mut m = GateMatrix::identity(dim)?;
@@ -75,43 +77,41 @@ pub fn mcz_matrix<S: Scalar>(n: usize) -> Result<GateMatrix<S>> {
     Ok(m)
 }
 
+/// Diagonal entries of an `n`-qubit phase flip about basis state `index`:
+/// identity except `−1` at `index`. `O(2^n)` storage; real-valued, so it
+/// exists over every algebra. Feed to [`Circuit::diagonal`].
+pub fn phase_flip<S: Scalar>(n: usize, index: u64) -> Vec<S> {
+    let dim = 1usize << n;
+    assert!(index < dim as u64, "phase_flip: index out of range");
+    let mut d = vec![S::one(); dim];
+    d[index as usize] = -S::one();
+    d
+}
+
 /// Grover search on `n` qubits for the basis state `marked`, running
 /// `iterations` rounds of oracle + diffusion. The optimal iteration count is
 /// roughly `π/4 · √(2^n)`.
+///
+/// The oracle is a diagonal phase flip at `marked`; the diffusion is
+/// `H⊗n · (phase flip at 0) · H⊗n` (equal to the textbook reflection
+/// `2|s⟩⟨s| − I` up to a global phase). Both use [`Circuit::diagonal`], so
+/// circuit memory is `O(2^n)`, not `O(4^n)`.
 pub fn grover<S: Scalar>(n: usize, marked: u64, iterations: usize) -> Result<Circuit<S>> {
     assert!((1..=32).contains(&n), "grover: unreasonable width");
     assert!(marked < (1u64 << n), "grover: marked state out of range");
-    let mcz = mcz_matrix::<S>(n)?;
+    let oracle = phase_flip::<S>(n, marked);
+    let flip_zero = phase_flip::<S>(n, 0);
     let all: Vec<usize> = (0..n).collect();
     let mut c = Circuit::new(n);
     for q in 0..n {
         c.h(q);
     }
     for _ in 0..iterations {
-        // Oracle: phase-flip |marked⟩ (conjugate an all-ones MCZ by X on the
-        // zero bits of the marked pattern).
-        for q in 0..n {
-            if (marked >> q) & 1 == 0 {
-                c.x(q);
-            }
-        }
-        c.raw("mcz", mcz.clone(), all.clone());
-        for q in 0..n {
-            if (marked >> q) & 1 == 0 {
-                c.x(q);
-            }
-        }
-        // Diffusion: reflect about the uniform superposition.
+        c.diagonal("oracle", oracle.clone(), all.clone());
         for q in 0..n {
             c.h(q);
         }
-        for q in 0..n {
-            c.x(q);
-        }
-        c.raw("mcz", mcz.clone(), all.clone());
-        for q in 0..n {
-            c.x(q);
-        }
+        c.diagonal("flip|0…0⟩", flip_zero.clone(), all.clone());
         for q in 0..n {
             c.h(q);
         }

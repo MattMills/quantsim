@@ -106,6 +106,14 @@ impl<S: Scalar> Backend<S> for DenseState<S> {
             .unwrap_or_else(S::zero)
     }
 
+    fn apply_diagonal(&mut self, entries: &[S], qubits: &[usize]) -> Result<()> {
+        super::validate_apply_diagonal(self.num_qubits, entries, qubits)?;
+        for (i, a) in self.amps.iter_mut().enumerate() {
+            *a = entries[super::sub_index(i as u64, qubits)] * *a;
+        }
+        Ok(())
+    }
+
     fn for_each_nonzero(&self, f: &mut dyn FnMut(u64, S)) {
         for (i, &a) in self.amps.iter().enumerate() {
             if a.abs_sqr() > 0.0 {

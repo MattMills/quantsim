@@ -71,7 +71,7 @@ pub mod scalar;
 pub mod sim;
 
 pub use backend::{AdaptiveState, Backend, BackendRegistry, DenseState, SparseState};
-pub use circuit::{BoundCircuit, Circuit};
+pub use circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
 pub use error::{Error, Result};
 pub use math::GateMatrix;
 pub use registry::GateRegistry;
@@ -84,7 +84,7 @@ pub mod prelude {
     pub use crate::backend::{
         pauli_expectation, AdaptiveState, Backend, BackendRegistry, DenseState, SparseState,
     };
-    pub use crate::circuit::{BoundCircuit, Circuit};
+    pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
     pub use crate::error::{Error, Result};
     pub use crate::gates::{FixedGate, GateDef, ParamGate, Pauli};
     pub use crate::library;

@@ -93,6 +93,14 @@ impl<S: Scalar> Backend<S> for SparseState<S> {
         Ok(())
     }
 
+    fn apply_diagonal(&mut self, entries: &[S], qubits: &[usize]) -> Result<()> {
+        super::validate_apply_diagonal(self.num_qubits, entries, qubits)?;
+        for (&idx, a) in self.map.iter_mut() {
+            *a = entries[super::sub_index(idx, qubits)] * *a;
+        }
+        Ok(())
+    }
+
     fn amplitude(&self, index: u64) -> S {
         self.map.get(&index).copied().unwrap_or_else(S::zero)
     }

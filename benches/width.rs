@@ -72,8 +72,9 @@ fn bench_sparse_ghz(c: &mut Criterion) {
 }
 
 fn bench_adaptive_vs_dense_grover(c: &mut Criterion) {
-    // Grover keeps a dense-ish state; adaptive promotes early and should
-    // land within noise of dense, demonstrating the promotion is not a tax.
+    // Grover keeps a dense-ish state; adaptive promotes during the first
+    // H layer and should track dense within a small constant factor
+    // thereafter — the cost of promotion, quantified.
     let reg = GateRegistry::<C64>::standard();
     let mut group = c.benchmark_group("width_grover_3iters");
     group

@@ -17,7 +17,11 @@ parts are swappable:
 - **Gates** — a registry (`name → GateDef`) with a 32-gate standard library
   (plus aliases), defined once over ℂ and projected into each algebra;
   over ℝ you automatically get the real subset. Research gates are a
-  closure away and are unitarity-validated at registration.
+  closure away and are unitarity-validated at registration. Beyond dense
+  matrices, circuits accept **diagonal kernels** (`Circuit::diagonal`) for
+  phase oracles and multi-controlled Z — `O(2^k)` storage and `O(states)`
+  application instead of `O(4^k)`, which is the difference between a 262 KiB
+  and a 4 GiB MCZ at k = 14.
 
 BQP support: the standard registry contains a universal set (`h`, `t`, `cx`,
 …), so any BQP circuit family runs exactly on the dense backend — at the
@@ -147,7 +151,8 @@ cargo run --release --example width_scaling  # memory table, incl. actual RSS
 circuits (QFT, Grover, random), dense-vs-sparse on concentrated states, and
 the cost of swapping the algebra (same Ry/CX ladder over ℝ, ℂ, CD⟨ℝ⟩, ℍ, 𝕆,
 𝕊). `benches/width.rs` sweeps width: dense doubles per qubit; sparse GHZ is
-flat out to 60+ qubits; adaptive tracks dense within noise on Grover.
+flat out to 60+ qubits; adaptive tracks dense within noise on Grover
+(5.6 ms vs 6.1 ms at n=14 — the sparse warm-up phase pays for itself).
 
 Sample figures from this machine (`--quick` run, debug-free `bench`
 profile):
@@ -157,8 +162,11 @@ profile):
 | 1q gate, dense n=16 | ~165 µs ≈ 2.5 ns/amplitude |
 | 2q gate, dense n=16 | ~620 µs |
 | 3q gate (`ccx`), dense n=16 | ~985 µs |
-| QFT(12), dense | 2.79 ms |
-| GHZ(20): dense vs sparse | 203 ms vs **5.7 µs** |
+| QFT(12), dense | 2.9 ms |
+| Grover(10), 8 iterations (diagonal-kernel oracle) | 0.73 ms |
+| Grover(16), 100 iterations, end to end | 1.3 s |
+| GHZ(20): dense vs sparse | 216 ms vs **5.7 µs** |
+| Grover(14), 3 iterations: dense vs adaptive | 6.1 ms vs 5.6 ms |
 | Ry/CX ladder n=12: ℝ / ℂ / CD⟨ℝ⟩ / ℍ / 𝕆 / 𝕊 | 0.37 / 0.67 / 0.70 / 2.0 / 11.4 / 43.7 ms |
 
 The CD⟨ℝ⟩ column is the built-from-scratch Cayley–Dickson complex running

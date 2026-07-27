@@ -356,6 +356,123 @@ fn controlled_gate_with_control_zero_is_identity() {
 }
 
 #[test]
+fn diagonal_kernel_matches_dense_gates() {
+    // cz and cp as diagonal kernels must equal the registry gates —
+    // pins the little-endian sub-indexing of diagonal entries.
+    let theta = 1.234f64;
+    let cp_diag: Vec<C64> = vec![
+        c64(1.0, 0.0),
+        c64(1.0, 0.0),
+        c64(1.0, 0.0),
+        c64(theta.cos(), theta.sin()),
+    ];
+    assert_equiv(
+        2,
+        |c| {
+            c.cz(0, 1).cp(0, 1, theta);
+        },
+        move |c| {
+            c.diagonal(
+                "cz",
+                vec![c64(1.0, 0.0); 3]
+                    .into_iter()
+                    .chain([c64(-1.0, 0.0)])
+                    .collect(),
+                vec![0, 1],
+            )
+            .diagonal("cp", cp_diag, vec![0, 1]);
+        },
+    );
+    // rz as a 1q diagonal, on a non-adjacent target among 3 qubits.
+    let rz: Vec<C64> = vec![
+        c64((theta / 2.0).cos(), -(theta / 2.0).sin()),
+        c64((theta / 2.0).cos(), (theta / 2.0).sin()),
+    ];
+    assert_equiv(
+        3,
+        |c| {
+            c.rz(1, theta);
+        },
+        move |c| {
+            c.diagonal("rz", rz, vec![1]);
+        },
+    );
+}
+
+#[test]
+fn diagonal_inverse_and_backend_agreement() {
+    let reg: GateRegistry = GateRegistry::standard();
+    // A random-phase diagonal on qubits [2, 0] of four (order matters).
+    let mut prng = Prng::new(31);
+    let entries: Vec<C64> = (0..4)
+        .map(|_| {
+            let t = prng.next_f64() * std::f64::consts::TAU;
+            c64(t.cos(), t.sin())
+        })
+        .collect();
+    let mut c: Circuit = scrambler(4);
+    c.diagonal("dphase", entries, vec![2, 0]);
+    let bound = c.bind(&reg).unwrap();
+
+    // All three representations agree.
+    let sim = Simulator::<C64>::new();
+    let dense = sim.run(&c).unwrap();
+    let sparse = sim.run_on("sparse", &c).unwrap();
+    let adaptive = sim.run_on("adaptive", &c).unwrap();
+    for i in 0..16u64 {
+        assert!(
+            dense.amplitude(i).approx_eq(sparse.amplitude(i), TOL),
+            "sparse {i}"
+        );
+        assert!(
+            dense.amplitude(i).approx_eq(adaptive.amplitude(i), TOL),
+            "adaptive {i}"
+        );
+    }
+
+    // Bound inverse uncomputes the diagonal too.
+    let mut state = DenseState::<C64>::new(4).unwrap();
+    bound.run(&mut state).unwrap();
+    bound.inverse().run(&mut state).unwrap();
+    assert!(state.amplitude(0).approx_eq(c64(1.0, 0.0), 1e-8));
+}
+
+#[test]
+fn diagonal_validation_at_bind() {
+    let reg: GateRegistry = GateRegistry::standard();
+    // Wrong length.
+    let mut c: Circuit = Circuit::new(2);
+    c.diagonal("bad_len", vec![c64(1.0, 0.0); 3], vec![0, 1]);
+    assert!(matches!(
+        c.bind(&reg).unwrap_err(),
+        Error::BadDimension {
+            expected: 4,
+            got: 3
+        }
+    ));
+    // Non-unit entry.
+    let mut c: Circuit = Circuit::new(1);
+    c.diagonal("too_big", vec![c64(1.0, 0.0), c64(2.0, 0.0)], vec![0]);
+    assert!(matches!(
+        c.bind(&reg).unwrap_err(),
+        Error::NotUnitary { .. }
+    ));
+    // Over split-complex, |d| = 1 is NOT enough: conj(j)·j = −1, so diag(1, j)
+    // must be rejected even though every coefficient has unit magnitude.
+    let reg_s = GateRegistry::<SplitComplex>::standard();
+    let mut c: Circuit<SplitComplex> = Circuit::new(1);
+    c.diagonal(
+        "j_diag",
+        vec![SplitComplex::one(), SplitComplex::basis(1)],
+        vec![0],
+    );
+    assert!(matches!(
+        c.bind(&reg_s).unwrap_err(),
+        Error::NotUnitary { .. }
+    ));
+}
+
+#[test]
 fn circuit_inverse_uncomputes() {
     let reg: GateRegistry = GateRegistry::standard();
     let circuit = library::random_circuit(4, 40, 0xC0FFEE);

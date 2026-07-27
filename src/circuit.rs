@@ -37,17 +37,34 @@ pub enum Op<S: Scalar> {
         /// Target qubits.
         qubits: Vec<usize>,
     },
+    /// A diagonal unitary given by its `2^k` diagonal entries. Stores and
+    /// applies in `O(2^k)` instead of `O(4^k)` — the difference between a
+    /// 262 KiB and a 4 GiB multi-controlled Z at k = 14. The natural shape
+    /// for phase oracles.
+    Diagonal {
+        /// Display label.
+        label: String,
+        /// Diagonal entries, indexed by sub-index (little-endian over
+        /// `qubits`); each must satisfy `conj(d)·d = 1` (validated at bind).
+        entries: Vec<S>,
+        /// Target qubits.
+        qubits: Vec<usize>,
+    },
 }
 
 impl<S: Scalar> Op<S> {
     fn qubits(&self) -> &[usize] {
         match self {
-            Op::Named { qubits, .. } | Op::Raw { qubits, .. } => qubits,
+            Op::Named { qubits, .. } | Op::Raw { qubits, .. } | Op::Diagonal { qubits, .. } => {
+                qubits
+            }
         }
     }
     fn qubits_mut(&mut self) -> &mut Vec<usize> {
         match self {
-            Op::Named { qubits, .. } | Op::Raw { qubits, .. } => qubits,
+            Op::Named { qubits, .. } | Op::Raw { qubits, .. } | Op::Diagonal { qubits, .. } => {
+                qubits
+            }
         }
     }
 }
@@ -122,6 +139,25 @@ impl<S: Scalar> Circuit<S> {
         self
     }
 
+    /// Append a diagonal unitary given by its `2^k` diagonal entries
+    /// (indexed by little-endian sub-index over `qubits`). Each entry must
+    /// satisfy `conj(d)·d = 1`, checked at bind time. Phase oracles and
+    /// multi-controlled Z gates should use this rather than [`Circuit::raw`]:
+    /// storage and application cost `O(2^k)` instead of `O(4^k)`.
+    pub fn diagonal(
+        &mut self,
+        label: impl Into<String>,
+        entries: Vec<S>,
+        qubits: impl Into<Vec<usize>>,
+    ) -> &mut Self {
+        self.ops.push(Op::Diagonal {
+            label: label.into(),
+            entries,
+            qubits: qubits.into(),
+        });
+        self
+    }
+
     /// Append every operation of `other`, remapping its qubit `q` to
     /// `map[q]`. Useful for embedding library circuits (e.g. a QFT) into a
     /// subset of a larger register.
@@ -176,7 +212,7 @@ impl<S: Scalar> Circuit<S> {
                     debug_assert_eq!(matrix.dim(), 1 << qubits.len());
                     gates.push(BoundGate {
                         label: name.clone(),
-                        matrix,
+                        kernel: GateKernel::Matrix(matrix),
                         qubits: qubits.clone(),
                     });
                 }
@@ -201,7 +237,38 @@ impl<S: Scalar> Circuit<S> {
                     }
                     gates.push(BoundGate {
                         label: label.clone(),
-                        matrix: matrix.clone(),
+                        kernel: GateKernel::Matrix(matrix.clone()),
+                        qubits: qubits.clone(),
+                    });
+                }
+                Op::Diagonal {
+                    label,
+                    entries,
+                    qubits,
+                } => {
+                    let expected = 1usize << qubits.len();
+                    if entries.len() != expected {
+                        return Err(Error::BadDimension {
+                            expected,
+                            got: entries.len(),
+                        });
+                    }
+                    // Unitarity for a diagonal is entrywise conj(d)·d = 1
+                    // (the algebra's own conjugation, not just |d| = 1 —
+                    // they differ over e.g. split-complex).
+                    let mut dev: f64 = 0.0;
+                    for &d in entries {
+                        dev = dev.max((d.conj() * d - S::one()).abs_sqr().sqrt());
+                    }
+                    if dev > UNITARY_TOL {
+                        return Err(Error::NotUnitary {
+                            label: label.clone(),
+                            deviation: dev,
+                        });
+                    }
+                    gates.push(BoundGate {
+                        label: label.clone(),
+                        kernel: GateKernel::Diagonal(entries.clone()),
                         qubits: qubits.clone(),
                     });
                 }
@@ -235,13 +302,22 @@ pub(crate) fn validate_targets(num_qubits: usize, qubits: &[usize]) -> Result<()
     Ok(())
 }
 
-/// A resolved gate application: matrix plus targets.
+/// The computational kernel of a bound gate.
+#[derive(Debug, Clone)]
+pub enum GateKernel<S: Scalar> {
+    /// A dense unitary matrix.
+    Matrix(GateMatrix<S>),
+    /// A diagonal unitary, stored as its `2^k` diagonal entries.
+    Diagonal(Vec<S>),
+}
+
+/// A resolved gate application: kernel plus targets.
 #[derive(Debug, Clone)]
 pub struct BoundGate<S: Scalar> {
     /// Display label (gate name, or `name†` for inverses).
     pub label: String,
-    /// The unitary.
-    pub matrix: GateMatrix<S>,
+    /// The unitary kernel.
+    pub kernel: GateKernel<S>,
     /// Target qubits.
     pub qubits: Vec<usize>,
 }
@@ -273,12 +349,15 @@ impl<S: Scalar> BoundCircuit<S> {
             });
         }
         for g in &self.gates {
-            backend.apply(&g.matrix, &g.qubits)?;
+            match &g.kernel {
+                GateKernel::Matrix(m) => backend.apply(m, &g.qubits)?,
+                GateKernel::Diagonal(d) => backend.apply_diagonal(d, &g.qubits)?,
+            }
         }
         Ok(())
     }
 
-    /// The inverse circuit: reversed order, each matrix conjugate-transposed.
+    /// The inverse circuit: reversed order, each kernel conjugate-transposed.
     ///
     /// Exact for associative scalars; over non-associative algebras
     /// `U · U†` need not be the identity operationally, which is part of
@@ -290,7 +369,12 @@ impl<S: Scalar> BoundCircuit<S> {
             .rev()
             .map(|g| BoundGate {
                 label: format!("{}†", g.label),
-                matrix: g.matrix.dagger(),
+                kernel: match &g.kernel {
+                    GateKernel::Matrix(m) => GateKernel::Matrix(m.dagger()),
+                    GateKernel::Diagonal(d) => {
+                        GateKernel::Diagonal(d.iter().map(|&e| e.conj()).collect())
+                    }
+                },
                 qubits: g.qubits.clone(),
             })
             .collect();

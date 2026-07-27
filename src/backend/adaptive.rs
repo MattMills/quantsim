@@ -88,6 +88,11 @@ impl<S: Scalar> Backend<S> for AdaptiveState<S> {
         self.maybe_promote()
     }
 
+    fn apply_diagonal(&mut self, entries: &[S], qubits: &[usize]) -> Result<()> {
+        // Diagonal gates never change the support, so no promotion check.
+        self.inner_mut().apply_diagonal(entries, qubits)
+    }
+
     fn amplitude(&self, index: u64) -> S {
         self.inner().amplitude(index)
     }

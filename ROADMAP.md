@@ -82,6 +82,10 @@ entries, each a small self-contained `Scalar` impl plus tests:
   feed-forward), rather than only via the `Backend::measure` API.
 - Noise channels (Kraus operators) — likely a `DensityBackend<S>` or
   trajectory sampling over the existing pure-state backends.
+- More structured kernels beyond `GateKernel::Diagonal` (shipped):
+  permutation kernels (X/CX/Toffoli families as index maps — no arithmetic
+  at all) and controlled-sparse kernels, all behind the same
+  `BoundCircuit`/`Backend` seam.
 - Gate fusion (adjacent 1q gates; 1q-into-2q) for the dense backend. Note:
   fusion is an *associativity* optimization and must stay disabled for
   non-associative algebras — the `Scalar::ASSOCIATIVE` flag exists partly
