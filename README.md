@@ -160,7 +160,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 129 tests (125 across ten suites + 4 doctests); line
+`cargo test` runs 173 tests (169 across fourteen suites + 4 doctests); line
 coverage is 92.6% (94.1% region) via `cargo llvm-cov`, with the remaining
 gap almost entirely trivial accessors and defensive guards:
 
@@ -309,7 +309,7 @@ src/
   library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           twelve integration suites (see Testing)
+tests/           fourteen integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling

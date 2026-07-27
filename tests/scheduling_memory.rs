@@ -350,6 +350,71 @@ fn quantum_memory_interacting_with_compute() {
     assert!(state.memory_bytes() < 16_384, "{}", state.memory_bytes());
 }
 
+#[test]
+fn factored_native_sampler_matches_distribution() {
+    // sample_factored draws each factor independently — exact for the
+    // product Born distribution, no support enumeration.
+    let sim: Simulator = Simulator::new();
+    let state = sim.run_on("factored", &library::bell()).unwrap();
+    let factored = state.as_any().downcast_ref::<FactoredState<C64>>().unwrap();
+    let counts = factored.sample_factored(4096, &mut Prng::new(3)).unwrap();
+    assert_eq!(*counts.get(&0b01).unwrap_or(&0), 0);
+    assert_eq!(*counts.get(&0b10).unwrap_or(&0), 0);
+    let z = *counts.get(&0b00).unwrap_or(&0);
+    assert_eq!(z + counts.get(&0b11).copied().unwrap_or(0), 4096);
+    assert!((1792..=2304).contains(&z), "{z} zeros"); // 4σ
+
+    // Wide product state: 36 qubits of independent |+⟩ — enumeration would
+    // visit 2^36 outcomes; per-factor sampling doesn't.
+    let mut c: Circuit = Circuit::new(36);
+    for q in 0..36 {
+        c.h(q);
+    }
+    let state = sim.run_on("factored", &c).unwrap();
+    let factored = state.as_any().downcast_ref::<FactoredState<C64>>().unwrap();
+    let counts = factored.sample_factored(512, &mut Prng::new(8)).unwrap();
+    let total: u64 = counts.values().sum();
+    assert_eq!(total, 512);
+    // Mean bit-density across shots must hover near 1/2 (each bit fair).
+    let ones: u64 = counts
+        .iter()
+        .map(|(idx, n)| idx.count_ones() as u64 * n)
+        .sum();
+    let density = ones as f64 / (512.0 * 36.0);
+    assert!((0.46..=0.54).contains(&density), "bit density {density}");
+}
+
+#[test]
+fn schedule_diagonal_and_raw_events() {
+    // diagonal_at and raw_at events flow through the queue and flatten
+    // identically to the equivalent circuit.
+    let sim: Simulator = Simulator::new();
+    let reg = GateRegistry::<C64>::standard();
+    let h = reg.resolve("h").unwrap().matrix(&[]).unwrap();
+    let mut schedule: Schedule = Schedule::new(3, 10);
+    schedule
+        .raw_at(0, "h-raw", h.clone(), vec![0])
+        .at(1, "cx", Vec::new(), vec![0, 1])
+        .diagonal_at(2, "flip3", library::phase_flip(2, 3), vec![0, 1])
+        .raw_at(3, "h-raw", h, vec![2]);
+    let (state, trace) = schedule.run(&sim, 0).unwrap();
+    let flattened = schedule.to_circuit().unwrap();
+    let reference = sim.run(&flattened).unwrap();
+    for i in 0..8u64 {
+        assert!(state.amplitude(i).approx_eq(reference.amplitude(i), TOL));
+    }
+    assert_eq!(trace.events.len(), 4);
+    // Non-unitary raw and diagonal events are rejected at application.
+    let mut bad: Schedule = Schedule::new(1, 5);
+    bad.diagonal_at(0, "too-big", vec![c64(2.0, 0.0), c64(1.0, 0.0)], vec![0]);
+    assert!(matches!(bad.run(&sim, 0), Err(Error::NotUnitary { .. })));
+    let mut bad: Schedule = Schedule::new(1, 5);
+    let mut not_unitary = GateMatrix::<C64>::identity(2).unwrap();
+    not_unitary.set(0, 0, c64(3.0, 0.0));
+    bad.raw_at(0, "nope", not_unitary, vec![0]);
+    assert!(matches!(bad.run(&sim, 0), Err(Error::NotUnitary { .. })));
+}
+
 // ───────────────── transparent structure discovery ─────────────────
 
 #[test]
@@ -479,6 +544,26 @@ fn parity_signal_thread_is_transparent_and_carries_structure() {
         !report.transparent,
         "thread through a non-commuting segment must be caught"
     );
+}
+
+#[test]
+fn diagonal_ops_ride_signal_threads() {
+    // Insertion::diagonal splices diagonal kernels; a phase flip applied
+    // and immediately reverted is transparent as a unit.
+    let sim: Simulator = Simulator::new();
+    let mut base = Circuit::new(2);
+    base.h(0).h(1); // 0, 1
+    base.cx(0, 1); // 2
+    let thread = Insertion::new("flip-unflip")
+        .diagonal(2, "flip", library::phase_flip(2, 3), vec![0, 1])
+        .diagonal(2, "unflip", library::phase_flip(2, 3), vec![0, 1]);
+    let report = verify_transparent(&sim, &base, &thread, 1e-9).unwrap();
+    assert!(report.transparent, "{report:?}");
+    // A single unreverted flip is not.
+    let half =
+        Insertion::new("flip-only").diagonal(2, "flip", library::phase_flip(2, 3), vec![0, 1]);
+    let report = verify_transparent(&sim, &base, &half, 1e-9).unwrap();
+    assert!(!report.transparent);
 }
 
 #[test]

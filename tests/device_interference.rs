@@ -143,6 +143,31 @@ fn grover_interference_profile() {
     assert_close(h_destroyed, total, 1e-9);
 }
 
+#[test]
+fn interference_reset_and_load() {
+    let mut state = InterferenceState::<C64>::new(2).unwrap();
+    let reg = GateRegistry::<C64>::standard();
+    let h = reg.resolve("h").unwrap().matrix(&[]).unwrap();
+    state.apply(&h, &[0]).unwrap();
+    state.apply(&h, &[0]).unwrap();
+    assert_eq!(state.records().len(), 2);
+    assert!(state.total_destroyed() > 0.9);
+    state.reset();
+    assert!(state.records().is_empty());
+    assert!(state.destruction_map().iter().all(|&d| d == 0.0));
+    assert!(state.amplitude(0).approx_eq(c64(1.0, 0.0), TOL));
+    // Loaded states start a fresh ledger from arbitrary amplitudes.
+    let s = FRAC_1_SQRT_2;
+    state.load(&[(1, c64(s, 0.0)), (2, c64(0.0, s))]).unwrap();
+    state.apply(&h, &[0]).unwrap();
+    assert_eq!(state.records().len(), 1);
+    assert!(state.load(&[(9, c64(1.0, 0.0))]).is_err());
+    let mut rng = Prng::new(1);
+    let outcome = state.measure(0, &mut rng).unwrap();
+    assert_close(state.total_weight(), 1.0, TOL);
+    let _ = outcome;
+}
+
 // ───────────────────────── device model ─────────────────────────
 
 #[test]

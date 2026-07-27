@@ -100,11 +100,53 @@ fn bench_adaptive_vs_dense_grover(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_mps_ghz(c: &mut Criterion) {
+    // Bond dimension stays 2: time is linear in width, far past dense.
+    let reg = GateRegistry::<C64>::standard();
+    let mut group = c.benchmark_group("width_mps_ghz");
+    for n in [10usize, 20, 30, 40, 50, 60] {
+        let bound = library::ghz::<C64>(n).bind(&reg).unwrap();
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            let mut state = MpsState::<C64>::new(n).unwrap();
+            b.iter(|| {
+                state.reset();
+                bound.run(&mut state).unwrap();
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_factored_pairs(c: &mut Criterion) {
+    // Disjoint entangled pairs: factor sizes stay 4 — linear in width.
+    let reg = GateRegistry::<C64>::standard();
+    let mut group = c.benchmark_group("width_factored_pairs");
+    for n in [8usize, 16, 24, 32, 40, 48] {
+        let mut circuit = Circuit::new(n);
+        for pair in 0..n / 2 {
+            circuit
+                .ry(2 * pair, 0.3 + 0.05 * pair as f64)
+                .cx(2 * pair, 2 * pair + 1);
+        }
+        let bound = circuit.bind(&reg).unwrap();
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            let mut state = FactoredState::<C64>::new(n).unwrap();
+            b.iter(|| {
+                state.reset();
+                bound.run(&mut state).unwrap();
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_dense_hlayer,
     bench_dense_qft,
     bench_sparse_ghz,
+    bench_mps_ghz,
+    bench_factored_pairs,
     bench_adaptive_vs_dense_grover
 );
 criterion_main!(benches);

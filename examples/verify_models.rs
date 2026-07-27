@@ -76,6 +76,7 @@ fn main() -> Result<()> {
         "sparse",
         "adaptive",
         "factored",
+        "mps",
         "interference",
         "device-linear",
         "device-ring",
