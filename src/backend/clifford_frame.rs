@@ -20,17 +20,18 @@
 //!   free; anything else would be a BQP = BPP claim. Measurement runs
 //!   natively: [`CliffordFramedState::measure_pauli`] (and `measure`,
 //!   which is `Z_q` through it) projects the *stored* state with the
-//!   conjugated string — no flush, the frame survives — at the same cost
-//!   envelope as the rotations: `O(support)` per measurement, at most 2×
-//!   growth. That growth **compounds**: a long adaptive sequence drifts
-//!   the stored state away from the frame (the register collapses toward
-//!   a basis state `|b⟩` while the stored side becomes `C†|b⟩`,
-//!   generically full-support), so `m` measurements are bounded by
-//!   `2^m`, not by a polynomial — measured honestly in the tests, cheap
-//!   for the fresh-ancilla feedback loops the lift generates, and the
-//!   reason *frame repair on measurement* (the true tableau update, which
-//!   would re-align the frame after each projection) is a named roadmap
-//!   rung rather than a claimed capability. Full amplitude-vector
+//!   conjugated string — no flush, the frame survives — and **frame
+//!   repair** then re-aligns the representation: the frame becomes
+//!   `C·V` for a repair Clifford `V` (S on each Y bit, a CX fold onto a
+//!   pivot, one H) chosen so the measured string is Z-type in the new
+//!   stored basis — the true tableau measurement update, with the
+//!   physics untouched (`C·stored = (C·V)·(V†·stored)`). Projection's
+//!   ≤2× growth therefore no longer compounds: adaptive sequences of
+//!   any length hold the stored support flat (measured: peak 2 across
+//!   40 sequential measurements at width 40, final support 1 — where
+//!   the unrepaired path, still selectable via
+//!   [`CliffordFramedState::set_measure_repair`] and pinned in the
+//!   tests for the record, pays up to `2^m`). Full amplitude-vector
 //!   extraction and batch `sample()` still flush — extracting `2^n`
 //!   numbers is not a Gottesman–Knill capability and never was.
 //! * **Pauli-axis rotations conjugate**: `exp(−iθ/2·P)` becomes
@@ -59,10 +60,10 @@
 //!
 //! What this buys and what it cannot: the frame walks gates through the
 //! symplectic group Sp(2n, 𝔽₂) at metadata cost, so the *Clifford part*
-//! of a circuit is free; what remains in the stored state is the
-//! non-Clifford residue ("magic"). The `2^t` here is the crude product
-//! bound — stabilizer-rank compression (≈ 2^{0.4t}) and native Pauli
-//! measurement through the tableau are roadmap rungs. A frame that
+//! of a circuit — evolution and, with repair, measurement — is free; what
+//! remains in the stored state is the non-Clifford residue ("magic").
+//! The `2^t` here is the crude product bound — stabilizer-rank
+//! compression (≈ 2^{0.4t}) is the remaining roadmap rung. A frame that
 //! absorbed *everything* would prove BQP = BPP; the measured exchange
 //! rate into T-count currency is exactly the wall this backend makes
 //! visible.
@@ -191,26 +192,113 @@ impl CliffordTableau {
     /// `C† P C` for an arbitrary signed Hermitian string, as the phased
     /// product of generator images: `P = σ i^{|x∧z|} · Π X_q · Π Z_q`.
     fn image(&self, p: PauliString) -> PauliString {
-        let y = (p.x & p.z).count_ones();
-        let mut acc = RawPauli {
-            phase: (y + if p.negative { 2 } else { 0 }) & 3,
-            x: 0,
-            z: 0,
-        };
-        let mut xs = p.x;
-        while xs != 0 {
-            let q = xs.trailing_zeros() as usize;
-            xs &= xs - 1;
-            acc.mul(RawPauli::from_hermitian(self.x_images[q]));
-        }
-        let mut zs = p.z;
-        while zs != 0 {
-            let q = zs.trailing_zeros() as usize;
-            zs &= zs - 1;
-            acc.mul(RawPauli::from_hermitian(self.z_images[q]));
-        }
-        acc.into_hermitian()
+        conj_via(p, |q| self.x_images[q], |q| self.z_images[q])
     }
+}
+
+/// Conjugate a signed Hermitian string through a Clifford given by its
+/// generator images: decompose `P = σ i^{|x∧z|} · Π X_q · Π Z_q`, map each
+/// generator, recompose with exact phase tracking. Shared by the frame
+/// tableau and the measurement-repair steps.
+fn conj_via(
+    p: PauliString,
+    x_image: impl Fn(usize) -> PauliString,
+    z_image: impl Fn(usize) -> PauliString,
+) -> PauliString {
+    let y = (p.x & p.z).count_ones();
+    let mut acc = RawPauli {
+        phase: (y + if p.negative { 2 } else { 0 }) & 3,
+        x: 0,
+        z: 0,
+    };
+    let mut xs = p.x;
+    while xs != 0 {
+        let q = xs.trailing_zeros() as usize;
+        xs &= xs - 1;
+        acc.mul(RawPauli::from_hermitian(x_image(q)));
+    }
+    let mut zs = p.z;
+    while zs != 0 {
+        let q = zs.trailing_zeros() as usize;
+        zs &= zs - 1;
+        acc.mul(RawPauli::from_hermitian(z_image(q)));
+    }
+    acc.into_hermitian()
+}
+
+/// One stored-side gate of a measurement-repair Clifford `V`: the smallest
+/// gate set that maps a measured (conjugated) string to Z-type. S turns a
+/// Y factor into X (diagonal on the stored state — no support growth), CX
+/// folds the X support onto a pivot (permutation — no growth), and the
+/// single final H maps the pivot's X to Z (the only step that can grow
+/// stored support, at most 2×, once per measurement).
+#[derive(Debug, Clone, Copy)]
+enum RepairStep {
+    /// S on a qubit.
+    S(usize),
+    /// CX with (control, target).
+    Cx(usize, usize),
+    /// H on a qubit.
+    H(usize),
+}
+
+impl RepairStep {
+    /// `g† X_q g` in the Hermitian signed-string convention.
+    fn x_image(&self, q: usize) -> PauliString {
+        match *self {
+            // S† X S = −Y.
+            RepairStep::S(a) if q == a => PauliString {
+                x: 1 << a,
+                z: 1 << a,
+                negative: true,
+            },
+            // H X H = Z.
+            RepairStep::H(a) if q == a => PauliString {
+                x: 0,
+                z: 1 << a,
+                negative: false,
+            },
+            // CX X_c CX = X_c X_t.
+            RepairStep::Cx(c, t) if q == c => PauliString {
+                x: (1 << c) | (1 << t),
+                z: 0,
+                negative: false,
+            },
+            _ => PauliString {
+                x: 1 << q,
+                z: 0,
+                negative: false,
+            },
+        }
+    }
+
+    /// `g† Z_q g` in the Hermitian signed-string convention.
+    fn z_image(&self, q: usize) -> PauliString {
+        match *self {
+            // H Z H = X.
+            RepairStep::H(a) if q == a => PauliString {
+                x: 1 << a,
+                z: 0,
+                negative: false,
+            },
+            // CX Z_t CX = Z_c Z_t.
+            RepairStep::Cx(c, t) if q == t => PauliString {
+                x: 0,
+                z: (1 << c) | (1 << t),
+                negative: false,
+            },
+            _ => PauliString {
+                x: 0,
+                z: 1 << q,
+                negative: false,
+            },
+        }
+    }
+}
+
+/// `g† P g` for one repair step.
+fn conj_by_step(p: PauliString, step: RepairStep) -> PauliString {
+    conj_via(p, |q| step.x_image(q), |q| step.z_image(q))
 }
 
 /// Execution counters: how the wrapper routed its gates, and how heavy the
@@ -240,6 +328,9 @@ pub struct CliffordFrameStats {
     /// Measurements performed natively through the tableau — no flush,
     /// the frame survives.
     pub native_measurements: usize,
+    /// Frame repairs after native measurements (the true tableau
+    /// measurement update: `C ← C·V`, stored basis re-aligned).
+    pub frame_repairs: usize,
 }
 
 enum LoggedKernel<S: Scalar> {
@@ -257,6 +348,7 @@ struct Core<S: Scalar> {
     tableau: CliffordTableau,
     log: Vec<LoggedGate<S>>,
     stats: CliffordFrameStats,
+    repair: bool,
     peak_inner_memory: usize,
     peak_stored_support: usize,
 }
@@ -313,6 +405,138 @@ impl<S: Scalar> Core<S> {
         })?;
         self.state.apply_diagonal(&[p, p], &[0])
     }
+
+    /// The true tableau measurement update (frame repair). The projection
+    /// left the stored state an eigenstate of `img` (X-part nonempty).
+    /// Build the stored-side Clifford `V` — S on each Y bit, a CX fold of
+    /// the X support onto its lowest bit, H on that pivot — so that
+    /// `V† img V` is Z-type, then rewrite the representation without
+    /// touching the physics (`C·stored = (C·V)·(V†·stored)`):
+    ///
+    /// * tableau: every generator image conjugates through `V`
+    ///   (`C' = C·V ⇒ C'†PC' = V†(C†PC)V`),
+    /// * replay log: `V` prepends (flush applies `V` first, then the
+    ///   logged Cliffords, reproducing `C·V` exactly),
+    /// * stored state: `V†` applies — S† diagonal (no growth), CX
+    ///   permutation (no growth), one H (≤2×, and on the measured pair it
+    ///   typically *collapses* support instead).
+    ///
+    /// Post-repair the measured observable is Z-type in the stored basis:
+    /// the drift that made `m` measurements cost up to `2^m` is repaired
+    /// after each one, so adaptive sequences stay flat.
+    fn repair_after_measurement(&mut self, img: PauliString) -> Result<()> {
+        debug_assert_ne!(img.x, 0, "Z-type measurements project diagonally");
+        let mut q = img;
+        let mut steps: Vec<RepairStep> = Vec::new();
+        let mut ys = q.x & q.z;
+        while ys != 0 {
+            let b = ys.trailing_zeros() as usize;
+            ys &= ys - 1;
+            let step = RepairStep::S(b);
+            q = conj_by_step(q, step);
+            steps.push(step);
+        }
+        debug_assert_eq!(q.x & q.z, 0, "S pass must clear every Y factor");
+        let pivot = q.x.trailing_zeros() as usize;
+        let mut rest = q.x & (q.x - 1);
+        while rest != 0 {
+            let i = rest.trailing_zeros() as usize;
+            rest &= rest - 1;
+            let step = RepairStep::Cx(pivot, i);
+            q = conj_by_step(q, step);
+            steps.push(step);
+        }
+        debug_assert_eq!(q.x, 1u64 << pivot, "CX fold must isolate the pivot");
+        let step = RepairStep::H(pivot);
+        q = conj_by_step(q, step);
+        steps.push(step);
+        debug_assert_eq!(q.x, 0, "repair must end on a Z-type string");
+
+        // Tableau: C ← C·V, i.e. conjugate every image through the steps
+        // in choice order (V = g₁·g₂⋯gₘ as an operator product).
+        for &step in &steps {
+            for image in self
+                .tableau
+                .x_images
+                .iter_mut()
+                .chain(self.tableau.z_images.iter_mut())
+            {
+                *image = conj_by_step(*image, step);
+            }
+        }
+        // Stored: stored ← V†·stored = g₁†(g₂†(…gₘ†… applied right-to-left
+        // means g₁† acts first — the steps in choice order, daggered.
+        for &step in &steps {
+            match step {
+                RepairStep::S(b) => {
+                    let minus_i = repair_scalar::<S>(c64(0.0, -1.0))?;
+                    self.state.apply_diagonal(&[S::one(), minus_i], &[b])?;
+                }
+                RepairStep::Cx(c, t) => {
+                    self.state.apply(&cx_matrix::<S>()?, &[c, t])?;
+                }
+                RepairStep::H(b) => {
+                    self.state.apply(&h_matrix::<S>()?, &[b])?;
+                }
+            }
+        }
+        // Log: flush must apply V before the previously absorbed gates.
+        // V = g₁·g₂⋯gₘ applies gₘ to the ket first ⇒ log prefix is the
+        // steps reversed.
+        let mut new_log: Vec<LoggedGate<S>> = Vec::with_capacity(self.log.len() + steps.len());
+        for &step in steps.iter().rev() {
+            let gate = match step {
+                RepairStep::S(b) => LoggedGate {
+                    kernel: LoggedKernel::Diagonal(vec![S::one(), repair_scalar::<S>(c64(0.0, 1.0))?]),
+                    qubits: vec![b],
+                },
+                RepairStep::Cx(c, t) => LoggedGate {
+                    kernel: LoggedKernel::Matrix(cx_matrix::<S>()?),
+                    qubits: vec![c, t],
+                },
+                RepairStep::H(b) => LoggedGate {
+                    kernel: LoggedKernel::Matrix(h_matrix::<S>()?),
+                    qubits: vec![b],
+                },
+            };
+            new_log.push(gate);
+        }
+        new_log.append(&mut self.log);
+        self.log = new_log;
+        self.stats.frame_repairs += 1;
+        Ok(())
+    }
+}
+
+/// Embed a complex constant into the algebra for a repair gate; the
+/// constructor gating (commutative division algebra containing `i`) makes
+/// this infallible in practice.
+fn repair_scalar<S: Scalar>(z: C64) -> Result<S> {
+    S::try_from_c64(z).ok_or_else(|| Error::UnsupportedForAlgebra {
+        gate: "measurement repair".into(),
+        algebra: S::algebra_name(),
+    })
+}
+
+fn h_matrix<S: Scalar>() -> Result<GateMatrix<S>> {
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    GateMatrix::try_from_c64s(2, &[c64(s, 0.0), c64(s, 0.0), c64(s, 0.0), c64(-s, 0.0)])
+        .ok_or_else(|| Error::UnsupportedForAlgebra {
+            gate: "measurement repair".into(),
+            algebra: S::algebra_name(),
+        })
+}
+
+fn cx_matrix<S: Scalar>() -> Result<GateMatrix<S>> {
+    let (o, l) = (c64(1.0, 0.0), c64(0.0, 0.0));
+    GateMatrix::try_from_c64s(
+        4,
+        &[o, l, l, l, l, l, l, o, l, l, o, l, l, o, l, l],
+    )
+    .ok_or_else(|| Error::UnsupportedForAlgebra {
+        gate: "measurement repair".into(),
+        algebra: S::algebra_name(),
+    })
 }
 
 /// `i^k` as a complex unit.
@@ -562,6 +786,7 @@ impl<S: Scalar> CliffordFramedState<S> {
                 tableau: CliffordTableau::identity(num_qubits),
                 log: Vec::new(),
                 stats: CliffordFrameStats::default(),
+                repair: true,
                 peak_inner_memory: peak,
                 peak_stored_support: 1,
             }),
@@ -607,20 +832,45 @@ impl<S: Scalar> CliffordFramedState<S> {
     /// so both the outcome distribution and the collapsed state are exact.
     /// Returns `true` for the −1 outcome (for `Z_q`, "qubit q read 1").
     ///
-    /// Cost is the rotation envelope — `O(support)`, at most 2× growth —
-    /// **per measurement**; long adaptive sequences compound it (see the
-    /// module docs). This is the feedback-loop primitive for
+    /// After the projection, **frame repair** runs (unless disabled via
+    /// [`CliffordFramedState::set_measure_repair`]): the frame becomes
+    /// `C·V` for a repair Clifford `V` chosen so the measured string is
+    /// Z-type in the new stored basis — the true tableau measurement
+    /// update. Projection growth (≤2× per measurement) no longer
+    /// compounds: adaptive sequences of any length keep the stored
+    /// support flat in the Clifford sector, at the cost of one H-worth of
+    /// stored work and `O(n·w)` tableau mask algebra per repaired
+    /// measurement. This is the feedback-loop primitive for
     /// measurement-driven computation in the lifted Clifford space
-    /// ([`crate::lift`]), where each measurement hits a fresh ancilla and
-    /// the compounding never engages.
+    /// ([`crate::lift`]).
     pub fn measure_pauli(&mut self, p: PauliString, rng: &mut Prng) -> Result<bool> {
         let mut core = self.core.borrow_mut();
         let img = core.tableau.image(p);
         core.stats.max_axis_weight = core.stats.max_axis_weight.max(img.weight());
         let outcome = core.state.measure_pauli(img.x, img.z, img.negative, rng)?;
         core.stats.native_measurements += 1;
+        // Peak accounting samples the post-projection support before
+        // repair re-concentrates it.
         core.note_peak();
+        if core.repair && img.x != 0 {
+            core.repair_after_measurement(img)?;
+            core.note_peak();
+        }
+        let has_frame = !core.log.is_empty();
+        drop(core);
+        if has_frame {
+            self.active.set(true);
+        }
         Ok(outcome)
+    }
+
+    /// Enable or disable frame repair on measurement (default: enabled).
+    /// With repair off, native measurements leave the stored basis
+    /// drifting from the frame — the pre-repair envelope of ≤2× growth
+    /// *compounding* across a sequence (`m` measurements bounded by
+    /// `2^m`), kept measurable for comparison.
+    pub fn set_measure_repair(&mut self, on: bool) {
+        self.core.borrow_mut().repair = on;
     }
 
     /// Replay the frame into the stored state now (physical state
@@ -1045,6 +1295,116 @@ mod tests {
             cis(std::f64::consts::FRAC_PI_4),
         ];
         assert!(recognize_clifford(&t, 1, &[0]).is_none());
+    }
+
+    #[test]
+    fn repair_step_conjugation_matches_dense() {
+        // Every repair step's g†Pg rule, for every 2-qubit signed Pauli,
+        // against the dense conjugation + Pauli-decomposition ground truth
+        // used by Clifford recognition.
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let h1 = [c64(s, 0.0), c64(s, 0.0), c64(s, 0.0), c64(-s, 0.0)];
+        let s1 = [c64(1.0, 0.0), c64(0.0, 0.0), c64(0.0, 0.0), c64(0.0, 1.0)];
+        let embed_1q = |g: &[C64; 4], bit: usize| -> Vec<C64> {
+            let mut m = vec![c64(0.0, 0.0); 16];
+            for i in 0..4usize {
+                for j in 0..4usize {
+                    if i & !(1 << bit) == j & !(1 << bit) {
+                        let (ib, jb) = ((i >> bit) & 1, (j >> bit) & 1);
+                        m[i * 4 + j] = g[ib * 2 + jb];
+                    }
+                }
+            }
+            m
+        };
+        let cx_dense = |c: usize, t: usize| -> Vec<C64> {
+            let mut m = vec![c64(0.0, 0.0); 16];
+            for j in 0..4usize {
+                let i = if (j >> c) & 1 == 1 { j ^ (1 << t) } else { j };
+                m[i * 4 + j] = c64(1.0, 0.0);
+            }
+            m
+        };
+        let cases: Vec<(RepairStep, Vec<C64>)> = vec![
+            (RepairStep::S(0), embed_1q(&s1, 0)),
+            (RepairStep::S(1), embed_1q(&s1, 1)),
+            (RepairStep::H(0), embed_1q(&h1, 0)),
+            (RepairStep::H(1), embed_1q(&h1, 1)),
+            (RepairStep::Cx(0, 1), cx_dense(0, 1)),
+            (RepairStep::Cx(1, 0), cx_dense(1, 0)),
+        ];
+        for (step, matrix) in cases {
+            for px in 0..4usize {
+                for pz in 0..4usize {
+                    if px == 0 && pz == 0 {
+                        continue;
+                    }
+                    let a = conjugate_generator(&matrix, 4, px, pz);
+                    let dec = pauli_decompose(&a, 2, 1e-10);
+                    assert_eq!(dec.len(), 1, "{step:?} on ({px},{pz})");
+                    let (ex, ez, coeff) = dec[0];
+                    let negative = (coeff + c64(1.0, 0.0)).norm() < 1e-9;
+                    assert!(
+                        negative || (coeff - c64(1.0, 0.0)).norm() < 1e-9,
+                        "{step:?} on ({px},{pz}): coeff {coeff}"
+                    );
+                    let got = conj_by_step(
+                        PauliString {
+                            x: px as u64,
+                            z: pz as u64,
+                            negative: false,
+                        },
+                        step,
+                    );
+                    assert_eq!(
+                        (got.x, got.z, got.negative),
+                        (ex as u64, ez as u64, negative),
+                        "{step:?} on ({px},{pz})"
+                    );
+                    // Linearity in the sign.
+                    let neg = conj_by_step(
+                        PauliString {
+                            x: px as u64,
+                            z: pz as u64,
+                            negative: true,
+                        },
+                        step,
+                    );
+                    assert_eq!((neg.x, neg.z, neg.negative), (got.x, got.z, !got.negative));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repair_reduces_measured_strings_to_z_type() {
+        // The three-pass construction (S on Y bits, CX fold, final H) must
+        // land on a Z-type string for arbitrary inputs with X-support, and
+        // measurement through the public API must leave the measured
+        // observable diagonal in the stored basis.
+        let mut state = CliffordFramedState::<C64>::new(6).unwrap();
+        let h = GateMatrix::<C64>::try_from_c64s(
+            2,
+            &[
+                c64(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                c64(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                c64(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                c64(-std::f64::consts::FRAC_1_SQRT_2, 0.0),
+            ],
+        )
+        .unwrap();
+        state.apply(&h, &[0]).unwrap();
+        let p = PauliString {
+            x: 0b010111,
+            z: 0b001101,
+            negative: false,
+        };
+        let mut rng = crate::rng::Prng::new(7);
+        state.measure_pauli(p, &mut rng).unwrap();
+        assert_eq!(state.stats().frame_repairs, 1);
+        // Post-repair, the same physical observable conjugates to Z-type.
+        let img = state.conjugated(p);
+        assert_eq!(img.x, 0, "measured observable is Z-type after repair");
     }
 
     #[test]

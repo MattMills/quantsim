@@ -17,6 +17,15 @@ fn sim_with_clifford() -> Simulator {
             Ok(Box::new(CliffordFramedState::<C64>::new(n)?))
         })
         .unwrap();
+    // The same backend with measurement repair disabled — the pre-repair
+    // drift behavior, kept registered so its cost stays measurable.
+    sim.backends_mut()
+        .register("clifford-framed-drift", |n| {
+            let mut state = CliffordFramedState::<C64>::new(n)?;
+            state.set_measure_repair(false);
+            Ok(Box::new(state))
+        })
+        .unwrap();
     sim
 }
 
@@ -60,13 +69,19 @@ fn clifford_t_circuit(n: usize, cliffords: usize, t: usize, seed: u64) -> Circui
 /// which `outcome_phase` removes. Returns the framed state's stats and
 /// peak stored support (read before verification flushed anything).
 fn verify_lift(circuit: &Circuit, prep: ResourcePrep, seed: u64) -> (CliffordFrameStats, usize) {
+    verify_lift_on(circuit, prep, seed, "clifford-framed")
+}
+
+fn verify_lift_on(
+    circuit: &Circuit,
+    prep: ResourcePrep,
+    seed: u64,
+    backend: &str,
+) -> (CliffordFrameStats, usize) {
     let sim = sim_with_clifford();
     let lifted = lift::to_clifford_feedback(circuit, prep).unwrap();
     let n = lifted.data_qubits;
-    let (state, trace) = lifted
-        .schedule
-        .run_on(&sim, "clifford-framed", seed)
-        .unwrap();
+    let (state, trace) = lifted.schedule.run_on(&sim, backend, seed).unwrap();
 
     // Representation costs BEFORE observation flushes anything.
     let framed = state
@@ -169,23 +184,38 @@ fn corrections_actually_fire_and_are_clifford() {
 
 #[test]
 fn lift_cost_location_is_measured_not_assumed() {
-    // The prediction this test originally carried — just-in-time prep
-    // keeps the peak near the direct run because each measurement
-    // "collapses" its ancilla — is FALSE in this representation, and the
-    // measurement below is the finding: the gadget collapse happens in
-    // the *physical* basis, the frame scrambles its cancellation
-    // structure, and the *stored* support drifts regardless of prep
-    // order (measured: both orderings peak at 8192 = 2^13 on a
-    // 14-qubit lift whose direct run peaks ≤ 64). The lift is exact and
-    // its dynamics are all-Clifford, but in an amplitude-backed frame
-    // the relocated cost lands on stored-basis drift under projection —
-    // the measured motivation for frame *repair* on measurement and for
-    // frame-aligned-sum (stabilizer-rank) storage, both roadmap rungs.
+    // This test has now recorded a finding twice. Originally it pinned
+    // the pre-repair drift: gadget measurements collapse the register in
+    // the *physical* basis, the frame scrambled that structure, and the
+    // stored support of both prep orderings peaked at 8192 = 2^13 where
+    // the direct run peaked 16 — the measured motivation for frame
+    // repair on measurement. Frame repair is now implemented (the
+    // C ← C·V tableau measurement update), and the assertion that was
+    // "designed to fail loudly the day a representation change makes the
+    // lift win" fired as intended. The repaired findings, pinned below:
+    //
+    // * just-in-time prep now runs the whole feedback loop at a stored
+    //   peak comparable to the direct route — at most one |T⟩ resource
+    //   is in flight, each gadget measurement is repaired away, and the
+    //   consumption step is CHEAP (the original textbook expectation,
+    //   now true in this representation);
+    // * upfront prep still peaks at 2^t: that is the cost of *holding*
+    //   all t resource states in one sparse register at once — a holding
+    //   cost, not drift — which is precisely the measured motivation for
+    //   the remaining roadmap rung (frames over factored inners, where
+    //   |T⟩^⊗t is linear to hold);
+    // * with repair disabled, the old drift returns on both orderings —
+    //   kept measurable so the improvement stays a comparison, not a
+    //   memory.
     let n = 6;
     let t = 8;
     let circuit = clifford_t_circuit(n, 60, t, 11);
     let (_, upfront_peak) = verify_lift(&circuit, ResourcePrep::Upfront, 77);
     let (_, jit_peak) = verify_lift(&circuit, ResourcePrep::JustInTime, 77);
+    let (_, upfront_drift) =
+        verify_lift_on(&circuit, ResourcePrep::Upfront, 77, "clifford-framed-drift");
+    let (_, jit_drift) =
+        verify_lift_on(&circuit, ResourcePrep::JustInTime, 77, "clifford-framed-drift");
 
     // Direct (unlifted) run on the same framed backend for reference.
     let reg = GateRegistry::<C64>::standard();
@@ -193,18 +223,33 @@ fn lift_cost_location_is_measured_not_assumed() {
     circuit.bind(&reg).unwrap().run(&mut direct).unwrap();
     let direct_peak = direct.peak_stored_support();
 
-    // What is actually true, pinned: the direct route is dimension-capped
-    // (≤ 2^n) and beat both lifts here; the lifts stayed within the
-    // enlarged space; and the drift is real — this seeded instance pays
-    // far more lifted than direct. If a change ever makes the lift beat
-    // the direct run, this assertion failing is the *discovery*, not a
-    // regression.
     assert!(direct_peak <= 1 << n);
-    assert!(upfront_peak <= 1 << (n + t));
-    assert!(jit_peak <= 1 << (n + t));
+    // Repaired JIT: consumption is cheap — the lift no longer pays more
+    // than a small constant over the direct route.
     assert!(
-        upfront_peak > direct_peak && jit_peak > direct_peak,
-        "measured drift: lifted ({upfront_peak}/{jit_peak}) vs direct ({direct_peak})"
+        jit_peak <= 4 * direct_peak.max(2),
+        "repaired JIT lift must stay near the direct cost: jit {jit_peak} vs direct {direct_peak}"
+    );
+    // Repaired upfront: the 2^t holding cost times at most one ≤2×
+    // projection transient (peak sampling sees the projection before the
+    // repair collapses it), and nothing worse.
+    assert!(
+        upfront_peak <= 2 << t,
+        "upfront peak is the resource holding cost (× one projection transient): \
+         {upfront_peak} vs 2·2^{t}"
+    );
+    assert!(
+        upfront_peak > jit_peak,
+        "holding all magic at once ({upfront_peak}) must cost more than one at a time ({jit_peak})"
+    );
+    // The pre-repair drift, kept measurable for the record.
+    assert!(
+        upfront_drift > direct_peak && jit_drift > direct_peak,
+        "unrepaired drift: lifted ({upfront_drift}/{jit_drift}) vs direct ({direct_peak})"
+    );
+    assert!(
+        jit_drift > jit_peak,
+        "repair is what changed: JIT {jit_drift} unrepaired vs {jit_peak} repaired"
     );
     // And the resource state alone is *linear* in t for a representation
     // with product structure — the composition target for frames over
