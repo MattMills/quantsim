@@ -146,6 +146,25 @@ parts are swappable:
   backends on your workload on *this* machine and pick the best by time or
   memory, with fidelity as a hard gate: a fast-but-wrong kernel is rejected
   on measured deviation, never chosen.
+- **The resource guard** ([`guard`](src/guard.rs)) — over-scale inhibition
+  as a property of the library, automatic for every representation.
+  Large allocations are **admitted against measured capacity** (cgroup
+  limit / `MemAvailable`, read at allocation time) with fallible
+  reservation as backstop: an inadmissible request fails with
+  `OutOfMemory { requested, available }` — both numbers measured, never
+  a presumed width constant. The former capacity constants
+  (`DENSE_MAX_QUBITS` & co.) are structural index bounds only; adaptive
+  promotion consults real capacity and stays sparse when dense wouldn't
+  fit *this* machine right now. `guard::set_time_budget` arms a
+  wall-clock budget that the long kernels (dense/sparse/exact sweeps,
+  Jacobi SVD, merges) checkpoint *inside* their loops: an over-scale
+  run aborts mid-gate with `Timeout { budget, elapsed }` instead of
+  being pre-skipped on a cost estimate.
+  [`capacity_probe`](examples/capacity_probe.rs) verifies the guard
+  against reality: subprocess-isolated width walks per axis until the
+  actual wall — guard refusals with measured numbers, deadline aborts,
+  and (with admission disabled) real OOM kills observed by signal with
+  peak RSS recorded.
 
 BQP support: the standard registry contains a universal set (`h`, `t`, `cx`,
 …), so any BQP circuit family runs exactly on the dense backend — at the
@@ -242,7 +261,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 232 tests (228 across twenty-one suites + 4 doctests);
+`cargo test` runs 244 tests (240 across twenty-two suites + 4 doctests);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
 entirely trivial accessors and defensive guards:
 
@@ -293,6 +312,14 @@ entirely trivial accessors and defensive guards:
   every depth; truncation degrades measurably, never silently; gate cost
   is the spanning subtree with honest caps; width-40 hierarchy-local
   circuits in kilobytes; composition with `Ball`.
+- **capacity** — the resource guard as behavior: over-scale allocations
+  refused by *measurement* (requested vs available bytes in the error,
+  auto-measured and under explicit limits); adaptive stays sparse when
+  dense is inadmissible and promotes when the limit lifts; sparse
+  growth, mera blocks and factored merges all admitted not presumed;
+  armed time budgets abort a single dense gate mid-sweep, the mera SVD
+  path and scheduled runs — promptly, with measured elapsed times — and
+  the identical runs complete once the budget lifts.
 - **gate_matrices** — every standard gate vs literature values; exact
   per-algebra gate-support lists.
 - **gate_identities** — HXH = Z and friends, SWAP = 3·CX, the Nielsen–Chuang
@@ -352,7 +379,12 @@ Memory is asserted, not just plotted (`tests/memory_scaling.rs`): dense is
 `2^n · sizeof(S)` + O(1) and doubles per qubit *and* per algebra-dimension
 doubling; sparse GHZ is width-independent (125 B out to 63 qubits); saturated
 sparse is strictly worse than dense; adaptive ends within 64 B of whichever
-representation is cheaper. Sample of the example's output on this machine —
+representation is cheaper. Capacity itself is tested as behavior
+(`tests/capacity.rs`): over-scale allocations refuse with measured
+requested/available bytes, adaptive stays sparse under a tight budget,
+and armed time budgets abort dense sweeps, SVDs and schedules mid-kernel
+with measured elapsed times. `cargo run --release --example
+capacity_probe` walks every axis to its real wall on your machine. Sample of the example's output on this machine —
 note the estimate matching the measured RSS delta once states are large:
 
 ```
@@ -425,6 +457,7 @@ src/
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
+  guard.rs       resource guard: measured memory admission, time budgets
   gates/         GateDef trait, FixedGate/ParamGate, standard library
   registry.rs    GateRegistry<S>: validated registration, aliases
   circuit.rs     Circuit<S> (chainable builders, raw + diagonal kernels,
@@ -441,14 +474,14 @@ src/
   library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           twenty-one integration suites (see Testing)
+tests/           twenty-two integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
                  verify_models, frames_demo, clifford_space, clifford_lift,
                  coarse_register (mera + Ball), absolute_reference (D[ω]
                  vs every backend), adaptive_feedback (recursive trees +
-                 frame repair)
+                 frame repair), capacity_probe (real walls, measured)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

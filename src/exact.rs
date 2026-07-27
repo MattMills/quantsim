@@ -36,9 +36,10 @@
 //! * raw float matrices are rejected: recognizing arbitrary floats as
 //!   ring elements would smuggle approximation into the exact path;
 //! * coefficients are `i128` and checked: a circuit deep enough to
-//!   overflow errors out rather than wrapping. Width is capped at
-//!   [`EXACT_MAX_QUBITS`] (the state is a dense `2^n` vector of 68-byte
-//!   elements).
+//!   overflow errors out rather than wrapping. The dense `2^n` vector of
+//!   68-byte elements is admitted against *measured* memory by the
+//!   [resource guard](crate::guard), and evaluation checkpoints the
+//!   guard's time budget.
 //!
 //! The exact evaluator is itself the certification anchor for the rest of
 //! the crate: `tests/exact_reference.rs` measures the dense backend's
@@ -49,9 +50,12 @@ use crate::circuit::{Circuit, Op};
 use crate::error::{Error, Result};
 use crate::scalar::C64;
 
-/// Maximum register width for the exact evaluator (dense `2^n` storage of
-/// 68-byte elements; 20 qubits ≈ 68 MiB).
-pub const EXACT_MAX_QUBITS: usize = 20;
+/// Structural width bound for the exact evaluator (basis indices fit
+/// `u64`). The dense `2^n` vector of 68-byte ring elements is admitted
+/// by the [resource guard](crate::guard) against the memory measured
+/// available at construction — the real capacity limit, discovered at
+/// allocation time rather than presumed here.
+pub const EXACT_MAX_QUBITS: usize = 63;
 
 /// Tolerance for recognizing a parameter as an exact multiple of π/4.
 const ANGLE_SNAP_TOL: f64 = 1e-9;
@@ -628,7 +632,11 @@ impl ExactState {
                 max: EXACT_MAX_QUBITS,
             });
         }
-        let mut amps = vec![DOmega::zero(); 1usize << num_qubits];
+        let mut amps = crate::guard::try_vec(
+            1usize << num_qubits,
+            DOmega::zero(),
+            &format!("exact state ({num_qubits} qubits)"),
+        )?;
         amps[0] = DOmega::int(1);
         Ok(ExactState { num_qubits, amps })
     }
@@ -637,6 +645,7 @@ impl ExactState {
     /// gate table; diagonal kernels are accepted at unit eighth-turn
     /// phases; raw matrices are rejected (see the module docs).
     pub fn run(circuit: &Circuit<C64>) -> Result<Self> {
+        let _scope = crate::guard::enter();
         let mut state = ExactState::new(circuit.num_qubits())?;
         for op in circuit.ops() {
             match op {
@@ -696,6 +705,9 @@ impl ExactState {
         let groups = self.amps.len() >> k;
         let mut scratch = vec![DOmega::zero(); d];
         for g in 0..groups {
+            if g % (1 << 18) == 0 {
+                crate::guard::checkpoint()?;
+            }
             let base = crate::backend::expand_index(g as u64, &sorted);
             for (j, slot) in scratch.iter_mut().enumerate() {
                 *slot = self.amps[(base | scatter[j]) as usize];

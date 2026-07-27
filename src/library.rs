@@ -97,7 +97,7 @@ pub fn phase_flip<S: Scalar>(n: usize, index: u64) -> Vec<S> {
 /// `2|s⟩⟨s| − I` up to a global phase). Both use [`Circuit::diagonal`], so
 /// circuit memory is `O(2^n)`, not `O(4^n)`.
 pub fn grover<S: Scalar>(n: usize, marked: u64, iterations: usize) -> Result<Circuit<S>> {
-    assert!((1..=32).contains(&n), "grover: unreasonable width");
+    assert!((1..=63).contains(&n), "grover: width must fit u64 indices");
     assert!(marked < (1u64 << n), "grover: marked state out of range");
     let oracle = phase_flip::<S>(n, marked);
     let flip_zero = phase_flip::<S>(n, 0);

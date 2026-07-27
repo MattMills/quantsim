@@ -5,9 +5,14 @@ use crate::error::{Error, Result};
 use crate::math::GateMatrix;
 use crate::scalar::Scalar;
 
-/// Maximum width for the dense representation (memory is
-/// `2^n · size_of::<S>()`; 32 qubits of `C64` is already 64 GiB).
-pub const DENSE_MAX_QUBITS: usize = 32;
+/// Structural width bound for the dense representation (basis indices
+/// must fit `u64`). This is **not** a capacity policy: the real
+/// inhibition is the [resource guard](crate::guard), which admits the
+/// `2^n · size_of::<S>()` allocation against the memory *measured*
+/// available at construction time and fails with
+/// [`Error::OutOfMemory`] — carrying the measured numbers — when the
+/// machine cannot hold it.
+pub const DENSE_MAX_QUBITS: usize = 63;
 
 /// A flat `2^n` amplitude vector.
 ///
@@ -22,7 +27,9 @@ pub struct DenseState<S: Scalar> {
 }
 
 impl<S: Scalar> DenseState<S> {
-    /// `|0…0⟩` on `num_qubits` qubits.
+    /// `|0…0⟩` on `num_qubits` qubits. Fails with
+    /// [`Error::OutOfMemory`] when the `2^n` amplitude vector exceeds
+    /// the memory measured available right now (see [`crate::guard`]).
     pub fn new(num_qubits: usize) -> Result<Self> {
         if num_qubits > DENSE_MAX_QUBITS {
             return Err(Error::TooManyQubits {
@@ -30,7 +37,11 @@ impl<S: Scalar> DenseState<S> {
                 max: DENSE_MAX_QUBITS,
             });
         }
-        let mut amps = vec![S::zero(); 1usize << num_qubits];
+        let mut amps = crate::guard::try_vec(
+            1usize << num_qubits,
+            S::zero(),
+            &format!("dense state ({num_qubits} qubits)"),
+        )?;
         amps[0] = S::one();
         Ok(DenseState { num_qubits, amps })
     }
@@ -53,11 +64,10 @@ impl<S: Scalar> Backend<S> for DenseState<S> {
     fn apply(&mut self, matrix: &GateMatrix<S>, qubits: &[usize]) -> Result<()> {
         validate_apply(self.num_qubits, matrix, qubits)?;
         if qubits.len() == 1 {
-            super::apply_single_in_place(&mut self.amps, matrix, qubits[0]);
+            super::apply_single_in_place(&mut self.amps, matrix, qubits[0])
         } else {
-            super::apply_general_in_place(&mut self.amps, matrix, qubits);
+            super::apply_general_in_place(&mut self.amps, matrix, qubits)
         }
-        Ok(())
     }
 
     fn amplitude(&self, index: u64) -> S {
@@ -69,10 +79,7 @@ impl<S: Scalar> Backend<S> for DenseState<S> {
 
     fn apply_diagonal(&mut self, entries: &[S], qubits: &[usize]) -> Result<()> {
         super::validate_apply_diagonal(self.num_qubits, entries, qubits)?;
-        for (i, a) in self.amps.iter_mut().enumerate() {
-            *a = entries[super::sub_index(i as u64, qubits)] * *a;
-        }
-        Ok(())
+        super::apply_diagonal_in_place(&mut self.amps, entries, qubits)
     }
 
     fn for_each_nonzero(&self, f: &mut dyn FnMut(u64, S)) {

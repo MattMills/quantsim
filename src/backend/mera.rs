@@ -52,9 +52,10 @@ use crate::scalar::Scalar;
 /// Maximum register width (basis indices are `u64`).
 pub const MERA_MAX_QUBITS: usize = 63;
 
-/// Widest register accepted by [`Backend::load`] (state compilation is
-/// exponential in width).
-pub const MERA_LOAD_MAX_QUBITS: usize = 12;
+/// Structural width bound for [`Backend::load`] (basis indices fit
+/// `u64`); the exponential compilation buffer itself is admitted by the
+/// [resource guard](crate::guard) against measured memory.
+pub const MERA_LOAD_MAX_QUBITS: usize = 63;
 
 /// Configuration for the hierarchical backend.
 #[derive(Debug, Clone, Copy)]
@@ -64,8 +65,13 @@ pub struct MeraConfig {
     pub max_bond: usize,
     /// Relative singular-value cutoff at each split.
     pub trunc_tol: f64,
-    /// Widest subtree a single gate may force into a dense block
-    /// (transient cost `2^max_block`; wider spans error).
+    /// Widest subtree a single gate may force into a dense block — a
+    /// *policy* cap for callers who want structural refusal below the
+    /// machine's real limits. The default is the structural bound: the
+    /// transient `2^block` buffer is admitted by the [resource
+    /// guard](crate::guard) against measured memory, and its SVD
+    /// re-compression is bounded by the guard's time budget when one is
+    /// armed.
     pub max_block: usize,
 }
 
@@ -74,7 +80,7 @@ impl Default for MeraConfig {
         MeraConfig {
             max_bond: 64,
             trunc_tol: 1e-12,
-            max_block: 24,
+            max_block: 63,
         }
     }
 }
@@ -128,16 +134,21 @@ impl<S: Scalar> Node<S> {
     }
 
     /// Dense block `[bond][2^width]` of this subtree's map.
-    fn contract(&self) -> Vec<S> {
+    fn contract(&self) -> crate::error::Result<Vec<S>> {
         match &self.children {
-            None => self.tensor.clone(),
+            None => Ok(self.tensor.clone()),
             Some((l, r)) => {
                 let (wl, wr) = (l.width(), r.width());
                 let (dl, dr) = (1usize << wl, 1usize << wr);
-                let bl = l.contract();
-                let br = r.contract();
-                let mut out = vec![S::zero(); self.bond << (wl + wr)];
+                let bl = l.contract()?;
+                let br = r.contract()?;
+                let mut out = crate::guard::try_vec(
+                    self.bond << (wl + wr),
+                    S::zero(),
+                    "mera block contraction",
+                )?;
                 for u in 0..self.bond {
+                    crate::guard::checkpoint()?;
                     for a in 0..l.bond {
                         for b in 0..r.bond {
                             let w = self.tensor[(u * l.bond + a) * r.bond + b];
@@ -162,7 +173,7 @@ impl<S: Scalar> Node<S> {
                         }
                     }
                 }
-                out
+                Ok(out)
             }
         }
     }
@@ -274,21 +285,22 @@ impl<S: Scalar> Node<S> {
     /// Contraction of everything **above** the depth-`d` frontier: the
     /// coarse state over the frontier's bond product, little-endian in
     /// frontier order (first frontier node = least significant factor).
-    fn coarse(&self, depth: usize) -> (Vec<usize>, Vec<S>) {
+    fn coarse(&self, depth: usize) -> crate::error::Result<(Vec<usize>, Vec<S>)> {
         if depth == 0 || self.children.is_none() {
             // Identity over the own bond: the frontier index *is* u.
             let mut id = vec![S::zero(); self.bond * self.bond];
             for u in 0..self.bond {
                 id[u * self.bond + u] = S::one();
             }
-            return (vec![self.bond], id);
+            return Ok((vec![self.bond], id));
         }
         let (l, r) = self.children.as_ref().expect("checked");
-        let (ldims, lc) = l.coarse(depth - 1);
-        let (rdims, rc) = r.coarse(depth - 1);
+        let (ldims, lc) = l.coarse(depth - 1)?;
+        let (rdims, rc) = r.coarse(depth - 1)?;
         let lprod: usize = ldims.iter().product();
         let rprod: usize = rdims.iter().product();
-        let mut out = vec![S::zero(); self.bond * lprod * rprod];
+        let mut out =
+            crate::guard::try_vec(self.bond * lprod * rprod, S::zero(), "mera coarse view")?;
         for u in 0..self.bond {
             for a in 0..l.bond {
                 for b in 0..r.bond {
@@ -316,7 +328,7 @@ impl<S: Scalar> Node<S> {
         }
         let mut dims = ldims;
         dims.extend(rdims);
-        (dims, out)
+        Ok((dims, out))
     }
 }
 
@@ -421,7 +433,7 @@ impl<S: Scalar> MeraState<S> {
                 "coarse space at depth {depth} has {prod} coefficients (> 2^20)"
             )));
         }
-        let (dims, coeffs) = self.root.coarse(depth);
+        let (dims, coeffs) = self.root.coarse(depth)?;
         // Root bond is 1: drop the singleton u index.
         Ok((dims, coeffs))
     }
@@ -491,7 +503,8 @@ impl<S: Scalar> MeraState<S> {
 
         // Split off the left half: M[pl][(u, pr)].
         let cols1 = bond * dr;
-        let mut m = vec![S::zero(); dl * cols1];
+        crate::guard::checkpoint()?;
+        let mut m = crate::guard::try_vec(dl * cols1, S::zero(), "mera left split")?;
         for u in 0..bond {
             for pr in 0..dr {
                 for pl in 0..dl {
@@ -517,7 +530,7 @@ impl<S: Scalar> MeraState<S> {
 
         // Split off the right half: N[pr][(u, a)].
         let cols2 = bond * r1;
-        let mut n = vec![S::zero(); dr * cols2];
+        let mut n = crate::guard::try_vec(dr * cols2, S::zero(), "mera right split")?;
         for a in 0..r1 {
             for u in 0..bond {
                 for pr in 0..dr {
@@ -575,7 +588,7 @@ impl<S: Scalar> MeraState<S> {
     fn apply_in_block(
         &mut self,
         qubits: &[usize],
-        apply: impl Fn(&mut [S], &[usize]),
+        apply: impl Fn(&mut [S], &[usize]) -> crate::error::Result<()>,
     ) -> Result<()> {
         let (lo, hi) = (
             *qubits.iter().min().expect("validated nonempty"),
@@ -612,12 +625,12 @@ impl<S: Scalar> MeraState<S> {
                     max: config.max_block,
                 });
             }
-            let mut block = node.contract();
+            let mut block = node.contract()?;
             peak = peak.max(block.len());
             let local: Vec<usize> = qubits.iter().map(|&q| q - node.lo).collect();
             let d = 1usize << w;
             for u in 0..node.bond {
-                apply(&mut block[u * d..(u + 1) * d], &local);
+                apply(&mut block[u * d..(u + 1) * d], &local)?;
             }
             let (nlo, nhi, nbond) = (node.lo, node.hi, node.bond);
             let rebuilt = Self::build(nlo, nhi, nbond, block, &config, &mut discarded)?;
@@ -642,9 +655,9 @@ impl<S: Scalar> Backend<S> for MeraState<S> {
         validate_apply(self.num_qubits(), matrix, qubits)?;
         self.apply_in_block(qubits, |amps, local| {
             if local.len() == 1 {
-                super::apply_single_in_place(amps, matrix, local[0]);
+                super::apply_single_in_place(amps, matrix, local[0])
             } else {
-                super::apply_general_in_place(amps, matrix, local);
+                super::apply_general_in_place(amps, matrix, local)
             }
         })
     }
@@ -652,7 +665,7 @@ impl<S: Scalar> Backend<S> for MeraState<S> {
     fn apply_diagonal(&mut self, entries: &[S], qubits: &[usize]) -> Result<()> {
         validate_apply_diagonal(self.num_qubits(), entries, qubits)?;
         self.apply_in_block(qubits, |amps, local| {
-            super::apply_diagonal_in_place(amps, entries, local);
+            super::apply_diagonal_in_place(amps, entries, local)
         })
     }
 
@@ -674,7 +687,7 @@ impl<S: Scalar> Backend<S> for MeraState<S> {
         let slot = usize::from(outcome);
         m.set(slot, slot, S::one().scale(renorm));
         let _ = self.apply_in_block(&[qubit], |amps, local| {
-            super::apply_single_in_place(amps, &m, local[0]);
+            super::apply_single_in_place(amps, &m, local[0])
         });
     }
 
@@ -693,7 +706,7 @@ impl<S: Scalar> Backend<S> for MeraState<S> {
             });
         }
         let limit = 1u64 << n;
-        let mut block = vec![S::zero(); 1usize << n];
+        let mut block = crate::guard::try_vec(1usize << n, S::zero(), "mera load compilation")?;
         for &(i, a) in entries {
             if i >= limit {
                 return Err(Error::QubitOutOfRange {

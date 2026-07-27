@@ -175,12 +175,18 @@ fn wide_gates_and_load_respect_documented_limits() {
         Err(Error::TooManyQubits { requested: 6, max }) => assert_eq!(max, MPS_MAX_WINDOW),
         other => panic!("expected window-cap error, got {:?}", other.err()),
     }
-    // Load past the compilation cap is a clean error.
+    // Load compiles through a 2^n buffer admitted at REAL capacity: 20
+    // qubits (16 MiB) is admissible and works; 50 qubits (16 PiB) is
+    // inhibited by the guard with the measured numbers, not a presumed
+    // width constant.
     let mut mps = MpsState::<C64>::new(20).unwrap();
+    mps.load(&[(0, c64(1.0, 0.0))]).unwrap();
+    let mut wide = MpsState::<C64>::new(50).unwrap();
     assert!(matches!(
-        mps.load(&[(0, c64(1.0, 0.0))]),
-        Err(Error::TooManyQubits { max, .. }) if max == MPS_LOAD_MAX_QUBITS
+        wide.load(&[(0, c64(1.0, 0.0))]),
+        Err(Error::OutOfMemory { .. })
     ));
+    const _: () = assert!(MPS_LOAD_MAX_QUBITS == 63, "structural bound only");
     // Non-commutative algebras are rejected at construction, loudly.
     assert!(MpsState::<Quaternion>::new(4).is_err());
 }

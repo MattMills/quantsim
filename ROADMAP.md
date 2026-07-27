@@ -29,8 +29,8 @@ swept by the conformance suite over the full registry. Remaining MPS work:
   construction over ℍ fails loudly today);
 - smarter routing (current greedy adjacent-swap walk) and two-site
   variational compression;
-- `load` past 12 qubits (state compilation currently materializes the
-  dense vector).
+- `load` without dense materialization (compilation currently builds the
+  full vector, guard-admitted against measured memory).
 
 Original design notes, kept for the record — the `Backend<S>` trait was
 shaped with MPS in mind:
@@ -264,6 +264,24 @@ entries, each a small self-contained `Scalar` impl plus tests:
   affine arithmetic to tame the measured ~√2-per-H dependency growth,
   and radius-aware sparse pruning (today pruning consults midpoints —
   dense is the certified path, and the docs say so).
+
+## Resource governance
+
+- **Resource guard — SHIPPED** (`guard`): memory admission against
+  *measured* capacity (cgroup/`MemAvailable` at allocation time,
+  fallible reservation as backstop) for every large allocation in every
+  backend; wall-clock budgets checkpointed inside the long kernels;
+  capacity-aware adaptive promotion; the former width-constant caps
+  demoted to structural index bounds. Verified against reality by
+  `examples/capacity_probe.rs` (subprocess-isolated walks to real OOM
+  kills and deadline aborts). Next rungs: cooperative *degradation*
+  instead of abort (a backend that receives OutOfMemory could spill —
+  factored → mps handoff), per-scope (non-global) budgets once a
+  session/context type exists, allocation accounting of the crate's own
+  live states (admission currently measures the process from outside),
+  and reserving the transient double-buffer in sparse/mera rebuilds
+  ahead of time so mid-operation refusal can roll back instead of
+  tearing.
 
 ## Simulator features
 

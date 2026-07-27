@@ -107,6 +107,7 @@ impl<S: Scalar> Simulator<S> {
             });
         }
         let matrix = def.matrix(params)?;
+        let _scope = crate::guard::enter();
         state.apply(&matrix, qubits)
     }
 }

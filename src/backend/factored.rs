@@ -33,11 +33,13 @@ use crate::error::{Error, Result};
 use crate::math::GateMatrix;
 use crate::scalar::Scalar;
 
-/// Maximum width of a *single factor* (a merged factor is a dense vector;
-/// 26 qubits of `C64` is already 1 GiB). The register itself can be as wide
-/// as 63 qubits — the point of the representation is that factors stay
-/// small when entanglement does.
-pub const FACTOR_MAX_QUBITS: usize = 26;
+/// Structural width bound of a *single factor* (local indices fit
+/// `usize` shifts). This is **not** a capacity policy: a merge that
+/// would exceed the machine is inhibited by the [resource
+/// guard](crate::guard), which admits the merged factor's allocation
+/// against the memory measured available at merge time and fails with
+/// [`Error::OutOfMemory`] carrying the measured numbers.
+pub const FACTOR_MAX_QUBITS: usize = 63;
 
 /// Maximum register width (basis indices are `u64`).
 pub const FACTORED_MAX_QUBITS: usize = 63;
@@ -190,8 +192,16 @@ impl<S: Scalar> FactoredState<S> {
         let left = &self.factors[left_idx];
         let mut qubits = left.qubits.clone();
         qubits.extend(&right.qubits);
-        let mut amps = vec![S::zero(); left.amps.len() * right.amps.len()];
+        let merged = k_left + k_right;
+        let mut amps = crate::guard::try_vec(
+            left.amps.len() * right.amps.len(),
+            S::zero(),
+            &format!("factored merge ({merged}-qubit factor)"),
+        )?;
         for (ir, &ra) in right.amps.iter().enumerate() {
+            if ir % (1 << 12) == 0 {
+                crate::guard::checkpoint()?;
+            }
             if ra.abs_sqr() == 0.0 {
                 continue;
             }
@@ -399,9 +409,9 @@ impl<S: Scalar> Backend<S> for FactoredState<S> {
         let local = self.local_targets(fidx, qubits);
         let amps = &mut self.factors[fidx].amps;
         if local.len() == 1 {
-            super::apply_single_in_place(amps, matrix, local[0]);
+            super::apply_single_in_place(amps, matrix, local[0])?;
         } else {
-            super::apply_general_in_place(amps, matrix, &local);
+            super::apply_general_in_place(amps, matrix, &local)?;
         }
         self.note_peaks();
         if self.auto_split {
@@ -416,7 +426,7 @@ impl<S: Scalar> Backend<S> for FactoredState<S> {
         validate_apply_diagonal(self.num_qubits, entries, qubits)?;
         let fidx = self.merge_for(qubits)?;
         let local = self.local_targets(fidx, qubits);
-        super::apply_diagonal_in_place(&mut self.factors[fidx].amps, entries, &local);
+        super::apply_diagonal_in_place(&mut self.factors[fidx].amps, entries, &local)?;
         self.note_peaks();
         if self.auto_split {
             for &q in qubits {
@@ -570,7 +580,11 @@ impl<S: Scalar> Backend<S> for FactoredState<S> {
                 });
             }
         }
-        let mut amps = vec![S::zero(); 1usize << self.num_qubits];
+        let mut amps = crate::guard::try_vec(
+            1usize << self.num_qubits,
+            S::zero(),
+            &format!("factored load ({} qubits)", self.num_qubits),
+        )?;
         for &(i, a) in entries {
             amps[i as usize] = a;
         }

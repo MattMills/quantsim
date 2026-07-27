@@ -276,7 +276,7 @@ pub fn jacobi_svd<S: Scalar>(
         });
     }
     // Work column-major internally: col j = work[j*rows..(j+1)*rows].
-    let mut work = vec![S::zero(); rows * cols];
+    let mut work = crate::guard::try_vec(rows * cols, S::zero(), "jacobi SVD workspace")?;
     for r in 0..rows {
         for c in 0..cols {
             work[c * rows + r] = a[r * cols + c];
@@ -289,6 +289,7 @@ pub fn jacobi_svd<S: Scalar>(
     }
 
     for _sweep in 0..100 {
+        crate::guard::checkpoint()?;
         let mut off = 0.0f64;
         for i in 0..cols {
             for j in (i + 1)..cols {

@@ -284,13 +284,29 @@ fn measure_out_of_range_errors() {
 
 #[test]
 fn width_limits_enforced() {
+    // The structural bound is u64 indexing; below it, over-scale widths
+    // are inhibited by the resource guard at REAL capacity: a 44-qubit
+    // dense vector is 256 TiB, refused with the measured numbers rather
+    // than a presumed width constant (see tests/capacity.rs for the
+    // guard's own suite).
     assert!(matches!(
-        DenseState::<C64>::new(33),
+        DenseState::<C64>::new(64),
         Err(Error::TooManyQubits {
-            requested: 33,
-            max: 32
+            requested: 64,
+            max: 63
         })
     ));
+    match DenseState::<C64>::new(44) {
+        Err(Error::OutOfMemory {
+            requested,
+            available,
+            ..
+        }) => {
+            assert_eq!(requested, 16 << 44);
+            assert!(available < requested, "measured budget must be real");
+        }
+        other => panic!("44 dense qubits must be inhibited by measurement: {other:?}"),
+    }
     assert!(SparseState::<C64>::new(63).is_ok());
     assert!(matches!(
         SparseState::<C64>::new(64),

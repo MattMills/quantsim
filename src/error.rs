@@ -88,6 +88,27 @@ pub enum Error {
     /// A state initialization or measurement found an invalid state
     /// (e.g. non-normalizable, or non-positive total Born weight).
     InvalidState(String),
+    /// An allocation was refused by the resource guard: the request
+    /// exceeds the memory measured available to this process at that
+    /// moment (or the explicitly configured limit), or the allocator
+    /// itself declined the reservation. See [`crate::guard`].
+    OutOfMemory {
+        /// Bytes the operation needed.
+        requested: usize,
+        /// Byte budget measured (or configured) at admission time.
+        available: usize,
+        /// What was being allocated (e.g. `"dense state (24 qubits)"`).
+        what: String,
+    },
+    /// The armed wall-clock budget expired and the computation was
+    /// aborted mid-operation; the state it was acting on is torn and
+    /// must be discarded. See [`crate::guard::set_time_budget`].
+    Timeout {
+        /// The budget that was armed, in milliseconds.
+        budget_ms: u64,
+        /// Measured elapsed time at abort, in milliseconds.
+        elapsed_ms: u64,
+    },
 }
 
 impl fmt::Display for Error {
@@ -151,6 +172,25 @@ impl fmt::Display for Error {
                 )
             }
             Error::InvalidState(msg) => write!(f, "invalid state: {msg}"),
+            Error::OutOfMemory {
+                requested,
+                available,
+                what,
+            } => {
+                write!(
+                    f,
+                    "out of memory: {what} needs {requested} bytes, {available} available (measured)"
+                )
+            }
+            Error::Timeout {
+                budget_ms,
+                elapsed_ms,
+            } => {
+                write!(
+                    f,
+                    "time budget exceeded: aborted after {elapsed_ms} ms (budget {budget_ms} ms)"
+                )
+            }
         }
     }
 }

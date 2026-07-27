@@ -551,8 +551,10 @@ impl<S: Scalar> Schedule<S> {
             .map(|(time, seq, item)| HeapEntry { time, seq, item })
             .collect();
         let mut rng = Prng::new(seed);
+        let _scope = crate::guard::enter();
 
         while let Some(entry) = heap.pop() {
+            crate::guard::checkpoint()?;
             match entry.item {
                 Item::Gate { kernel, qubits } => {
                     let label = kernel.label().to_string();
