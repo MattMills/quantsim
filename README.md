@@ -75,10 +75,14 @@ parts are swappable:
   a stabilizer tableau + replay log over a sparse core. Gates are
   *numerically recognized* and routed: Cliffords absorb into the frame
   (pure metadata — Gottesman–Knill's **evolution sector** falls out:
-  50-qubit Clifford streams at stored support 1; readout still flushes,
-  and the absorbed set is proven **exactly** the Clifford subgroup by a
-  bidirectional sweep against an independent dense Pauli-normalizer check,
-  so nothing non-Clifford rides free), Pauli-axis rotations conjugate through the tableau
+  50-qubit Clifford streams at stored support 1; the absorbed set is
+  proven **exactly** the Clifford subgroup by a bidirectional sweep
+  against an independent dense Pauli-normalizer check, so nothing
+  non-Clifford rides free), Pauli measurements run natively through the
+  tableau (no flush, `measure_pauli` — per-measurement cost is the
+  rotation envelope, and the *measured* compounding of stored-basis
+  drift under long sequences is pinned in the tests rather than
+  papered over), Pauli-axis rotations conjugate through the tableau
   onto **native sparse Pauli-string rotations** (`O(support)`, ≤2× growth,
   weight-independent), diagonals Walsh-decompose into Z-string rotations,
   generic 1q gates split ZYZ; anything else flushes and goes raw. The
@@ -86,6 +90,21 @@ parts are swappable:
   gate count (measured: t=10 at n=20 peaks at 128 amplitudes where raw
   sparse pays 2^20) — making "magic" the measured currency left over once
   the Clifford part of a circuit becomes free.
+- **The dimensional lift** ([`lift`](src/lift.rs)) — rewrite a Clifford+T
+  circuit as a **feedback loop in an enlarged Clifford space**: `n + t`
+  qubits, every unitary Clifford, each T executed by gate teleportation
+  (resource ancilla → CX → native measurement → outcome-conditioned
+  Clifford correction, as an evented `Schedule`). Exact including
+  per-outcome phases, and honestly instrumented: the lifted loop runs at
+  zero flushes with all-Clifford dynamics, but the measured cost
+  *relocation* is a finding, not the textbook story — projections
+  collapse the register in the physical basis, the frame scrambles that
+  cancellation structure, and stored support drifts (direct run peaks 16
+  where both lift orderings peak 8192 on the same seeded circuit). The
+  magic is linear to *hold* (`|T⟩^⊗t` in the factored backend) and
+  currently expensive to *consume* — which is the measured motivation
+  for frame repair on measurement and frame-aligned stabilizer-rank
+  storage on the roadmap.
 - **VOLK-style selection** ([`harness::select_backend`]) — profile candidate
   backends on your workload on *this* machine and pick the best by time or
   memory, with fidelity as a hard gate: a fast-but-wrong kernel is rejected
@@ -186,9 +205,9 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 199 tests (195 across sixteen suites + 4 doctests); line
-coverage is 90.8% (91.7% region) via `cargo llvm-cov`, with the remaining
-gap almost entirely trivial accessors and defensive guards:
+`cargo test` runs 203 tests (199 across seventeen suites + 4 doctests);
+line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
+entirely trivial accessors and defensive guards:
 
 - **conventions** — bit order and control placement pinned on basis states.
 - **clifford_frames** — the native sparse Pauli-string rotation kernel vs
@@ -202,7 +221,16 @@ gap almost entirely trivial accessors and defensive guards:
   gates); width/depth cost of the free sector asserted polynomial
   (support 1 at width 63, log-linear at depth 4000); and the boundary
   pinned from both sides — T scatters amplitudes the moment it arrives,
-  and readout flushes where a true tableau simulator stays polynomial.
+  native measurement is seed-identical with dense with its ≤2×-per-op,
+  compounding-across-sequences envelope pinned, and full amplitude
+  extraction flushes.
+- **clifford_lift** — the dimensional lift verified exactly (data
+  register vs unlifted dense, per-outcome phases divided out, both
+  resource orderings); the feedback loop shown all-Clifford (zero
+  flushes, corrections fire exactly on outcome 1); the cost *location*
+  measured, with the stored-basis drift finding pinned as an assertion
+  designed to fail loudly the day a representation change makes the
+  lift win — that failure would be a discovery, and the test says so.
 - **gate_matrices** — every standard gate vs literature values; exact
   per-algebra gate-support lists.
 - **gate_identities** — HXH = Z and friends, SWAP = 3·CX, the Nielsen–Chuang
@@ -341,17 +369,18 @@ src/
                  mps / interference / device / frames / clifford_frame,
                  BackendRegistry<S>, pauli_expectation
   schedule.rs    evented scheduler: simultaneous loops, events, feedback
+  lift.rs        Clifford+T → measurement-feedback loop on n+t qubits
   conformance.rs registry-wide backend verification (research safety net)
   harness.rs     workload benchmarking with in-run correctness checks
   discovery.rs   point stabilizers, signal threads, transparency reports
   library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           sixteen integration suites (see Testing)
+tests/           seventeen integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
-                 verify_models, frames_demo, clifford_space
+                 verify_models, frames_demo, clifford_space, clifford_lift
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

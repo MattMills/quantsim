@@ -126,14 +126,37 @@ host:
   `tests/clifford_frames.rs`: the absorbed set is *exactly* the Clifford
   subgroup (bidirectional sweep against an independent dense
   Pauli-normalizer check — the free sector cannot exceed GK by
-  construction), and the claim is scoped to *evolution* — readout flushes
-  and pays physical support today, where a true tableau simulator answers
-  measurement queries in poly time. Next rungs:
-  **stabilizer-rank compression** (the stored state as a sum over
-  stabilizer states, ≈2^{0.4t} vs the crude 2^t product bound — the gap is
-  now measurable), **native Pauli measurement** (measure through the
-  tableau without materializing the frame — this is what would close the
-  readout half of Gottesman–Knill), **log compaction** (tableau →
+  construction), full amplitude-vector extraction still flushes (not a GK
+  capability), and **native Pauli measurement is SHIPPED**
+  (`measure_pauli` / `measure` project the stored state through the
+  tableau, no flush, outcomes seed-identical with dense) — with its real
+  envelope measured rather than assumed: `O(support)` and ≤2× growth
+  *per measurement*, compounding across long adaptive sequences because
+  projection collapses the physical basis while the stored basis drifts
+  (`m` measurements ⇒ ≤ 2^m; pinned in tests after the instrumentation
+  caught the poly over-claim).
+- **Dimensional lift — SHIPPED** (`lift::to_clifford_feedback`): any
+  Clifford+T circuit rewritten as an evented feedback loop on `n + t`
+  qubits — resource ancillas, all-Clifford unitaries, native
+  measurements, outcome-conditioned Clifford corrections; exact
+  including per-outcome phases; `Upfront` vs `JustInTime` resource
+  scheduling. Measured finding (`tests/clifford_lift.rs`): the lifted
+  loop runs at zero flushes, but stored-basis drift under projection
+  makes *both* orderings peak far above the direct rotation route
+  (8192 vs 16 on the seeded reference instance) — the relocated
+  non-Cliffordness lands where amplitude-backed frames are weakest.
+  Next rungs, now with measured motivation:
+  **frame repair on measurement** (after each projection, absorb a
+  Clifford that re-aligns the stored state with the frame — the true
+  tableau measurement update; makes unbounded adaptive sequences and the
+  lift's consumption step cheap for the stabilizer component),
+  **stabilizer-rank compression / frame-aligned sums** (the stored state
+  as a short sum of frame-aligned terms, ≈2^{0.4t} vs the crude 2^t
+  product bound — and the natural home for magic-state consumption),
+  **frames over factored inners** (`|T⟩^⊗t` is linear to hold in the
+  factored backend today — 1.6 KiB at t=32 — composing that with the
+  tableau is what would make the resource cheap to hold *and* consume),
+  **log compaction** (tableau →
   minimal Clifford circuit synthesis, replacing replay of the full log),
   **per-factor multi-qubit frames** (frames over a factor's whole region —
   can absorb CX-like inject/remove pairs, making parity signal threads

@@ -420,7 +420,7 @@ fn clifford_evolution_cost_is_polynomial_in_width_and_depth() {
 }
 
 #[test]
-fn the_frame_matches_gottesman_knill_evolution_but_not_readout() {
+fn the_boundary_no_free_magic_and_amplitude_extraction_flushes() {
     // Two-sided boundary for the GK label. Side 1 — no free magic: T
     // cannot absorb (T†XT = (X−Y)/√2 leaves the Pauli group), so the cost
     // of a non-Clifford gate lands on amplitudes the moment it arrives.
@@ -439,11 +439,13 @@ fn the_frame_matches_gottesman_knill_evolution_but_not_readout() {
         "T through an H-frame scatters the stored state (support 1 → 2)"
     );
 
-    // Side 2 — the label is scoped to *evolution*: amplitude readout of a
-    // scrambled stabilizer state flushes and pays the physical support,
-    // where a true GK tableau simulator answers measurement queries in
-    // polynomial time. Until native Pauli measurement lands (roadmap),
-    // that readout gap is the honest boundary of the claim.
+    // Side 2 — with measurement now native (see
+    // measurement_is_native_and_the_frame_survives), the remaining flush
+    // surface is full amplitude-vector extraction: asking for stored
+    // amplitudes of a scrambled stabilizer state materializes the frame
+    // and pays the physical support. That is not a Gottesman–Knill
+    // capability (GK simulates *measurement*, not 2^n-amplitude dumps),
+    // but it is a cost of this representation and stays pinned here.
     let n = 14;
     let mut circuit: Circuit = Circuit::new(n);
     for q in 0..n {
@@ -669,28 +671,109 @@ fn flush_replays_the_log_in_absorption_order() {
 }
 
 #[test]
-fn measurement_and_projection_flush_first() {
+fn measurement_is_native_and_the_frame_survives() {
+    // Measuring Z_q projects the *stored* state with the conjugated
+    // string: no flush, the 3-gate GHZ frame outlives the measurement,
+    // and the collapsed physics is still exact.
     let sim = sim_with_clifford();
     let mut c = Circuit::new(3);
     c.h(0).cx(0, 1).cx(1, 2);
     let mut state = sim.run_on("clifford-framed", &c).unwrap();
-    {
-        let framed = state
-            .as_any()
-            .downcast_ref::<CliffordFramedState<C64>>()
-            .unwrap();
-        assert_eq!(framed.frame_gates(), 3, "GHZ prep held in the frame");
-    }
     let outcome = state.measure(1, &mut Prng::new(5)).unwrap();
     let framed = state
         .as_any()
         .downcast_ref::<CliffordFramedState<C64>>()
         .unwrap();
-    assert_eq!(framed.frame_gates(), 0, "measurement materialized");
+    assert_eq!(framed.frame_gates(), 3, "frame survives measurement");
+    let stats = framed.stats();
+    assert_eq!(stats.flushes, 0);
+    assert_eq!(stats.native_measurements, 1);
     assert_close(state.total_weight(), 1.0, TOL);
-    // GHZ collapse: all three qubits agree.
+    // GHZ collapse: all three qubits agree (probability() flushes — after
+    // the fact, as an observation should).
     let expect = if outcome { (1u64 << 3) - 1 } else { 0 };
     assert_close(state.probability(expect), 1.0, TOL);
+
+    // Outcomes and collapsed states are seed-identical with dense, which
+    // measures by the flat default path.
+    let n = 8;
+    let mut c = Circuit::new(n);
+    let mut rng = Prng::new(9);
+    for _ in 0..80 {
+        let q = (rng.next_u64() % n as u64) as usize;
+        let r = ((q + 1) + (rng.next_u64() % (n as u64 - 1)) as usize) % n;
+        match rng.next_u64() % 6 {
+            0 => c.h(q),
+            1 => c.s(q),
+            2 => c.x(q),
+            3 => c.z(q),
+            4 => c.cx(q, r),
+            _ => c.cz(q, r),
+        };
+    }
+    let reg = GateRegistry::<C64>::standard();
+    let bound = c.bind(&reg).unwrap();
+    let mut framed = CliffordFramedState::<C64>::new(n).unwrap();
+    bound.run(&mut framed).unwrap();
+    let mut dense = DenseState::<C64>::new(n).unwrap();
+    bound.run(&mut dense).unwrap();
+    let (mut rng_f, mut rng_d) = (Prng::new(17), Prng::new(17));
+    for q in 0..n {
+        let of = framed.measure(q, &mut rng_f).unwrap();
+        let od = dense.measure(q, &mut rng_d).unwrap();
+        assert_eq!(of, od, "outcome diverged at qubit {q}");
+    }
+    let dev = max_amplitude_deviation(&dense, &framed);
+    assert!(dev < 1e-9, "collapsed states diverge: {dev}");
+
+    // The honest envelope at width past dense — discovered by measurement,
+    // not assumed: projecting the *stored* state is exact physics at
+    // O(support) with ≤2× growth per measurement, but the growth
+    // COMPOUNDS: a long adaptive sequence drifts the stored state away
+    // from the frame (physically the register collapses toward a product
+    // state |b⟩; the stored side becomes C†|b⟩, generically full-support).
+    // Measuring m of n qubits is bounded by 2^m — cheap for few
+    // measurements and for fresh-ancilla feedback loops (the lift), NOT
+    // polynomial for unbounded sequences. Closing that (true tableau
+    // frame repair on measurement) is the named roadmap rung; asserting
+    // O(1) here would be the same over-claim this suite exists to refuse.
+    let n = 40;
+    let m = 6;
+    let mut c = Circuit::new(n);
+    let mut rng = Prng::new(23);
+    for _ in 0..300 {
+        let q = (rng.next_u64() % n as u64) as usize;
+        let r = ((q + 1) + (rng.next_u64() % (n as u64 - 1)) as usize) % n;
+        match rng.next_u64() % 6 {
+            0 => c.h(q),
+            1 => c.s(q),
+            2 => c.x(q),
+            3 => c.z(q),
+            4 => c.cx(q, r),
+            _ => c.cz(q, r),
+        };
+    }
+    let mut state = CliffordFramedState::<C64>::new(n).unwrap();
+    c.bind(&reg).unwrap().run(&mut state).unwrap();
+    let mut rng = Prng::new(41);
+    for q in 0..m {
+        state.measure(q, &mut rng).unwrap();
+    }
+    let stats = state.stats();
+    assert_eq!(stats.native_measurements, m);
+    assert_eq!(stats.flushes, 0, "prep + evolve + measure, no flush");
+    assert!(
+        state.peak_stored_support() <= 1 << m,
+        "support bounded by 2^measurements: {}",
+        state.peak_stored_support()
+    );
+    assert!(
+        state.peak_stored_support() > 1,
+        "and the drift is real — the stored state left the frame"
+    );
+    // (No observation here on purpose: flushing this 40-qubit drifted
+    // stabilizer state would materialize ~2^n physical support — the
+    // weight-1 invariant is already asserted on the cheap widths above.)
 }
 
 #[test]

@@ -17,11 +17,22 @@
 //!   the definition of Pauli-normalizer membership (verified bidirectionally
 //!   against an independent dense ground truth over the whole registry in
 //!   `tests/clifford_frames.rs`), so a non-Clifford gate *cannot* ride for
-//!   free; anything else would be a BQP = BPP claim. And the sector is
-//!   evolution only: amplitude readout of the held state still flushes and
-//!   pays the physical support, where a true tableau simulator answers
-//!   measurement queries in polynomial time — native Pauli measurement is
-//!   the roadmap rung that would close that gap.
+//!   free; anything else would be a BQP = BPP claim. Measurement runs
+//!   natively: [`CliffordFramedState::measure_pauli`] (and `measure`,
+//!   which is `Z_q` through it) projects the *stored* state with the
+//!   conjugated string — no flush, the frame survives — at the same cost
+//!   envelope as the rotations: `O(support)` per measurement, at most 2×
+//!   growth. That growth **compounds**: a long adaptive sequence drifts
+//!   the stored state away from the frame (the register collapses toward
+//!   a basis state `|b⟩` while the stored side becomes `C†|b⟩`,
+//!   generically full-support), so `m` measurements are bounded by
+//!   `2^m`, not by a polynomial — measured honestly in the tests, cheap
+//!   for the fresh-ancilla feedback loops the lift generates, and the
+//!   reason *frame repair on measurement* (the true tableau update, which
+//!   would re-align the frame after each projection) is a named roadmap
+//!   rung rather than a claimed capability. Full amplitude-vector
+//!   extraction and batch `sample()` still flush — extracting `2^n`
+//!   numbers is not a Gottesman–Knill capability and never was.
 //! * **Pauli-axis rotations conjugate**: `exp(−iθ/2·P)` becomes
 //!   `exp(−iθ/2·C†PC)`, another signed Pauli string read off the tableau,
 //!   applied natively by [`SparseState::apply_pauli_rotation`] in
@@ -37,8 +48,9 @@
 //!   (`C·stored` materialized), the tableau resets, and the gate applies
 //!   raw — correctness over cleverness, verified by conformance.
 //!
-//! Observation (amplitude, sampling, measurement, projection) flushes
-//! lazily first, so the [`Backend`] contract is met exactly. The
+//! Measurement runs natively through the tableau (no flush); amplitude
+//! queries, batch sampling and computational projection flush lazily
+//! first, so the [`Backend`] contract is met exactly. The
 //! representational claims live in [`CliffordFramedState::stats`],
 //! [`CliffordFramedState::stored_nonzero_count`] and
 //! [`CliffordFramedState::peak_stored_support`] — read them *before* an
@@ -225,6 +237,9 @@ pub struct CliffordFrameStats {
     /// Widest conjugated Pauli string applied — the number the tableau
     /// keeps *out* of the amplitude work.
     pub max_axis_weight: usize,
+    /// Measurements performed natively through the tableau — no flush,
+    /// the frame survives.
+    pub native_measurements: usize,
 }
 
 enum LoggedKernel<S: Scalar> {
@@ -585,6 +600,29 @@ impl<S: Scalar> CliffordFramedState<S> {
         self.core.borrow().tableau.image(p)
     }
 
+    /// Measure the Hermitian Pauli observable `P` on the **physical**
+    /// state, natively through the frame — no flush, the frame survives.
+    /// Physically projecting `C|s⟩` with `(I ± P)/2` equals projecting the
+    /// stored `|s⟩` with `(I ± C†PC)/2`, and `C` preserves inner products,
+    /// so both the outcome distribution and the collapsed state are exact.
+    /// Returns `true` for the −1 outcome (for `Z_q`, "qubit q read 1").
+    ///
+    /// Cost is the rotation envelope — `O(support)`, at most 2× growth —
+    /// **per measurement**; long adaptive sequences compound it (see the
+    /// module docs). This is the feedback-loop primitive for
+    /// measurement-driven computation in the lifted Clifford space
+    /// ([`crate::lift`]), where each measurement hits a fresh ancilla and
+    /// the compounding never engages.
+    pub fn measure_pauli(&mut self, p: PauliString, rng: &mut Prng) -> Result<bool> {
+        let mut core = self.core.borrow_mut();
+        let img = core.tableau.image(p);
+        core.stats.max_axis_weight = core.stats.max_axis_weight.max(img.weight());
+        let outcome = core.state.measure_pauli(img.x, img.z, img.negative, rng)?;
+        core.stats.native_measurements += 1;
+        core.note_peak();
+        Ok(outcome)
+    }
+
     /// Replay the frame into the stored state now (physical state
     /// unchanged; frame becomes identity).
     pub fn flush(&mut self) -> Result<()> {
@@ -812,14 +850,24 @@ impl<S: Scalar> Backend<S> for CliffordFramedState<S> {
     }
 
     fn measure(&mut self, qubit: usize, rng: &mut Prng) -> Result<bool> {
-        // The frame is a global entangling unitary: computational-basis
-        // measurement needs it materialized. (Native Pauli measurement
-        // through the tableau is a roadmap rung.)
-        self.flush_if_active()?;
-        let mut core = self.core.borrow_mut();
-        let outcome = core.state.measure(qubit, rng)?;
-        core.note_peak();
-        Ok(outcome)
+        // Computational-basis measurement is the Pauli measurement of
+        // Z_q, taken natively through the tableau: the frame survives,
+        // and outcomes are seed-identical with every other backend
+        // (same draw convention, same distribution — C is unitary).
+        if qubit >= self.num_qubits {
+            return Err(Error::QubitOutOfRange {
+                qubit,
+                num_qubits: self.num_qubits,
+            });
+        }
+        self.measure_pauli(
+            PauliString {
+                x: 0,
+                z: 1u64 << qubit,
+                negative: false,
+            },
+            rng,
+        )
     }
 
     fn sample(&self, shots: u64, rng: &mut Prng) -> Result<HashMap<u64, u64>> {

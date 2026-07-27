@@ -67,6 +67,7 @@ pub mod error;
 pub mod gates;
 pub mod harness;
 pub mod library;
+pub mod lift;
 pub mod math;
 pub mod registry;
 pub mod rng;
@@ -106,6 +107,7 @@ pub mod prelude {
         SelectionReport, Workload,
     };
     pub use crate::library;
+    pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};
     pub use crate::registry::GateRegistry;
     pub use crate::rng::Prng;
