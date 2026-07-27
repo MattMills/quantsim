@@ -100,6 +100,73 @@ fn main() {
     algebra_row::<Sedenion>();
 
     println!();
+    println!("== Factored: cost tracks entanglement clusters, not register width ==");
+    println!();
+    println!("(a) width sweep, entanglement held local (pairs): linear in width");
+    println!(
+        "{:>6} {:>16} {:>18} {:>14}",
+        "qubits", "factored", "largest cluster", "sparse"
+    );
+    for n in [8usize, 16, 24, 32, 40, 48, 56] {
+        let mut pairs = Circuit::new(n);
+        for pair in 0..n / 2 {
+            pairs
+                .ry(2 * pair, 0.3 + 0.05 * pair as f64)
+                .cx(2 * pair, 2 * pair + 1);
+        }
+        let state = sim.run_on("factored", &pairs).unwrap();
+        let factored = state.as_any().downcast_ref::<FactoredState<C64>>().unwrap();
+        // Sparse support is 2^(n/2) here — exponential in width; skip once big.
+        let sparse = if n <= 40 {
+            fmt_bytes(sim.run_on("sparse", &pairs).unwrap().memory_bytes())
+        } else {
+            "(skipped)".into()
+        };
+        println!(
+            "{n:>6} {:>16} {:>12} qubits {:>14}",
+            fmt_bytes(state.memory_bytes()),
+            factored.largest_factor_qubits(),
+            sparse
+        );
+    }
+    println!();
+    println!("(b) cluster sweep, register width held at 24: exponential in cluster");
+    println!(
+        "{:>16} {:>16} {:>18}",
+        "cluster qubits", "factored", "factor count"
+    );
+    for cluster in [2usize, 6, 10, 14, 18, 22] {
+        let mut c = Circuit::new(24);
+        c.h(0);
+        for q in 0..cluster - 1 {
+            c.cx(q, q + 1); // one GHZ cluster of `cluster` qubits
+        }
+        for q in cluster..24 {
+            c.ry(q, 0.4); // the rest stay separated
+        }
+        let state = sim.run_on("factored", &c).unwrap();
+        let factored = state.as_any().downcast_ref::<FactoredState<C64>>().unwrap();
+        println!(
+            "{cluster:>16} {:>16} {:>18}",
+            fmt_bytes(state.memory_bytes()),
+            factored.factor_count()
+        );
+    }
+    println!();
+    println!("(c) the degenerate quadrants: GHZ(20) — global cluster, tiny support");
+    let ghz = library::ghz(20);
+    let f = sim.run_on("factored", &ghz).unwrap();
+    let s = sim.run_on("sparse", &ghz).unwrap();
+    let d = DenseState::<C64>::new(20).unwrap();
+    println!(
+        "  dense {} | factored {} (one 20-qubit cluster) | sparse {} (2 nonzeros)",
+        fmt_bytes(d.memory_bytes()),
+        fmt_bytes(f.memory_bytes()),
+        fmt_bytes(s.memory_bytes())
+    );
+    println!("  — factored and sparse compress along orthogonal axes: clusters vs support.");
+
+    println!();
     println!("== Estimate vs process RSS, in actuality (dense C64) ==");
     match rss_bytes() {
         Some(_) => {
