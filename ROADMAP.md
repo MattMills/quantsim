@@ -4,12 +4,13 @@ The crate is organized around two swappable axes — the **amplitude algebra**
 (`Scalar`) and the **state representation** (`Backend<S>`) — so most planned
 work is "fill in another cell of the matrix":
 
-| representation \ algebra | ℝ | ℂ | split-ℂ | ℍ | 𝕆 | 𝕊 | ℚ_p |
-|--------------------------|---|---|---------|---|---|---|-----|
-| dense state vector       | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | design below |
-| sparse state vector      | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | design below |
-| adaptive (sparse→dense)  | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| matrix product state     | ✅ | ✅ | — | open (noted below) | open | — | open |
+| representation \ algebra | ℝ | ℂ | Ball | split-ℂ | ℍ | 𝕆 | 𝕊 | ℚ_p |
+|--------------------------|---|---|------|---------|---|---|---|-----|
+| dense state vector       | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | design below |
+| sparse state vector      | ✅ | ✅ | ✅ (midpoint pruning) | ✅ | ✅ | ✅ | ✅ | design below |
+| adaptive (sparse→dense)  | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| matrix product state     | ✅ | ✅ | ✅ | — | open (noted below) | open | — | open |
+| hierarchy (mera)         | ✅ | ✅ | ✅ | — | open | open | — | open |
 
 ## Matrix product states (MPS) — SHIPPED (core)
 
@@ -127,37 +128,45 @@ host:
   subgroup (bidirectional sweep against an independent dense
   Pauli-normalizer check — the free sector cannot exceed GK by
   construction), full amplitude-vector extraction still flushes (not a GK
-  capability), and **native Pauli measurement is SHIPPED**
+  capability), **native Pauli measurement is SHIPPED**
   (`measure_pauli` / `measure` project the stored state through the
-  tableau, no flush, outcomes seed-identical with dense) — with its real
-  envelope measured rather than assumed: `O(support)` and ≤2× growth
-  *per measurement*, compounding across long adaptive sequences because
-  projection collapses the physical basis while the stored basis drifts
-  (`m` measurements ⇒ ≤ 2^m; pinned in tests after the instrumentation
-  caught the poly over-claim).
+  tableau, no flush, outcomes seed-identical with dense), and **frame
+  repair on measurement is SHIPPED**: after each projection the frame
+  right-composes with a repair Clifford (S on Y bits, CX fold, one H)
+  so the measured string is Z-type in the new stored basis — the true
+  tableau measurement update. The pre-repair envelope (`m` measurements
+  ⇒ ≤ 2^m stored support, caught by the instrumentation after the
+  original poly over-claim) is repaired flat: peak 2 across 40
+  sequential measurements at width 40, final support 1, with the
+  unrepaired path still selectable (`set_measure_repair`) and its
+  envelope still pinned for comparison.
 - **Dimensional lift — SHIPPED** (`lift::to_clifford_feedback`): any
   Clifford+T circuit rewritten as an evented feedback loop on `n + t`
   qubits — resource ancillas, all-Clifford unitaries, native
   measurements, outcome-conditioned Clifford corrections; exact
   including per-outcome phases; `Upfront` vs `JustInTime` resource
-  scheduling. Measured finding (`tests/clifford_lift.rs`): the lifted
-  loop runs at zero flushes, but stored-basis drift under projection
-  makes *both* orderings peak far above the direct rotation route
-  (8192 vs 16 on the seeded reference instance) — the relocated
-  non-Cliffordness lands where amplitude-backed frames are weakest.
-  Next rungs, now with measured motivation:
-  **frame repair on measurement** (after each projection, absorb a
-  Clifford that re-aligns the stored state with the frame — the true
-  tableau measurement update; makes unbounded adaptive sequences and the
-  lift's consumption step cheap for the stabilizer component),
+  scheduling. The measured finding here has moved once, exactly as the
+  instrumentation intended. Original (`tests/clifford_lift.rs`,
+  pre-repair): stored-basis drift under projection made *both* orderings
+  peak far above the direct rotation route (8192 vs 16 on the seeded
+  reference instance). **Frame repair on measurement — SHIPPED** closed
+  it: the designed-to-fail assertion fired, and the repaired story is
+  pinned instead — `JustInTime` runs the whole loop at a peak
+  comparable to the direct route (one `|T⟩` in flight, every gadget
+  measurement repaired away: consumption is *cheap*), while `Upfront`
+  pays `2^t` for *holding* every resource state in one sparse register
+  at once. Remaining rungs, each with measured motivation:
   **stabilizer-rank compression / frame-aligned sums** (the stored state
   as a short sum of frame-aligned terms, ≈2^{0.4t} vs the crude 2^t
   product bound — and the natural home for magic-state consumption),
   **frames over factored inners** (`|T⟩^⊗t` is linear to hold in the
   factored backend today — 1.6 KiB at t=32 — composing that with the
-  tableau is what would make the resource cheap to hold *and* consume),
+  tableau would make the resource cheap to hold *and* consume in the
+  same run, collapsing the Upfront/JustInTime gap),
   **log compaction** (tableau →
-  minimal Clifford circuit synthesis, replacing replay of the full log),
+  minimal Clifford circuit synthesis, replacing replay of the full log —
+  measurement repairs now prepend to the log, so long adaptive runs
+  raise its value),
   **per-factor multi-qubit frames** (frames over a factor's whole region —
   can absorb CX-like inject/remove pairs, making parity signal threads
   representation-free), and **MPS bond gauges** (the tensor-network
@@ -165,6 +174,47 @@ host:
 - **Scheduling-aware geometry** — the evented scheduler knows *when*
   regions interact; a lookahead pass could pre-plan merges/splits (or
   memory swap-outs) to minimize peak factor width over the whole schedule.
+
+## The hierarchical register (MERA program)
+
+**Rung 1 — SHIPPED** (`MeraState`, registered `"mera"`): the register as
+a balanced binary isometry tree (the MERA family's isometry layer — a
+tree tensor network, stated honestly), bonds capped per super-site,
+gates costing the smallest subtree spanning their targets
+(materialize-block up to `max_block`, apply, re-compress by recursive
+Schmidt splits with the discarded weight ledgered), and the
+coarse-evaluate-then-refine API: `coarse_state(depth)` — the exact
+state on the super-site basis at any scale (measured flagship: GHZ(16)
+at depth 1 *is* a maximally entangled super-site pair, both coarse
+singular values exactly 1/√2) — with `refine_basis` as the per-site
+descent dictionary. Conformance-swept over the full registry;
+truncation degrades measurably, never silently; composes with `Ball`
+so representation resolution and numeric resolution stack. The
+remaining rungs, in dependency order:
+
+- **Path updates instead of block materialization** — apply a cross-cut
+  2q gate as its operator-Schmidt sum (rank ≤ 4) of single-site terms,
+  then hierarchical rounding along the tree path (bond direct sums +
+  SVD truncation): removes the `2^{block}` transient, making GHZ-across-
+  the-root bond-2 *during* the gate, not just after.
+- **Gauge maintenance** — keep the tree root-canonical so per-node
+  truncation weights are environment-correct and the discarded ledger
+  becomes a *certified* global L2 bound (today it is block-local, like
+  the MPS backend's, and labeled as such).
+- **Disentanglers** — the u-layer between levels (the MERA proper):
+  variationally chosen to minimize truncation across cuts; the
+  measured payoff target is bond growth on critical/area-law states
+  where the plain tree pays χ inflation.
+- **Ascending superoperators** — renormalize *operators* through the
+  isometry (and eventually disentangler) layers so expectation values
+  and gate effects can be *evaluated at a chosen depth* without
+  touching the leaves at all: "any operation at coarse resolution"
+  moving from state queries to full operator flow.
+- **Progressive residual refinement** — keep truncated components as
+  addressable residuals so a coarse run can be *continued* to finer
+  resolution without re-simulating from scratch — the last step of
+  "refine infinitely", currently approximated by re-running at a finer
+  dial (larger `max_bond`, finer `Ball::quantize`).
 
 ## Further non-Cayley–Dickson explorations
 
@@ -197,10 +247,34 @@ entries, each a small self-contained `Scalar` impl plus tests:
   choices per (workload shape, width, machine) à la VOLK profiles is a
   small serialization feature once serde lands.
 
+## Reference and certification
+
+- **Exact D[ω] evaluator — SHIPPED** (`exact::ExactState`): absolute
+  reference values for the Clifford+T fragment and eighth-turn
+  rotations, with checked `i128` coefficients. Natural next entries:
+  a bigger-integer feature (arbitrary-precision coefficients behind a
+  feature flag, lifting the depth ceiling), exact evaluation of the
+  scheduler's feedback runs (outcome-conditioned exact branches), and
+  extending the ring (e.g. `D[ζ_{16}]` for π/8-family gates — the
+  Clifford-hierarchy next level).
+- **Ball arithmetic — SHIPPED** (`scalar::Ball`): certified
+  midpoint-radius amplitudes, quantization as a coarse-graining dial,
+  containment-tested against the exact evaluator. Next: directed
+  rounding (replacing conservative ε-inflation with true IEEE bounds),
+  affine arithmetic to tame the measured ~√2-per-H dependency growth,
+  and radius-aware sparse pruning (today pruning consults midpoints —
+  dense is the certified path, and the docs say so).
+
 ## Simulator features
 
-- Mid-circuit measurement **as circuit operations** (classical registers and
-  feed-forward), rather than only via the `Backend::measure` API.
+- **Recursive measurement feedback — SHIPPED** in the evented scheduler
+  (`FeedbackOp`: branches carry gates *and further measurements*,
+  adaptive trees of any bounded depth with structural termination).
+  Still open on top of it: mid-circuit measurement **as circuit
+  operations** (classical registers, conditions on *functions* of
+  several outcomes, feed-forward in `Circuit` itself rather than only
+  `Schedule`), and unbounded repeat-until-success loops (cyclic
+  feedback bounded by the horizon rather than by tree depth).
 - Noise channels (Kraus operators) — likely a `DensityBackend<S>` or
   trajectory sampling over the existing pure-state backends.
 - More structured kernels beyond `GateKernel::Diagonal` (shipped):

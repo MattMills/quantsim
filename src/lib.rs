@@ -4,13 +4,16 @@
 //!
 //! 1. **The amplitude algebra** ([`scalar::Scalar`]): ℝ, ℂ (default),
 //!    quaternions ℍ, octonions 𝕆, sedenions — via a generic Cayley–Dickson
-//!    construction — plus non-Cayley–Dickson algebras like split-complex.
+//!    construction — plus non-Cayley–Dickson algebras like split-complex
+//!    and [`scalar::Ball`] (certified midpoint ± radius arithmetic).
 //!    Every gate matrix, state representation and measurement rule is
-//!    generic over it.
+//!    generic over it. The [`exact`] module supplies float-free absolute
+//!    reference values for the Clifford+T fragment.
 //! 2. **The state representation** ([`backend::Backend`]): dense state
-//!    vector (the BQP reference), sparse hash-map state, and an adaptive
-//!    backend that promotes sparse → dense; further representations
-//!    (matrix-product states, p-adic explorations) register by name.
+//!    vector (the BQP reference), sparse hash-map state, adaptive
+//!    sparse→dense promotion, factored entanglement clusters, matrix
+//!    product states, and the hierarchical `mera` tree with coarse views
+//!    at every scale; further representations register by name.
 //!
 //! Gates live in a [`registry::GateRegistry`] — research gates are
 //! first-class: implement [`gates::GateDef`] or hand the registry a closure,

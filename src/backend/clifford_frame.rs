@@ -487,7 +487,10 @@ impl<S: Scalar> Core<S> {
         for &step in steps.iter().rev() {
             let gate = match step {
                 RepairStep::S(b) => LoggedGate {
-                    kernel: LoggedKernel::Diagonal(vec![S::one(), repair_scalar::<S>(c64(0.0, 1.0))?]),
+                    kernel: LoggedKernel::Diagonal(vec![
+                        S::one(),
+                        repair_scalar::<S>(c64(0.0, 1.0))?,
+                    ]),
                     qubits: vec![b],
                 },
                 RepairStep::Cx(c, t) => LoggedGate {
@@ -520,23 +523,22 @@ fn repair_scalar<S: Scalar>(z: C64) -> Result<S> {
 
 fn h_matrix<S: Scalar>() -> Result<GateMatrix<S>> {
     let s = std::f64::consts::FRAC_1_SQRT_2;
-    GateMatrix::try_from_c64s(2, &[c64(s, 0.0), c64(s, 0.0), c64(s, 0.0), c64(-s, 0.0)])
-        .ok_or_else(|| Error::UnsupportedForAlgebra {
+    GateMatrix::try_from_c64s(2, &[c64(s, 0.0), c64(s, 0.0), c64(s, 0.0), c64(-s, 0.0)]).ok_or_else(
+        || Error::UnsupportedForAlgebra {
             gate: "measurement repair".into(),
             algebra: S::algebra_name(),
-        })
+        },
+    )
 }
 
 fn cx_matrix<S: Scalar>() -> Result<GateMatrix<S>> {
     let (o, l) = (c64(1.0, 0.0), c64(0.0, 0.0));
-    GateMatrix::try_from_c64s(
-        4,
-        &[o, l, l, l, l, l, l, o, l, l, o, l, l, o, l, l],
+    GateMatrix::try_from_c64s(4, &[o, l, l, l, l, l, l, o, l, l, o, l, l, o, l, l]).ok_or_else(
+        || Error::UnsupportedForAlgebra {
+            gate: "measurement repair".into(),
+            algebra: S::algebra_name(),
+        },
     )
-    .ok_or_else(|| Error::UnsupportedForAlgebra {
-        gate: "measurement repair".into(),
-        algebra: S::algebra_name(),
-    })
 }
 
 /// `i^k` as a complex unit.

@@ -243,9 +243,7 @@ enum Item<S: Scalar> {
     /// An owned measurement event (static events are cloned in; feedback
     /// events are spliced from their parent's branches). The heap entry's
     /// time is authoritative; the event's own `at` is not consulted again.
-    Measure {
-        event: MeasureEvent<S>,
-    },
+    Measure { event: MeasureEvent<S> },
 }
 
 struct HeapEntry<S: Scalar> {

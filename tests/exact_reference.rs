@@ -79,7 +79,10 @@ fn exact_zeros_are_exact_where_floats_leave_residue() {
     let exact = ExactState::run(&c).unwrap();
     assert!(exact.amplitude_exact(0).is_zero(), "exact zero is zero");
     assert_eq!(exact.support_exact(), 1);
-    assert_eq!(exact.amplitude_exact(1), DOmega::int(-1).mul(DOmega::omega_pow(4)).unwrap());
+    assert_eq!(
+        exact.amplitude_exact(1),
+        DOmega::int(-1).mul(DOmega::omega_pow(4)).unwrap()
+    );
 
     let sim: Simulator = Simulator::new();
     let dense = sim.run(&c).unwrap();

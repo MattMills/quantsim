@@ -101,11 +101,7 @@ fn bounded_repeat_until_success_ladder() {
         // Each failure enqueues exactly one x and (except the last rung)
         // one h retry.
         let xs = trace.events.iter().filter(|e| e.label == "x").count();
-        let failures = trace
-            .measurements
-            .iter()
-            .filter(|&&(_, _, o)| o)
-            .count();
+        let failures = trace.measurements.iter().filter(|&&(_, _, o)| o).count();
         assert_eq!(xs, failures, "seed {seed}: one reset per failure");
         // All paths end in |0⟩.
         assert_close(state.probability(0), 1.0, 1e-9);
@@ -197,7 +193,10 @@ fn adaptive_replay_is_deterministic_across_backends() {
         assert_eq!(ta.measurements, tb.measurements, "seed {seed}");
         assert_eq!(ta.events.len(), tb.events.len(), "seed {seed}");
         for (ea, eb) in ta.events.iter().zip(&tb.events) {
-            assert_eq!((ea.time, &ea.label, &ea.qubits), (eb.time, &eb.label, &eb.qubits));
+            assert_eq!(
+                (ea.time, &ea.label, &ea.qubits),
+                (eb.time, &eb.label, &eb.qubits)
+            );
         }
         for i in 0..4u64 {
             let (x, y) = (sa.amplitude(i), sb.amplitude(i));

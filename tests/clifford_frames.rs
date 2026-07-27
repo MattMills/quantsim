@@ -796,7 +796,10 @@ fn measurement_is_native_and_the_frame_survives() {
     assert_eq!(&outcomes_on[..m_off], &outcomes_off[..], "same physics");
     let stats = repaired.stats();
     assert_eq!(stats.native_measurements, m_on);
-    assert_eq!(stats.flushes, 0, "prep + evolve + measure + repair, no flush");
+    assert_eq!(
+        stats.flushes, 0,
+        "prep + evolve + measure + repair, no flush"
+    );
     assert!(stats.frame_repairs > 0, "random outcomes trigger repairs");
     assert!(
         repaired.peak_stored_support() <= 2,

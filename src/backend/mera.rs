@@ -92,8 +92,11 @@ struct Node<S: Scalar> {
     hi: usize,
     bond: usize,
     tensor: Vec<S>,
-    children: Option<(Box<Node<S>>, Box<Node<S>>)>,
+    children: Children<S>,
 }
+
+/// The two subtrees of an internal node (`None` for a leaf).
+type Children<S> = Option<(Box<Node<S>>, Box<Node<S>>)>;
 
 impl<S: Scalar> Node<S> {
     fn width(&self) -> usize {

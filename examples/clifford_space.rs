@@ -194,13 +194,14 @@ fn main() -> Result<()> {
     let flush_time = start.elapsed();
     println!("\nreadout boundary at {n} qubits: peak stored support {before} during evolution,");
     println!(
-        "  {} after one amplitude() call ({:.2?} flush) — a true tableau simulator",
+        "  {} after one amplitude() call ({:.2?} flush) — Pauli MEASUREMENT is",
         state.peak_stored_support(),
         flush_time
     );
-    println!("  answers measurement queries in poly time; this frame does not yet");
-    println!("  (native Pauli measurement is the roadmap rung). The GK claim is");
-    println!("  scoped to evolution, and the tests pin both sides of that boundary.");
+    println!("  native and repaired (measure_pauli: no flush, adaptive sequences");
+    println!("  stay flat), but FULL AMPLITUDE EXTRACTION still materializes the");
+    println!("  physical support — extracting 2^n numbers is not a Gottesman-Knill");
+    println!("  capability and never was. The tests pin both sides of the boundary.");
 
     println!("\nThe frame walks the Clifford part of the circuit through");
     println!("Sp(2n, F2) as metadata; what the amplitudes pay for is the");

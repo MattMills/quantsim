@@ -214,8 +214,12 @@ fn lift_cost_location_is_measured_not_assumed() {
     let (_, jit_peak) = verify_lift(&circuit, ResourcePrep::JustInTime, 77);
     let (_, upfront_drift) =
         verify_lift_on(&circuit, ResourcePrep::Upfront, 77, "clifford-framed-drift");
-    let (_, jit_drift) =
-        verify_lift_on(&circuit, ResourcePrep::JustInTime, 77, "clifford-framed-drift");
+    let (_, jit_drift) = verify_lift_on(
+        &circuit,
+        ResourcePrep::JustInTime,
+        77,
+        "clifford-framed-drift",
+    );
 
     // Direct (unlifted) run on the same framed backend for reference.
     let reg = GateRegistry::<C64>::standard();

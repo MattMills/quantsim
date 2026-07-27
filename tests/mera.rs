@@ -65,7 +65,15 @@ fn coarse_views_refine_from_root_to_leaves() {
     // tree redistributes description, not weight — exact here since
     // nothing was truncated).
     let mut c = Circuit::new(6);
-    c.h(0).cx(0, 1).t(1).cx(1, 2).h(3).cx(3, 4).s(4).cx(4, 5).cx(2, 3);
+    c.h(0)
+        .cx(0, 1)
+        .t(1)
+        .cx(1, 2)
+        .h(3)
+        .cx(3, 4)
+        .s(4)
+        .cx(4, 5)
+        .cx(2, 3);
     let state = sim().run_on("mera", &c).unwrap();
     let mera = state.as_any().downcast_ref::<MeraState<C64>>().unwrap();
     assert!(mera.is_exact());

@@ -83,6 +83,10 @@ pub struct DOmega {
     k: u32,
 }
 
+// The arithmetic methods deliberately return `Result` (checked i128
+// coefficients), so they cannot implement the std operator traits; the
+// familiar names are kept because they are the type's primary operations.
+#[allow(clippy::should_implement_trait)]
 impl DOmega {
     /// The zero element.
     pub fn zero() -> Self {
@@ -144,12 +148,7 @@ impl DOmega {
     fn raised(self) -> Result<Self> {
         let [p, q, r, s] = self.c;
         Ok(DOmega {
-            c: [
-                cadd(q, -s)?,
-                cadd(p, r)?,
-                cadd(q, s)?,
-                cadd(r, -p)?,
-            ],
+            c: [cadd(q, -s)?, cadd(p, r)?, cadd(q, s)?, cadd(r, -p)?],
             k: self.k + 1,
         })
     }
@@ -164,8 +163,8 @@ impl DOmega {
             b = b.raised()?;
         }
         let mut c = [0i128; 4];
-        for i in 0..4 {
-            c[i] = cadd(a.c[i], b.c[i])?;
+        for (slot, (&x, &y)) in c.iter_mut().zip(a.c.iter().zip(b.c.iter())) {
+            *slot = cadd(x, y)?;
         }
         Ok(DOmega { c, k: a.k }.reduced())
     }
@@ -278,6 +277,9 @@ pub struct ExactReal {
     pub k: u32,
 }
 
+// Same trade as `DOmega`: checked arithmetic returns `Result`, so the
+// std operator traits cannot apply.
+#[allow(clippy::should_implement_trait)]
 impl ExactReal {
     /// The exact zero.
     pub fn zero() -> Self {
@@ -649,7 +651,7 @@ impl ExactState {
             }
             let mut sub = 0usize;
             for (b, &q) in qubits.iter().enumerate() {
-                sub |= (((i >> q) & 1) as usize) << b;
+                sub |= ((i >> q) & 1) << b;
             }
             *a = entries[sub].mul(*a)?;
         }
@@ -744,7 +746,11 @@ mod tests {
     fn reduction_is_canonical() {
         // 2/√2² reduces to 1; equal values compare equal whatever their
         // construction path.
-        let a = DOmega { c: [2, 0, 0, 0], k: 2 }.reduced();
+        let a = DOmega {
+            c: [2, 0, 0, 0],
+            k: 2,
+        }
+        .reduced();
         assert_eq!(a, DOmega::int(1));
         let b = DOmega::inv_sqrt2_pow(3)
             .mul(DOmega::omega_pow(1).sub(DOmega::omega_pow(3)).unwrap())
