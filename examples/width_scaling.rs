@@ -104,8 +104,8 @@ fn main() {
     println!();
     println!("(a) width sweep, entanglement held local (pairs): linear in width");
     println!(
-        "{:>6} {:>16} {:>18} {:>14}",
-        "qubits", "factored", "largest cluster", "sparse"
+        "{:>6} {:>16} {:>18} {:>14} {:>14}",
+        "qubits", "factored", "largest cluster", "sparse", "mps"
     );
     for n in [8usize, 16, 24, 32, 40, 48, 56] {
         let mut pairs = Circuit::new(n);
@@ -122,18 +122,20 @@ fn main() {
         } else {
             "(skipped)".into()
         };
+        let mps = sim.run_on("mps", &pairs).unwrap();
         println!(
-            "{n:>6} {:>16} {:>12} qubits {:>14}",
+            "{n:>6} {:>16} {:>12} qubits {:>14} {:>14}",
             fmt_bytes(state.memory_bytes()),
             factored.largest_factor_qubits(),
-            sparse
+            sparse,
+            fmt_bytes(mps.memory_bytes())
         );
     }
     println!();
     println!("(b) cluster sweep, register width held at 24: exponential in cluster");
     println!(
-        "{:>16} {:>16} {:>18}",
-        "cluster qubits", "factored", "factor count"
+        "{:>16} {:>16} {:>18} {:>14} {:>10}",
+        "cluster qubits", "factored", "factor count", "mps", "max bond"
     );
     for cluster in [2usize, 6, 10, 14, 18, 22] {
         let mut c = Circuit::new(24);
@@ -146,10 +148,14 @@ fn main() {
         }
         let state = sim.run_on("factored", &c).unwrap();
         let factored = state.as_any().downcast_ref::<FactoredState<C64>>().unwrap();
+        let mps_state = sim.run_on("mps", &c).unwrap();
+        let mps = mps_state.as_any().downcast_ref::<MpsState<C64>>().unwrap();
         println!(
-            "{cluster:>16} {:>16} {:>18}",
+            "{cluster:>16} {:>16} {:>18} {:>14} {:>10}",
             fmt_bytes(state.memory_bytes()),
-            factored.factor_count()
+            factored.factor_count(),
+            fmt_bytes(mps_state.memory_bytes()),
+            mps.max_bond_dimension()
         );
     }
     println!();
@@ -158,13 +164,15 @@ fn main() {
     let f = sim.run_on("factored", &ghz).unwrap();
     let s = sim.run_on("sparse", &ghz).unwrap();
     let d = DenseState::<C64>::new(20).unwrap();
+    let m = sim.run_on("mps", &ghz).unwrap();
     println!(
-        "  dense {} | factored {} (one 20-qubit cluster) | sparse {} (2 nonzeros)",
+        "  dense {} | factored {} (one 20-qubit cluster) | sparse {} (2 nonzeros) | mps {} (bond 2)",
         fmt_bytes(d.memory_bytes()),
         fmt_bytes(f.memory_bytes()),
-        fmt_bytes(s.memory_bytes())
+        fmt_bytes(s.memory_bytes()),
+        fmt_bytes(m.memory_bytes())
     );
-    println!("  — factored and sparse compress along orthogonal axes: clusters vs support.");
+    println!("  — three orthogonal compression axes: clusters, support, Schmidt rank.");
 
     println!();
     println!("== Estimate vs process RSS, in actuality (dense C64) ==");

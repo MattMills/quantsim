@@ -9,11 +9,30 @@ work is "fill in another cell of the matrix":
 | dense state vector       | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | design below |
 | sparse state vector      | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | design below |
 | adaptive (sparse→dense)  | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| matrix product state     | design below | design below | — | open | open | — | open |
+| matrix product state     | ✅ | ✅ | — | open (noted below) | open | — | open |
 
-## Matrix product states (MPS)
+## Matrix product states (MPS) — SHIPPED (core)
 
-The `Backend<S>` trait was shaped with MPS in mind:
+`MpsState` is live: site-tensor chain over a dependency-free one-sided
+Jacobi SVD (`math::jacobi_svd`/`svd_thin`), contiguous gate windows to
+arity 5 with SWAP routing for non-adjacent operands, truncation by
+relative tolerance under a hard bond cap (approximation as a *measured*
+dial — see `tests/mps.rs::truncation_degrades_measurably_never_silently`),
+environment-based measurement and norm, a native conditional sampler
+(`sample_mps`), and bond-dimension instrumentation. Registered as `"mps"`,
+swept by the conformance suite over the full registry. Remaining MPS work:
+
+- canonical-form maintenance (environments are currently recomputed on
+  demand — `O(n·χ³)` per measurement instead of `O(χ³)`);
+- quaternionic MPS (the Jacobi rotations assume commuting scalars;
+  construction over ℍ fails loudly today);
+- smarter routing (current greedy adjacent-swap walk) and two-site
+  variational compression;
+- `load` past 12 qubits (state compilation currently materializes the
+  dense vector).
+
+Original design notes, kept for the record — the `Backend<S>` trait was
+shaped with MPS in mind:
 
 - `apply` maps to one-site (arity 1) and two-site (arity 2, adjacent after
   swap-routing) tensor updates; gates of arity ≥ 3 decompose or fall back to

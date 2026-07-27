@@ -10,10 +10,13 @@ parts are swappable:
   first non-Cayley–Dickson algebra. Planned (see [ROADMAP](ROADMAP.md)):
   truncated p-adics, dual numbers, split-quaternions, Clifford scalars.
 - **State representation** — a [`Backend<S>`](src/backend/mod.rs) trait with
-  three shipped implementations: **dense** state vector (the BQP reference),
-  **sparse** hash-map state, and an **adaptive** backend that starts sparse
-  and promotes itself to dense at ¼ density. Matrix product states are
-  designed-for but not yet implemented.
+  five shipped implementations: **dense** state vector (the BQP reference),
+  **sparse** hash-map state, an **adaptive** backend that promotes sparse →
+  dense at ¼ density, the **factored** backend (product of dense factors
+  over qubit regions — memory tracks entanglement *clusters*), and **MPS**
+  (matrix product states on a dependency-free Jacobi SVD — memory tracks
+  Schmidt rank / *bond dimension*). Three orthogonal compression axes —
+  support, clusters, bonds — all conformance-verified against dense.
 - **Gates** — a registry (`name → GateDef`) with a 32-gate standard library
   (plus aliases), defined once over ℂ and projected into each algebra;
   over ℝ you automatically get the real subset. Research gates are a
@@ -299,6 +302,7 @@ src/
   backend/       Backend<S> trait + dense / sparse / adaptive / factored,
                  BackendRegistry<S>, pauli_expectation
   schedule.rs    evented scheduler: simultaneous loops, events, feedback
+                 (backends also: factored, interference, device, mps)
   conformance.rs registry-wide backend verification (research safety net)
   harness.rs     workload benchmarking with in-run correctness checks
   discovery.rs   point stabilizers, signal threads, transparency reports

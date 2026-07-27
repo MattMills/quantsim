@@ -22,6 +22,7 @@ mod dense;
 mod device;
 mod factored;
 mod interference;
+mod mps;
 mod sparse;
 
 pub use adaptive::AdaptiveState;
@@ -29,6 +30,7 @@ pub use dense::{DenseState, DENSE_MAX_QUBITS};
 pub use device::{ArityPolicy, DeviceState, DurationModel, PhysicalOp, Topology};
 pub use factored::{FactoredState, FACTORED_MAX_QUBITS, FACTOR_MAX_QUBITS};
 pub use interference::{InterferenceRecord, InterferenceState};
+pub use mps::{MpsConfig, MpsState, MPS_LOAD_MAX_QUBITS, MPS_MAX_QUBITS, MPS_MAX_WINDOW};
 pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
 
 use std::collections::HashMap;
@@ -304,8 +306,9 @@ impl<S: Scalar> BackendRegistry<S> {
         }
     }
 
-    /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"` and
-    /// `"factored"` backends.
+    /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"`,
+    /// `"factored"` and `"mps"` backends. (`"mps"` requires a commutative
+    /// division algebra and reports an error at creation elsewhere.)
     pub fn standard() -> Self {
         let mut reg = Self::new();
         reg.register("dense", |n| Ok(Box::new(DenseState::<S>::new(n)?)))
@@ -315,6 +318,8 @@ impl<S: Scalar> BackendRegistry<S> {
         reg.register("adaptive", |n| Ok(Box::new(AdaptiveState::<S>::new(n)?)))
             .expect("fresh registry");
         reg.register("factored", |n| Ok(Box::new(FactoredState::<S>::new(n)?)))
+            .expect("fresh registry");
+        reg.register("mps", |n| Ok(Box::new(MpsState::<S>::new(n)?)))
             .expect("fresh registry");
         reg
     }

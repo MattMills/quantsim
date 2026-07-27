@@ -65,7 +65,7 @@ fn shipped_backends_conform_over_the_full_standard_registry() {
         orderings: 2,
         ..ConformanceConfig::default()
     };
-    for backend in ["sparse", "adaptive", "factored"] {
+    for backend in ["sparse", "adaptive", "factored", "mps"] {
         let report = verify_backend(&sim, backend, &cfg).unwrap();
         assert!(report.passed(), "{report}");
         assert_eq!(report.gate_checks.len(), sim.registry().len());

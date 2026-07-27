@@ -231,7 +231,7 @@ fn research_backend_via_registry() {
         .unwrap();
     assert_eq!(
         sim.backends().names(),
-        vec!["adaptive", "counting", "dense", "factored", "sparse"]
+        vec!["adaptive", "counting", "dense", "factored", "mps", "sparse"]
     );
 
     let c = library::ghz(4);

@@ -88,7 +88,7 @@ pub mod prelude {
     pub use crate::backend::{
         max_amplitude_deviation, pauli_expectation, AdaptiveState, ArityPolicy, Backend,
         BackendRegistry, DenseState, DeviceState, DurationModel, FactoredState, InterferenceRecord,
-        InterferenceState, PhysicalOp, SparseState, Topology,
+        InterferenceState, MpsConfig, MpsState, PhysicalOp, SparseState, Topology,
     };
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
     pub use crate::conformance::{
