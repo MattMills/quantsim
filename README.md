@@ -100,6 +100,26 @@ parts are swappable:
   inner: GHZ across all 54 Sycamore sites), a full physical op log, and
   `elapsed`/`serial_time` as the measured parallelism ratio — while
   answering in logical indices identical to dense.
+- **The boundary atlas** ([`bounds`](src/bounds.rs)) — every
+  representation read as an *assumption* about structure, with its cost
+  measured to be exponential exactly in its own resource (sparse ↦
+  support, factored ↦ cluster size, mps ↦ cut rank, mera ↦ tree rank,
+  clifford-framed ↦ T-count, Ball ↦ certified precision) and
+  sub-exponential otherwise. `resource_profile` runs one circuit on
+  every representation under the guard (walls report as measured
+  refusals or deadline aborts, never skips); `advantage_scan` sweeps a
+  circuit family, classifies every axis's measured growth law
+  (`classify_law`: constant / polynomial / exponential from bytes
+  alone), and returns the verdict — **classical** the moment any
+  assumption holds, **advantage candidate** only when every measured
+  axis grows exponentially at once, exactly. The scan rediscovers the
+  known results from measurement (GHZ via support; basis-input QFT via
+  bond; rainbow via clustering at measured `√2^n` sparse cost;
+  Clifford circuits via the frame at `size^2` — Gottesman–Knill; random
+  universal circuits escape everything at bases 1.7–2.0) and doubles as
+  the *discovery instrument*: a new registered representation whose
+  axis stays flat — while exact — on the candidate family is a found
+  sub-exponential simulation.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -307,7 +327,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 273 tests (43 unit + 226 across twenty-four
+`cargo test` runs 278 tests (43 unit + 231 across twenty-five
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -369,6 +389,19 @@ entirely trivial accessors and defensive guards:
   armed time budgets abort a single dense gate mid-sweep, the mera SVD
   path and scheduled runs — promptly, with measured elapsed times — and
   the identical runs complete once the budget lifts.
+- **bounds_atlas** — the boundary atlas: the law classifier calibrated
+  on synthetic ground truths; the known fragments rediscovered from
+  measured bytes (GHZ classical via constant sparse support while
+  factored honestly pays `1.98^n`; QFT classical via bond; rainbow via
+  clustering with sparse at measured base `1.40 ≈ √2` and the fixed
+  tree at `1.96^n`; Clifford brickwork via the frame at `size^2`);
+  random universal circuits escaping every assumption at once (bases
+  1.7–2.0, all probes exact) → candidate; each representation
+  exponential exactly in its own resource (support, cluster, per
+  double-layer bond, `2^t` T-scatter saturated exactly, `√2`-per-H
+  certified radius); and the walls as measured refusals (dense OOM
+  with requested/available bytes, the 63-qubit indexing wall, profile
+  axes reporting walls instead of failing).
 - **algebraic_qudits** — the hierarchical register: qudit coordinates
   roundtrip with the documented bit order; the dual-algebra operator
   space measured per doubling level (full rank pinned at ℍ/𝕆/𝕊, the
@@ -550,6 +583,7 @@ src/
   scalar/        Scalar trait; f64, C64, CD<T> (ℍ/𝕆/𝕊), split-complex,
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
+  bounds.rs      boundary atlas: measured growth laws, advantage scan
   causal.rs      backward cones, causal diamonds, dual-time resolution
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
@@ -582,7 +616,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  device_reproduction (real geometries × latency maps),
                  causal_geometry (causal fabrics, diamonds, dual time),
                  algebraic_qudits (hierarchical register, dual-algebra),
-                 qudit_scaling (measured scaling laws + honest costs)
+                 qudit_scaling (measured scaling laws + honest costs),
+                 advantage_bounds (the boundary atlas + advantage scan)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

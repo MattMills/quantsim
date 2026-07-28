@@ -228,6 +228,26 @@ impl Drop for DeadlineScope {
     }
 }
 
+/// Run `f` under a wall-clock budget armed directly on THIS thread —
+/// independent of (and composing with) the process-wide
+/// [`set_time_budget`]: the outermost scope owns the deadline, nothing
+/// global is touched, and concurrent threads are unaffected. The
+/// deadline clears when the scope drops, unwinding included.
+pub fn with_time_budget<T>(budget: Duration, f: impl FnOnce() -> T) -> T {
+    let _scope = DeadlineScope {
+        armed_here: DEADLINE.with(|d| {
+            if d.get().is_some() {
+                false
+            } else {
+                let now = Instant::now();
+                d.set(Some((now, now + budget)));
+                true
+            }
+        }),
+    };
+    f()
+}
+
 /// Check the active deadline, failing with the measured elapsed time
 /// once it has passed. A no-op (one thread-local read) when no scope is
 /// armed. Long kernels call this at coarse intervals inside their

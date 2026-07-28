@@ -289,6 +289,30 @@ Remaining rungs:
 - mixed direct sums of unequal blocks (ℍ⊕𝕆 has 6 complex components —
   a non-power-of-two qudit; the register currently requires 2^k).
 
+## The boundary atlas — SHIPPED (core)
+
+`bounds::advantage_scan` makes the crate's central question operational:
+each representation is an assumption about structure, measured to be
+exponential exactly in its own resource, and a circuit family is an
+advantage candidate precisely when every measured axis grows
+exponentially at once (random universal circuits: bases 1.7–2.0, all
+probes exact). The scan rediscovers GHZ/QFT/rainbow/Clifford as
+classical from bytes alone and is the standing detector for a
+sub-exponential simulation: any new registered representation that
+keeps a flat, exact axis on the candidate family has found one. Next
+rungs:
+
+- **time-cost axes**: the scan classifies memory; wall-clock laws per
+  axis (with the guard's deadline as the measuring stick) would catch
+  representations that are memory-cheap but time-exponential.
+- **richer candidate families**: IQP-style commuting circuits,
+  shallow-depth 2D brickwork (where cluster/bond assumptions fail
+  slowly), and peaked-output sampling families, each swept for the
+  axis that *almost* holds.
+- **profile-guided backend selection**: `select_backend` chooses by
+  benchmark; the profile's measured laws could choose by extrapolated
+  scaling instead.
+
 ## Operational-model extensions
 
 - **Device realism — geometry + latency maps SHIPPED**: `Topology` now

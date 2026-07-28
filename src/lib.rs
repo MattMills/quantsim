@@ -63,6 +63,7 @@
 #![warn(missing_docs)]
 
 pub mod backend;
+pub mod bounds;
 pub mod causal;
 pub mod circuit;
 pub mod conformance;
@@ -99,6 +100,10 @@ pub mod prelude {
         DurationModel, FactoredState, FrameStats, FramedState, InterferenceRecord,
         InterferenceState, LatencyMap, MeraConfig, MeraState, MpsConfig, MpsState, PauliString,
         PhysicalOp, SparseState, Topology,
+    };
+    pub use crate::bounds::{
+        advantage_scan, classify_law, resource_profile, AxisProbe, AxisScan, FamilyScan, Law,
+        ResourceProfile, Verdict,
     };
     pub use crate::causal::{
         backward_cone, causal_diamond, dual_time_amplitude, DiamondReport, DualTimeResolution,
