@@ -92,7 +92,28 @@ fn child(axis: &str, n: usize, raw: bool) {
 }
 
 fn attempt(axis: &str, n: usize) -> Result<usize> {
-    let sim = Simulator::<C64>::new();
+    let mut sim = Simulator::<C64>::new();
+    sim.backends_mut().register("compound-binary", |n| {
+        Ok(Box::new(CompoundBackend::new(n)?))
+    })?;
+    sim.backends_mut().register("e8-rep", |n| {
+        Ok(Box::new(quantsim::e8::rep::E8RepState::new(n)?))
+    })?;
+    sim.backends_mut().register("e8-constellation", |n| {
+        Ok(Box::new(
+            quantsim::e8::constellation::E8ConstellationState::new(n)?,
+        ))
+    })?;
+    sim.backends_mut().register("algebraic-h", |n| {
+        let k = 1usize.min(n.saturating_sub(1));
+        Ok(Box::new(
+            quantsim::qudit::AlgebraicRegister::<Quaternion>::new(
+                n - k,
+                k,
+                Box::new(SparseState::new(n - k)?),
+            )?,
+        ))
+    })?;
     match axis {
         // Allocate 2^n dense amplitudes and touch them all with one gate.
         "dense" => {
@@ -141,6 +162,58 @@ fn attempt(axis: &str, n: usize) -> Result<usize> {
         // GHZ chain through the mera hierarchy: the SVD runtime axis.
         "mera-ghz" => {
             let state = sim.run_on("mera", &library::ghz(n))?;
+            Ok(state.memory_bytes())
+        }
+        // Fill the hierarchical register's sparse site sector to 2^(n−1).
+        "algebraic-fill" => {
+            let mut c: Circuit = Circuit::new(n);
+            for q in 0..n {
+                c.h(q);
+            }
+            let state = sim.run_on("algebraic-h", &c)?;
+            Ok(state.memory_bytes())
+        }
+        // H-layer then CX chain: every horizontal volume merges into one,
+        // filling it to 2^n entries — the merge/growth walls.
+        "compound-fill" => {
+            let mut c: Circuit = Circuit::new(n);
+            for q in 0..n {
+                c.h(q);
+            }
+            for q in 0..n - 1 {
+                c.cx(q, q + 1);
+            }
+            let state = sim.run_on("compound-binary", &c)?;
+            Ok(state.memory_bytes())
+        }
+        // GHZ on the compound register: two entries at any width — the
+        // wall is the packed-index ceiling, not memory.
+        "compound-ghz" => {
+            let state = sim.run_on("compound-binary", &library::ghz(n))?;
+            Ok(state.memory_bytes())
+        }
+        // The single-copy E8 representation: the wall is structural
+        // (the 256 sector points ARE the 8-qubit basis).
+        "e8-rep" => {
+            let mut c: Circuit = Circuit::new(n);
+            c.h(0);
+            let state = sim.run_on("e8-rep", &c)?;
+            Ok(state.memory_bytes())
+        }
+        // Fill the constellation's lattice-point map to 2^n keys
+        // (80-byte points: the memory wall arrives before sparse's).
+        "constellation-fill" => {
+            let mut c: Circuit = Circuit::new(n);
+            for q in 0..n {
+                c.h(q);
+            }
+            let state = sim.run_on("e8-constellation", &c)?;
+            Ok(state.memory_bytes())
+        }
+        // GHZ on the constellation: two lattice points at any width —
+        // the wall is the u64 basis-index ceiling.
+        "constellation-ghz" => {
+            let state = sim.run_on("e8-constellation", &library::ghz(n))?;
             Ok(state.memory_bytes())
         }
         other => Err(Error::InvalidState(format!("unknown axis '{other}'"))),
@@ -296,7 +369,7 @@ fn main() {
         watchdog.as_secs()
     );
 
-    let axes: [(&str, Vec<usize>, &str); 6] = [
+    let axes: Vec<(&str, Vec<usize>, &str)> = vec![
         (
             "dense",
             vec![26, 28, 29, 30, 31, 32],
@@ -326,6 +399,36 @@ fn main() {
             "dense-qft",
             vec![18, 20, 22, 24],
             "n² gates over 2^n amplitudes: the runtime wall",
+        ),
+        (
+            "algebraic-fill",
+            vec![22, 24, 25, 26, 27],
+            "hierarchical register: sparse site sector fills to 2^(n−1)",
+        ),
+        (
+            "compound-fill",
+            vec![22, 24, 25, 26, 27],
+            "horizontal volumes merged into one 2^n-entry volume",
+        ),
+        (
+            "constellation-fill",
+            vec![20, 22, 24, 25, 26],
+            "2^n lattice-point keys (80 B each): the E8 tower's memory wall",
+        ),
+        (
+            "compound-ghz",
+            vec![62, 63, 64],
+            "two entries at any width: the packed-index ceiling",
+        ),
+        (
+            "constellation-ghz",
+            vec![62, 63, 64],
+            "two lattice points at any width: the u64 index ceiling",
+        ),
+        (
+            "e8-rep",
+            vec![7, 8, 9],
+            "single-copy E8×E8: the structural 256-point ceiling",
         ),
     ];
 

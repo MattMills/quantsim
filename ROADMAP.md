@@ -529,11 +529,17 @@ Next rungs:
 - **Resource guard — SHIPPED** (`guard`): memory admission against
   *measured* capacity (cgroup/`MemAvailable` at allocation time,
   fallible reservation as backstop) for every large allocation in every
-  backend; wall-clock budgets checkpointed inside the long kernels;
-  capacity-aware adaptive promotion; the former width-constant caps
-  demoted to structural index bounds. Verified against reality by
+  backend — the mixed-arity compound register (merge AND per-gate
+  growth) and the E8 constellation's lattice-key growth included, so
+  the new representations refuse over-scale work with the same measured
+  numbers as sparse; wall-clock budgets checkpointed inside the long
+  kernels; capacity-aware adaptive promotion; the former width-constant
+  caps demoted to structural index bounds. Verified against reality by
   `examples/capacity_probe.rs` (subprocess-isolated walks to real OOM
-  kills and deadline aborts). Next rungs: cooperative *degradation*
+  kills and deadline aborts, now across all twelve axes: the
+  algebraic/compound/constellation fills and the structural ceilings —
+  compound/constellation at 63, e8-rep at its native 8 — beside the
+  original dense/exact/sparse/factored/mera walls). Next rungs: cooperative *degradation*
   instead of abort (a backend that receives OutOfMemory could spill —
   factored → mps handoff), per-scope (non-global) budgets once a
   session/context type exists, allocation accounting of the crate's own

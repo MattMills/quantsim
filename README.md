@@ -327,7 +327,11 @@ parts are swappable:
   against reality: subprocess-isolated width walks per axis until the
   actual wall — guard refusals with measured numbers, deadline aborts,
   and (with admission disabled) real OOM kills observed by signal with
-  peak RSS recorded.
+  peak RSS recorded — across every representation, the new ones
+  included: algebraic/compound/constellation memory fills next to
+  dense/sparse/exact/factored/mera, plus the structural ceilings
+  (compound and constellation at the 63-qubit packed-index wall,
+  e8-rep at its native 8).
 
 BQP support: the standard registry contains a universal set (`h`, `t`, `cx`,
 …), so any BQP circuit family runs exactly on the dense backend — at the
@@ -424,7 +428,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 317 tests (43 unit + 270 across thirty-one
+`cargo test` runs 319 tests (43 unit + 272 across thirty-one
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -483,9 +487,14 @@ entirely trivial accessors and defensive guards:
   auto-measured and under explicit limits); adaptive stays sparse when
   dense is inadmissible and promotes when the limit lifts; sparse
   growth, mera blocks and factored merges all admitted not presumed;
-  armed time budgets abort a single dense gate mid-sweep, the mera SVD
-  path and scheduled runs — promptly, with measured elapsed times — and
-  the identical runs complete once the budget lifts.
+  compound gate/merge growth and constellation lattice-key growth
+  refused under a 1 MiB budget with the representation named — while
+  the same budget admits what stays small (an H-layer across
+  independent horizontal volumes at 2n entries, a 20-qubit GHZ as two
+  lattice points); armed time budgets abort a single dense gate
+  mid-sweep, the mera SVD path and scheduled runs — promptly, with
+  measured elapsed times — and the identical runs complete once the
+  budget lifts.
 - **bounds_atlas** — the boundary atlas: the law classifier calibrated
   on synthetic ground truths; the known fragments rediscovered from
   measured bytes (GHZ classical via constant sparse support while

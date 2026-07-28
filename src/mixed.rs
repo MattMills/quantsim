@@ -385,6 +385,17 @@ impl CompoundRegister {
             }
         }
         let v = self.site_volume[sites[0]];
+        // Worst case the gate scatters every entry into all `dim`
+        // sub-index slots — admit that growth against measured memory
+        // before building anything, exactly like the sparse backend.
+        guard::admit_growth(
+            self.volumes[v]
+                .amps
+                .len()
+                .saturating_mul(dim)
+                .saturating_mul(24),
+            "compound gate growth",
+        )?;
         // Per-site (volume stride, arity), in gate order.
         let info: Vec<(u64, u64)> = sites
             .iter()

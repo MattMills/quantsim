@@ -268,3 +268,78 @@ fn a_timed_out_state_is_reported_torn() {
     bound.run(&mut fresh).unwrap();
     assert_close(fresh.probability(0), 0.5, 1e-12);
 }
+
+#[test]
+fn compound_growth_is_admitted_against_the_budget() {
+    let _lock = lock();
+    // A 1 MiB budget: the H-layer + CX-chain fill that would draw all
+    // horizontal volumes into one 2^20-entry volume is refused with
+    // measured numbers — by the merge admission or the per-gate growth
+    // admission, whichever wall arrives first.
+    guard::set_memory_limit(Some(1 << 20));
+    let n = 20;
+    let mut c: Circuit = Circuit::new(n);
+    for q in 0..n {
+        c.h(q);
+    }
+    for q in 0..n - 1 {
+        c.cx(q, q + 1);
+    }
+    let mut sim: Simulator = Simulator::new();
+    sim.backends_mut()
+        .register("compound-binary", |n| {
+            Ok(Box::new(CompoundBackend::new(n)?))
+        })
+        .unwrap();
+    match sim.run_on("compound-binary", &c).err() {
+        Some(Error::OutOfMemory { what, .. }) => {
+            assert!(what.contains("compound"), "{what}");
+        }
+        other => panic!("expected compound growth refusal, got {other:?}"),
+    }
+    // Independent volumes alone never trip the wall: the H-layer with
+    // no interaction stays at 2 entries per site under the same budget.
+    let mut layer: Circuit = Circuit::new(n);
+    for q in 0..n {
+        layer.h(q);
+    }
+    let state = sim.run_on("compound-binary", &layer).unwrap();
+    assert_eq!(state.nonzero_count(), 1 << n, "product support");
+    let compound = state.as_any().downcast_ref::<CompoundBackend>().unwrap();
+    assert_eq!(
+        compound.inner().stored_entries(),
+        2 * n,
+        "2n stored entries"
+    );
+}
+
+#[test]
+fn constellation_growth_is_admitted_against_the_budget() {
+    let _lock = lock();
+    // The same 1 MiB budget refuses the 2^20 lattice-point fill before
+    // any oversized map is built, with the representation named.
+    guard::set_memory_limit(Some(1 << 20));
+    let n = 20;
+    let mut c: Circuit = Circuit::new(n);
+    for q in 0..n {
+        c.h(q);
+    }
+    let mut sim: Simulator = Simulator::new();
+    sim.backends_mut()
+        .register("e8-constellation", |n| {
+            Ok(Box::new(
+                quantsim::e8::constellation::E8ConstellationState::new(n)?,
+            ))
+        })
+        .unwrap();
+    match sim.run_on("e8-constellation", &c).err() {
+        Some(Error::OutOfMemory { what, .. }) => {
+            assert!(what.contains("e8-constellation"), "{what}");
+        }
+        other => panic!("expected constellation growth refusal, got {other:?}"),
+    }
+    // Under the same budget the concentrated state sails through: a
+    // 20-qubit GHZ is two lattice points.
+    let state = sim.run_on("e8-constellation", &library::ghz(n)).unwrap();
+    assert_eq!(state.nonzero_count(), 2);
+}

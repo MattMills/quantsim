@@ -1042,6 +1042,15 @@ pub mod constellation {
         ) -> crate::error::Result<()> {
             crate::backend::validate_apply(self.num_qubits, matrix, qubits)?;
             let d = 1usize << qubits.len();
+            // Worst case the gate scatters every stored point into all
+            // `d` sub-index slots — admit that growth against measured
+            // memory before building anything (lattice keys are 64
+            // bytes, so the wall arrives earlier than sparse's).
+            let entry = (std::mem::size_of::<Point>() + std::mem::size_of::<C64>() + 1) * 8 / 7;
+            crate::guard::admit_growth(
+                self.amps.len().saturating_mul(d).saturating_mul(entry),
+                "e8-constellation growth",
+            )?;
             let mask: u64 = qubits.iter().map(|&q| 1u64 << q).sum();
             let scatter = crate::backend::scatter_table(qubits);
             let mut grouped: HashMap<u64, Vec<C64>> = HashMap::new();
