@@ -148,6 +148,30 @@ parts are swappable:
   ceiling — a cliff, not a slope — and `spoof_decay` shows a fixed-χ
   budget decaying to noise as the family grows: the sampling task
   inherits the state bounds, as a reproducible measured artifact.
+- **Mixed-arity compound qudits** ([`mixed`](src/mixed.rs) +
+  [`e8`](src/e8.rs)) — the representation/interaction/flow separation
+  made explicit for *non-binary* registers. Sites of any arity
+  (binary/ternary/quaternary/quintary…) are held as **horizontal
+  volumes** — independent until an interaction genuinely correlates
+  them (lazy, guard-admitted merges; a refused merge changes nothing).
+  Generalized gates with tested relations (`fourier_d` with
+  `F X F† = Z`, the Weyl pair `Z X = ωXZ`, the any-arity entangler
+  `cshift` — a binary–quintary Bell pair samples exactly two
+  outcomes), conformance against the qubit reference where dims
+  coincide (all-binary replays exactly; one quaternary site *is* the
+  2-qubit QFT). The interaction fabric is measured ([`fabric`]): bond
+  density, and the structural fact that **swap exists only between
+  equal arities** — mixed fabrics decompose into swap classes with
+  cross-arity bonds forced native. Flow is recorded, not inferred:
+  merge timelines and order-respecting interaction cones. The E8
+  anchor is *constructed and verified programmatically* (240 roots =
+  112 + 128, norms, closure): the su(2)/su(3)/su(4)/su(5) chains of
+  the four arities are found by search, the `su(5)×su(5)` orthogonal
+  pair is exhibited, and the rank obstruction is **measured** — after
+  A1⊥A2⊥A3 the orthogonal-A4 search exhausts (rank 10 > 8), so the
+  four frames *must* share directions: the canonical embedding couples
+  exactly the quaternary–quintary pair (doubled Gram overlap 44), and
+  the compound register runs over precisely that fabric.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -355,7 +379,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 290 tests (43 unit + 243 across twenty-six
+`cargo test` runs 299 tests (43 unit + 252 across twenty-seven
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -466,6 +490,19 @@ entirely trivial accessors and defensive guards:
   parts; site-sector structure surviving (support counts sites); and
   the workload harness pricing the hierarchical shapes in-run against
   dense.
+- **mixed_compound** — mixed-arity compound qudits: the generalized
+  gate relations (`X_d^d = Z_d^d = 1`, Weyl commutation,
+  `F X F† = Z`, `F₂ = H` exactly); conformance to the qubit reference
+  (all-binary bitwise-exact, a quaternary site ≡ the 2-qubit QFT);
+  horizontal volumes correlating only on interaction with the event
+  recorded; swap well-formed only between equal arities (the mis-sized
+  cross-arity swap is a dimension error) and the fabric's swap-class
+  decomposition; E8 constructed/verified with the orthogonal
+  `su(5)×su(5)` pair exhibited and the rank obstruction measured by
+  exhausted search; order-respecting interaction cones; guard-admitted
+  merges (a 10¹⁰-entry merge refuses with measured bytes and leaves
+  the register intact); sampling matching stated probabilities; and
+  arity-priced scaling (5³ = 125 entries vs 2·3·4 = 24).
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally
@@ -631,6 +668,8 @@ src/
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
   bounds.rs      boundary atlas: measured growth laws, advantage scan
   sampling.rs    sampling-task hardness: XEB, spoof curves, exact refs
+  mixed.rs       mixed-arity compound qudits: volumes, fabric, flow
+  e8.rs          E8 roots built+verified; arity chains, rank obstruction
   causal.rs      backward cones, causal diamonds, dual-time resolution
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
@@ -666,7 +705,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  algebraic_qudits (hierarchical register, dual-algebra),
                  qudit_scaling (measured scaling laws + honest costs),
                  advantage_bounds (the boundary atlas + advantage scan),
-                 sampling_hardness (XEB, spoofing economics, exact refs)
+                 sampling_hardness (XEB, spoofing economics, exact refs),
+                 e8_compound (mixed-arity qudits over the E8 fabric)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

@@ -362,6 +362,38 @@ Next rungs:
   classified by the same law machinery as state costs (per-shot time
   vs width per family).
 
+## Mixed-arity compound qudits — SHIPPED (core)
+
+`mixed::CompoundRegister` + `e8`: the representation/interaction/flow
+separation for non-binary registers. Sites of any arity held as
+horizontal volumes (independent until interaction, guard-admitted
+merges), generalized gates with tested relations, conformance to the
+qubit reference where dims coincide, the fabric's measured swap-class
+decomposition (swap exists only between equal arities — cross-arity
+bonds are forced native), and order-respecting interaction cones. The
+E8 anchor is constructed and verified programmatically: 240 roots, the
+su(2)…su(5) arity chains found by search, `su(5)×su(5)` exhibited
+orthogonal, and the rank obstruction MEASURED (after A1⊥A2⊥A3 the
+orthogonal-A4 search exhausts; 1+2+3+4 = 10 > 8) — so the four arity
+frames must share directions, and the canonical embedding's measured
+Gram overlap (quaternary–quintary, 44) becomes the compound qudit's
+coupling fabric. Next rungs:
+
+- **auto-split on disentanglement**: volumes currently merge and stay
+  merged; detecting product structure (Schmidt-1 across a site) would
+  restore horizontality after uncomputation, like factored's split.
+- **mixed-arity circuits/registry**: a `Circuit`-level description with
+  named qudit gates and bind-time validation, so the conformance and
+  harness machinery sweep mixed registers the way they sweep qubit
+  backends.
+- **richer E8 embeddings**: search for minimal-total-overlap
+  placements of all four chains (the canonical one is greedy), and
+  weight the compound fabric by the Gram magnitudes rather than a
+  boolean coupling.
+- **arity-mixed device model**: `Topology`/latency over mixed sites
+  with the swap-class constraint enforced by the router (equal-dim
+  corridors, native cross-arity bonds).
+
 ## Operational-model extensions
 
 - **Device realism — geometry + latency maps SHIPPED**: `Topology` now
