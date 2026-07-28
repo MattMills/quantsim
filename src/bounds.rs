@@ -173,9 +173,12 @@ pub struct AxisProbe {
     /// Measured cost in bytes (`None` = the representation hit a wall
     /// — a measured refusal, timeout, or unsupported operation).
     pub cost: Option<usize>,
-    /// Measured wall-clock nanoseconds for the run (best of two, so a
-    /// cold first pass does not masquerade as scaling).
+    /// Measured wall-clock nanoseconds for the run (median of three,
+    /// so a cold first pass does not masquerade as scaling).
     pub nanos: Option<usize>,
+    /// The (min, max) envelope of the timing repetitions — the error
+    /// bar the time law carries.
+    pub nanos_spread: Option<(usize, usize)>,
     /// The structural parameter that drove the cost, for display.
     pub parameter: String,
     /// Whether the run was exact (no truncation, no approximation).
@@ -225,15 +228,21 @@ where
     };
     match run(&make) {
         Ok((state, first)) => {
-            let nanos = match run(&make) {
-                Ok((_, second)) => first.min(second),
-                Err(_) => first,
-            };
+            let mut times = vec![first];
+            for _ in 0..2 {
+                if let Ok((_, t)) = run(&make) {
+                    times.push(t);
+                }
+            }
+            times.sort_unstable();
+            let median = times[times.len() / 2];
+            let spread = (times[0], *times.last().unwrap());
             let (parameter, exact) = param(&state);
             AxisProbe {
                 axis,
                 cost: Some(state.memory_bytes()),
-                nanos: Some(nanos.max(1)),
+                nanos: Some(median.max(1)),
+                nanos_spread: Some((spread.0.max(1), spread.1.max(1))),
                 parameter,
                 exact,
                 note: None,
@@ -243,6 +252,7 @@ where
             axis,
             cost: None,
             nanos: None,
+            nanos_spread: None,
             parameter: "—".into(),
             exact: false,
             note: Some(e.to_string()),
@@ -338,6 +348,42 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
         },
     ));
 
+    // Register SHAPES are axes too: the hierarchical splits (k logical
+    // qubits carried inside each scalar over a sparse site sector)
+    // compete in every scan and selection on the same measured terms.
+    axes.push(probe(
+        "algebraic-h",
+        |n| {
+            let k = 1usize.min(n.saturating_sub(1));
+            crate::qudit::AlgebraicRegister::<crate::scalar::Quaternion>::new(
+                n - k,
+                k,
+                Box::new(SparseState::new(n - k)?),
+            )
+        },
+        circuit,
+        &reg,
+        |s: &crate::qudit::AlgebraicRegister<crate::scalar::Quaternion>| {
+            (format!("site support {}", s.site_support()), true)
+        },
+    ));
+    axes.push(probe(
+        "algebraic-o",
+        |n| {
+            let k = 2usize.min(n.saturating_sub(1));
+            crate::qudit::AlgebraicRegister::<crate::scalar::Octonion>::new(
+                n - k,
+                k,
+                Box::new(SparseState::new(n - k)?),
+            )
+        },
+        circuit,
+        &reg,
+        |s: &crate::qudit::AlgebraicRegister<crate::scalar::Octonion>| {
+            (format!("site support {}", s.site_support()), true)
+        },
+    ));
+
     let destroyed = (|| -> Result<f64> {
         let mut intf = InterferenceState::new(circuit.num_qubits())?;
         circuit.bind(&reg)?.run(&mut intf)?;
@@ -381,11 +427,17 @@ pub struct AxisScan {
     pub nanos: Vec<Option<usize>>,
     /// Classified memory law (`None` when any size walled).
     pub law: Option<Law>,
-    /// Classified time law (`None` when any size walled). A
-    /// representation that is memory-cheap but time-exponential fails
-    /// its assumption here — both laws must stay sub-exponential for
-    /// the axis to certify a family classical.
+    /// Classified time law from the per-size medians (`None` when any
+    /// size walled). A representation that is memory-cheap but
+    /// time-exponential fails its assumption here — both laws must
+    /// stay sub-exponential for the axis to certify a family
+    /// classical.
     pub time_law: Option<Law>,
+    /// The time law's error bar: the laws of the minimum and maximum
+    /// timing envelopes. When both envelopes classify the same way as
+    /// the median the law is variance-robust; when they straddle, the
+    /// classification is jitter-limited and says so.
+    pub time_law_bounds: Option<(Law, Law)>,
     /// Every probe exact.
     pub exact: bool,
 }
@@ -398,6 +450,20 @@ impl AxisScan {
         self.exact
             && self.law.as_ref().is_some_and(Law::is_subexponential)
             && self.time_law.as_ref().is_some_and(Law::is_subexponential)
+    }
+
+    /// Whether the time classification is variance-robust: the minimum
+    /// and maximum timing envelopes classify the same way
+    /// (sub-exponential or not) as the median. A law that flips
+    /// between its envelopes is jitter-limited, not measured.
+    pub fn time_law_is_variance_robust(&self) -> bool {
+        match (&self.time_law, &self.time_law_bounds) {
+            (Some(med), Some((lo, hi))) => {
+                med.is_subexponential() == lo.is_subexponential()
+                    && med.is_subexponential() == hi.is_subexponential()
+            }
+            _ => false,
+        }
     }
 }
 
@@ -444,12 +510,25 @@ pub fn advantage_scan(
         };
         let law = fit(&costs, 1.25);
         let time_law = fit(&nanos, 1.35);
+        let spreads: Vec<Option<(usize, usize)>> =
+            profiles.iter().map(|p| p.axes[a].nanos_spread).collect();
+        let time_law_bounds = if spreads.iter().all(|s| s.is_some()) {
+            let lows: Vec<Option<usize>> = spreads.iter().map(|s| Some(s.unwrap().0)).collect();
+            let highs: Vec<Option<usize>> = spreads.iter().map(|s| Some(s.unwrap().1)).collect();
+            match (fit(&lows, 1.35), fit(&highs, 1.35)) {
+                (Some(lo), Some(hi)) => Some((lo, hi)),
+                _ => None,
+            }
+        } else {
+            None
+        };
         axes.push(AxisScan {
             axis: profiles[0].axes[a].axis,
             costs,
             nanos,
             law,
             time_law,
+            time_law_bounds,
             exact,
         });
     }

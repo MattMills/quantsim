@@ -326,17 +326,41 @@ Second wave — SHIPPED:
   explicit when no assumption holds (the candidate family's winner is
   flagged least-bad, not good).
 
+Third wave — SHIPPED:
+
+- **sampling-task hardness** (`sampling`): linear XEB against the
+  dense or exact D[ω] reference (agreement 1e-15 on shared samples),
+  normalized by the measured ceiling `2^n Σp² − 1` (uniform outputs
+  have no signal and score `None`, never a fake fidelity). Verdicts
+  carry to the task: GHZ sampled at the ceiling from 125 B,
+  `clifford_sample` doing per-shot tableau measurement (width 20, 256
+  shots, ~23 ms). Spoofing economics measured: truncated-MPS caps
+  collapse below 0.3 normalized with only full rank scoring — a cliff,
+  not a slope — and a fixed-χ budget decays to noise as the family
+  grows. The sampling task inherits the state bounds, reproducibly.
+- **variance-aware time laws**: three timing repetitions per probe,
+  median-classified with min/max envelope laws
+  (`AxisScan::time_law_bounds`, `time_law_is_variance_robust`) — a
+  time classification whose envelopes disagree is jitter-limited and
+  says so.
+- **register shapes as scan axes**: the hierarchical splits
+  (`algebraic-h`, `algebraic-o` over sparse sites) join every profile,
+  scan and selection — constant on GHZ, escaping with everything else
+  on the candidate family, and measurably beating plain sparse on
+  mixed-sector states (axis against axis).
+
 Next rungs:
 
-- **sampling-task hardness**: the scan measures state representation;
-  a sampling-fidelity harness (cross-entropy-style scores against the
-  exact reference) would measure the task the advantage claims are
-  actually about.
-- **variance-aware time laws**: repetition budgets per probe so time
-  classifications carry error bars instead of a widened threshold.
-- **scan-driven register shapes**: feed the hierarchical/qudit splits
-  through the scan as first-class axes (site backend × algebra split
-  as a family parameter).
+- **spoof-cost frontier**: for each family size, the *cheapest* χ that
+  reaches a target normalized XEB — the measured classical cost of the
+  task at fixed fidelity, the quantity advantage experiments actually
+  argue about.
+- **noisy-sampler models**: depolarizing/readout noise channels on the
+  sampler side, so measured XEB decay can be compared against the
+  noise budget the way hardware claims are.
+- **per-shot cost laws**: `clifford_sample` and `sample_mps` costs
+  classified by the same law machinery as state costs (per-shot time
+  vs width per family).
 
 ## Operational-model extensions
 

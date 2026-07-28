@@ -468,6 +468,82 @@ fn selection_extrapolates_measured_laws_and_verifies() {
 }
 
 #[test]
+fn time_laws_carry_error_bars_and_shapes_join_the_scan() {
+    // Variance-aware timing: each probe's law comes with min/max
+    // envelope laws, and a classification is variance-robust when the
+    // envelopes agree with the median. The solid axes must be robust.
+    let ghz = advantage_scan("ghz", library::ghz, &[8, 10, 12, 14]);
+    let sparse = axis(&ghz, "sparse");
+    assert!(sparse.time_law_bounds.is_some());
+    assert!(
+        sparse.time_law_is_variance_robust(),
+        "flat sparse timing must be robust across its envelope: {:?}",
+        sparse.time_law_bounds
+    );
+    let dense = axis(&ghz, "dense");
+    assert!(
+        dense.time_law_is_variance_robust(),
+        "exponential dense timing must be robust too: {:?}",
+        dense.time_law_bounds
+    );
+
+    // Register SHAPES are first-class axes now: the hierarchical
+    // splits appear in every profile with their own measured laws —
+    // constant on GHZ (site support 2), exponential on the candidate
+    // family, exact throughout.
+    for name in ["algebraic-h", "algebraic-o"] {
+        let a = axis(&ghz, name);
+        assert!(a.exact);
+        assert_eq!(a.law, Some(Law::Constant), "{name} on ghz");
+    }
+    let random = advantage_scan(
+        "random",
+        |n| library::random_circuit(n, 3 * n * n, 7),
+        &[6, 8, 10, 12],
+    );
+    assert_eq!(random.verdict, Verdict::Candidate);
+    for name in ["algebraic-h", "algebraic-o"] {
+        let base = base_of(axis(&random, name).law.as_ref().unwrap());
+        assert!(base > 1.4, "{name} escapes with everything else: {base}");
+    }
+
+    // And the scan MEASURES when a shape beats its flat counterpart:
+    // a family whose algebra sector is dense while the site sector
+    // stays sparse stores fewer, fatter entries — the algebraic axis
+    // is cheaper than plain sparse, axis against axis.
+    let mixed = |n: usize| -> Circuit {
+        let mut c: Circuit = Circuit::new(n);
+        for q in 0..5 {
+            c.h(q);
+        }
+        for q in n - 2..n {
+            c.h(q);
+        }
+        c.cx(0, n - 1).cx(1, n - 2);
+        c
+    };
+    let profile = resource_profile(&mixed(14));
+    let sparse_cost = profile
+        .axes
+        .iter()
+        .find(|a| a.axis == "sparse")
+        .unwrap()
+        .cost
+        .unwrap();
+    let shaped_cost = profile
+        .axes
+        .iter()
+        .find(|a| a.axis == "algebraic-o")
+        .unwrap()
+        .cost
+        .unwrap();
+    assert!(
+        shaped_cost < sparse_cost,
+        "the shape wins on mixed-sector states: {shaped_cost} vs {sparse_cost}"
+    );
+}
+
+#[test]
 fn the_walls_are_measured_refusals() {
     // The dense wall: 2^34 amplitudes is 256 GiB — the guard refuses
     // with the measured request and the measured availability, not a

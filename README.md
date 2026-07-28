@@ -132,6 +132,22 @@ parts are swappable:
   size (holdout-verified: GHZ at width 40 predicted 125 B, measured
   125 B), and says plainly when no assumption holds and the choice is
   only least-bad.
+- **Sampling-task hardness** ([`sampling`](src/sampling.rs)) — the
+  advantage claims are about *sampling*, and the harness measures that
+  task directly: linear XEB scored against the dense reference or the
+  exact D[ω] ring (no float in the reference path — same samples agree
+  to 1e-15), normalized by the *measured* ceiling `2^n Σp² − 1` (GHZ's
+  is `2^{n−1}−1`; a uniform output has ceiling exactly 0 and the score
+  is honestly `None`). The atlas verdicts carry over to the task:
+  certified-easy families sample at certified cost (GHZ at the ceiling
+  from 125 B; `clifford_sample` measures per-shot tableau sampling —
+  Gottesman–Knill for the task, 256 shots at width 20 in ~23 ms). The
+  candidate family's hardness is measured as spoofing economics:
+  `mps_spoof_curve` shows every truncated bond cap collapsing below
+  0.3 normalized XEB with only full rank (`χ = 2^{n/2}`) reaching the
+  ceiling — a cliff, not a slope — and `spoof_decay` shows a fixed-χ
+  budget decaying to noise as the family grows: the sampling task
+  inherits the state bounds, as a reproducible measured artifact.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -339,7 +355,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 283 tests (43 unit + 236 across twenty-five
+`cargo test` runs 290 tests (43 unit + 243 across twenty-six
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -417,8 +433,21 @@ entirely trivial accessors and defensive guards:
   verdict (dense pays `>1.4^n` in time too, and the IQP
   memory-vs-time split is the measured case for requiring both); the
   IQP interaction-range and magic-doping verdict flips; the shallow-2D
-  boundary law; and selection by extrapolated scaling verified against
-  holdout runs the fits never saw.
+  boundary law; selection by extrapolated scaling verified against
+  holdout runs the fits never saw; variance-aware time laws (min/max
+  envelope fits must agree with the median for a classification to be
+  variance-robust); and register shapes as first-class axes (the
+  hierarchical splits appear in every profile, constant on GHZ,
+  escaping with everything else on random circuits, and measurably
+  beating plain sparse on mixed-sector states).
+- **sampling_hardness** — the task itself: XEB calibrated on ideal
+  (≈1) and uniform (≈0) samplers with the measured-ceiling
+  normalization; dense and exact D[ω] references agreeing to 1e-15 on
+  the same samples; certified-easy families sampled exactly at
+  certified cost; per-shot Clifford sampling with the bit convention
+  pinned and the uniform-output no-signal case reported as `None`;
+  the truncated-MPS spoof cliff (all caps < 0.3, full rank > 0.9);
+  and fixed-budget spoofing decaying with family size.
 - **algebraic_qudits** — the hierarchical register: qudit coordinates
   roundtrip with the documented bit order; the dual-algebra operator
   space measured per doubling level (full rank pinned at ℍ/𝕆/𝕊, the
@@ -601,6 +630,7 @@ src/
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
   bounds.rs      boundary atlas: measured growth laws, advantage scan
+  sampling.rs    sampling-task hardness: XEB, spoof curves, exact refs
   causal.rs      backward cones, causal diamonds, dual-time resolution
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
@@ -635,7 +665,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  causal_geometry (causal fabrics, diamonds, dual time),
                  algebraic_qudits (hierarchical register, dual-algebra),
                  qudit_scaling (measured scaling laws + honest costs),
-                 advantage_bounds (the boundary atlas + advantage scan)
+                 advantage_bounds (the boundary atlas + advantage scan),
+                 sampling_hardness (XEB, spoofing economics, exact refs)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at
