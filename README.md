@@ -91,7 +91,8 @@ parts are swappable:
   [`DeviceState`](src/backend/device.rs) reproduces the physical operation
   order of a real machine — coupling [`Topology`] with real register
   geometries (`heavy_hex_falcon27`, `sycamore_like`, `complete` all-to-all,
-  plus linear/ring/grid/custom), SWAP-routing that walks entanglement
+  plus linear/ring/grid/custom) and causally organized research fabrics
+  (`hierarchical`, `hypercube`), SWAP-routing that walks entanglement
   stepwise through adjacency with a persistent logical→physical mapping,
   per-qubit latency clocks driven by a [`LatencyMap`] (era-representative
   `DurationModel` presets + per-site/per-edge calibration overrides), an
@@ -99,6 +100,20 @@ parts are swappable:
   inner: GHZ across all 54 Sycamore sites), a full physical op log, and
   `elapsed`/`serial_time` as the measured parallelism ratio — while
   answering in logical indices identical to dense.
+- **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
+  register elements as an operational object: backward light cones and
+  **causal diamonds** (prune a circuit to the cone of an observation
+  surface — provably identical marginals, measurably fewer ops), and
+  **dual-time resolution** (`dual_time_amplitude`): the preparation
+  boundary evolves forward, the observation boundary evolves backward,
+  and the two opposed directions resolve at a cut —
+  `⟨t|U|0⟩ = ⟨U₂†t|U₁0⟩` — each paying only its own cone's support
+  (measured: `2^{D/2}` a side at the balanced cut where one direction
+  pays `2^D`). On the register side, [`Topology::hierarchical`] and
+  [`Topology::hypercube`] build fabrics *organized by causal scale*
+  (logarithmic horizons), and `diameter`/`ball_sizes`/
+  `pair_availability` measure any fabric's causal metric, curvature
+  signature and interaction availability.
 - **Local frames** ([`FramedState`](src/backend/frames.rs)) — deferred
   per-qubit basis changes as representation metadata over *any* inner
   backend: 1q gates absorb for free (inverse pairs cancel without touching
@@ -267,8 +282,8 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 250 tests (43 unit + 203 across twenty-two integration
-suites + 4 doctests);
+`cargo test` runs 262 tests (43 unit + 215 across twenty-three
+integration suites + 4 doctests);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
 entirely trivial accessors and defensive guards:
 
@@ -327,6 +342,22 @@ entirely trivial accessors and defensive guards:
   armed time budgets abort a single dense gate mid-sweep, the mera SVD
   path and scheduled runs — promptly, with measured elapsed times — and
   the identical runs complete once the budget lifts.
+- **causal_geometry** — the causal-geometry suite across every backend:
+  the register metric measured through the router on six geometries
+  (swaps = graph distance − 1, the clock in exact agreement); causally
+  organized fabrics (`hierarchical`, `hypercube`) collapsing horizon,
+  ball growth, availability and measured QFT routing versus flat
+  fabrics; causal range priced per representation geometry (mobile MPS
+  and device pay time, mera's fixed tree pays rank at the crossed cut —
+  saturating honestly to dense scale at maximal range — factored
+  clustering and Clifford frames blind); the light cone measured at
+  width 63 (marginals exactly zero outside, schedule length = causal
+  depth); causal diamonds observationally identical at a quarter of the
+  ops; dual-time resolution cut-invariant with `2^{D/2}` supports at
+  the balanced cut and the fold-back destruction ledger matching the
+  closed form `Σ(√2)^j`; everything certified against the exact D[ω]
+  ring and Ball containment, and the whole family swept through the
+  benchmark harness over ten backends.
 - **device_geometries** — real machines reproduced structurally
   (Falcon-27 heavy-hex: 27 sites, 28 couplers, degree ≤ 3, the known
   adjacencies; Sycamore-class 54-site diagonal lattice; ion-trap
@@ -474,6 +505,7 @@ src/
   scalar/        Scalar trait; f64, C64, CD<T> (ℍ/𝕆/𝕊), split-complex,
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
+  causal.rs      backward cones, causal diamonds, dual-time resolution
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
   guard.rs       resource guard: measured memory admission, time budgets
   gates/         GateDef trait, FixedGate/ParamGate, standard library
@@ -489,10 +521,11 @@ src/
   conformance.rs registry-wide backend verification (research safety net)
   harness.rs     workload benchmarking with in-run correctness checks
   discovery.rs   point stabilizers, signal threads, transparency reports
-  library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit
+  library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit,
+                 brickwork, ranged_pairs, rainbow (causal workload family)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           twenty-two integration suites (see Testing)
+tests/           twenty-three integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -500,7 +533,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  coarse_register (mera + Ball), absolute_reference (D[ω]
                  vs every backend), adaptive_feedback (recursive trees +
                  frame repair), capacity_probe (real walls, measured),
-                 device_reproduction (real geometries × latency maps)
+                 device_reproduction (real geometries × latency maps),
+                 causal_geometry (causal fabrics, diamonds, dual time)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

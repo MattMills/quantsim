@@ -195,10 +195,146 @@ impl Topology {
         Self::custom(n, &edges).expect("sycamore-like edges are valid")
     }
 
+    /// A register whose coupling fabric is a *causal hierarchy*: the
+    /// nearest-neighbour chain plus skip couplers `(i, i + 2^k)` at
+    /// every scale `k ≥ 1` (for `i` a multiple of `2^k`) — the Hasse
+    /// diagram of a binary causal order laid onto hardware, mirroring
+    /// the mera tree. Any two sites are within `O(log n)` hops, so the
+    /// register's causal metric is *hyperbolic*: ball volumes grow
+    /// exponentially and the causal horizon is logarithmic where a
+    /// chain's is linear. Degree grows to `O(log n)` at scale hubs —
+    /// a research geometry, priced honestly by the router.
+    pub fn hierarchical(n: usize) -> Self {
+        let mut edges = Vec::new();
+        for i in 0..n.saturating_sub(1) {
+            edges.push((i, i + 1));
+        }
+        let mut step = 2usize;
+        while step < n {
+            let mut i = 0;
+            while i + step < n {
+                edges.push((i, i + step));
+                i += step;
+            }
+            step *= 2;
+        }
+        Self::custom(n, &edges).expect("hierarchical edges are valid")
+    }
+
+    /// The `dim`-dimensional hypercube register on `2^dim` sites: sites
+    /// are bit strings, couplers connect strings differing in one bit.
+    /// Diameter and degree are both `dim = log2 n` — a homogeneous
+    /// log-horizon causal geometry (every site is a hub, unlike
+    /// [`Topology::hierarchical`]).
+    pub fn hypercube(dim: usize) -> Self {
+        let n = 1usize << dim;
+        let mut edges = Vec::new();
+        for a in 0..n {
+            for k in 0..dim {
+                let b = a ^ (1 << k);
+                if a < b {
+                    edges.push((a, b));
+                }
+            }
+        }
+        Self::custom(n, &edges).expect("hypercube edges are valid")
+    }
+
     /// Maximum vertex degree — 3 for heavy-hex, 4 for the diagonal
     /// lattice, `n − 1` for all-to-all.
     pub fn max_degree(&self) -> usize {
         self.adjacency.iter().map(|a| a.len()).max().unwrap_or(0)
+    }
+
+    /// Hop distances from `site` to every site (BFS; `usize::MAX` for
+    /// unreachable sites).
+    pub fn distances_from(&self, site: usize) -> Vec<usize> {
+        let mut dist = vec![usize::MAX; self.n];
+        if site >= self.n {
+            return dist;
+        }
+        dist[site] = 0;
+        let mut queue = std::collections::VecDeque::from([site]);
+        while let Some(s) = queue.pop_front() {
+            for &next in &self.adjacency[s] {
+                if dist[next] == usize::MAX {
+                    dist[next] = dist[s] + 1;
+                    queue.push_back(next);
+                }
+            }
+        }
+        dist
+    }
+
+    /// The register's causal horizon: the largest hop distance between
+    /// any two connected sites. Linear in `n` for a chain, `O(√n)` for
+    /// a grid, `O(log n)` for [`Topology::hierarchical`] and
+    /// [`Topology::hypercube`], 1 for all-to-all.
+    pub fn diameter(&self) -> usize {
+        (0..self.n)
+            .flat_map(|s| self.distances_from(s))
+            .filter(|&d| d != usize::MAX)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Mean hop distance over ordered pairs of distinct connected
+    /// sites — the expected causal separation of a random interaction.
+    pub fn mean_distance(&self) -> f64 {
+        let mut total = 0usize;
+        let mut pairs = 0usize;
+        for s in 0..self.n {
+            for (t, &d) in self.distances_from(s).iter().enumerate() {
+                if t != s && d != usize::MAX {
+                    total += d;
+                    pairs += 1;
+                }
+            }
+        }
+        if pairs == 0 {
+            0.0
+        } else {
+            total as f64 / pairs as f64
+        }
+    }
+
+    /// Causal-ball volumes from `site`: entry `r` is the number of
+    /// sites within `r` hops. The growth profile is the register's
+    /// curvature signature — linear growth is a flat 1-D fabric,
+    /// polynomial is flat higher-D, exponential is hyperbolic.
+    pub fn ball_sizes(&self, site: usize) -> Vec<usize> {
+        let dist = self.distances_from(site);
+        let max = dist
+            .iter()
+            .filter(|&&d| d != usize::MAX)
+            .max()
+            .copied()
+            .unwrap_or(0);
+        (0..=max)
+            .map(|r| dist.iter().filter(|&&d| d <= r).count())
+            .collect()
+    }
+
+    /// Computational availability at a swap budget: the fraction of
+    /// unordered site pairs whose two-qubit interaction can be made
+    /// native with at most `max_swaps` routing swaps (hop distance
+    /// ≤ `max_swaps + 1`). Availability 1.0 at budget 0 is all-to-all;
+    /// how fast the curve rises is what a causal register geometry
+    /// buys.
+    pub fn pair_availability(&self, max_swaps: usize) -> f64 {
+        if self.n < 2 {
+            return 1.0;
+        }
+        let mut reachable = 0usize;
+        for s in 0..self.n {
+            reachable += self
+                .distances_from(s)
+                .iter()
+                .enumerate()
+                .filter(|&(t, &d)| t != s && d != usize::MAX && d <= max_swaps + 1)
+                .count();
+        }
+        reachable as f64 / (self.n * (self.n - 1)) as f64
     }
 
     /// Number of undirected couplers.

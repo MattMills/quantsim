@@ -53,7 +53,8 @@ pub enum Op<S: Scalar> {
 }
 
 impl<S: Scalar> Op<S> {
-    fn qubits(&self) -> &[usize] {
+    /// Target qubits, for any operation variant.
+    pub fn qubits(&self) -> &[usize] {
         match self {
             Op::Named { qubits, .. } | Op::Raw { qubits, .. } | Op::Diagonal { qubits, .. } => {
                 qubits
@@ -156,6 +157,23 @@ impl<S: Scalar> Circuit<S> {
             qubits: qubits.into(),
         });
         self
+    }
+
+    /// Split into the first `cut` operations and the rest — the two
+    /// evolution directions of a dual-time resolution
+    /// ([`crate::causal::dual_time_amplitude`]): the front half runs
+    /// forward from the preparation boundary, the back half runs
+    /// *backward* (inverted) from the observation boundary.
+    ///
+    /// # Panics
+    /// Panics if `cut > self.len()`.
+    pub fn split_at(&self, cut: usize) -> (Circuit<S>, Circuit<S>) {
+        assert!(cut <= self.ops.len(), "split_at past the end");
+        let mut front = Circuit::new(self.num_qubits);
+        front.ops = self.ops[..cut].to_vec();
+        let mut back = Circuit::new(self.num_qubits);
+        back.ops = self.ops[cut..].to_vec();
+        (front, back)
     }
 
     /// Append every operation of `other`, remapping its qubit `q` to

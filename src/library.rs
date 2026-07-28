@@ -31,6 +31,69 @@ pub fn ghz<S: Scalar>(n: usize) -> Circuit<S> {
     c
 }
 
+/// Brickwork light-cone circuit: `H` on each qubit in `seeds`, then
+/// `depth` alternating layers of adjacent `CX(q, q+1)` — even-`q` pairs
+/// on even layers, odd-`q` pairs on odd layers. All-Clifford.
+///
+/// This is the canonical *causally local* workload: each layer is a set
+/// of disjoint nearest-neighbour gates, so information spreads at most
+/// one site per layer and the causal cone of the seed set widens
+/// linearly with depth. Everything outside the cone stays exactly |0⟩.
+pub fn brickwork<S: Scalar>(n: usize, depth: usize, seeds: &[usize]) -> Circuit<S> {
+    let mut c = Circuit::new(n);
+    for &s in seeds {
+        c.h(s);
+    }
+    for layer in 0..depth {
+        let start = layer % 2;
+        let mut q = start;
+        while q + 1 < n {
+            c.cx(q, q + 1);
+            q += 2;
+        }
+    }
+    c
+}
+
+/// A layer of `n/2` disjoint Bell pairs, each spanning interaction
+/// distance `d`: `H(a); CX(a, a+d)` for every pair. Requires
+/// `n % (2·d) == 0`; pairs tile in blocks of `2d`
+/// (`(b·2d + j, b·2d + j + d)` for `j < d`), so every qubit belongs to
+/// exactly one pair. All-Clifford.
+///
+/// The family holds the gate count, arity profile and output state
+/// *shape* (a product of `n/2` Bell pairs) fixed while varying only the
+/// causal range `d` — the knob for measuring how each representation
+/// and each device geometry prices interaction distance.
+pub fn ranged_pairs<S: Scalar>(n: usize, d: usize) -> Circuit<S> {
+    assert!(d >= 1 && n % (2 * d) == 0, "pairs at range d must tile n");
+    let mut c = Circuit::new(n);
+    for block in 0..n / (2 * d) {
+        for j in 0..d {
+            let a = block * 2 * d + j;
+            c.h(a).cx(a, a + d);
+        }
+    }
+    c
+}
+
+/// The rainbow state on even `n`: `H(i); CX(i, n−1−i)` for `i < n/2` —
+/// `n/2` disjoint Bell pairs nested around the centre, at interaction
+/// distances `n−1, n−3, …, 1`. All-Clifford.
+///
+/// Every pair crosses the central cut, so any representation that pays
+/// per *linear or hierarchical cut* (MPS bonds, mera's root) faces rank
+/// `2^{n/2}` there, while the state remains a product of pairs that a
+/// clustering representation stores in `O(n)`.
+pub fn rainbow<S: Scalar>(n: usize) -> Circuit<S> {
+    assert!(n >= 2 && n % 2 == 0, "rainbow needs even n");
+    let mut c = Circuit::new(n);
+    for i in 0..n / 2 {
+        c.h(i).cx(i, n - 1 - i);
+    }
+    c
+}
+
 /// Quantum Fourier transform on `n` qubits (little-endian):
 /// `|x⟩ → 2^{-n/2} Σ_y e^{2πi x y / 2^n} |y⟩`, including the final qubit
 /// reversal swaps. Invert with [`crate::circuit::BoundCircuit::inverse`].

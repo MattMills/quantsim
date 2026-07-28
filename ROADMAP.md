@@ -255,6 +255,31 @@ entries, each a small self-contained `Scalar` impl plus tests:
   - calibration data import (per-coupler CSV/JSON → `LatencyMap`).
   - per-edge gate fidelities and idle decoherence (needs the
     density/trajectory machinery below).
+- **Causal register geometry + dual time — SHIPPED** (`causal`,
+  `Topology::hierarchical` / `Topology::hypercube`,
+  `tests/causal_geometry.rs`, `examples/causal_geometry.rs`): registers
+  whose coupling fabric is organized by causal scale, the causal-metric
+  probes (`distances_from` / `diameter` / `mean_distance` /
+  `ball_sizes` / `pair_availability`), backward cones and causal
+  diamonds (observation-identical pruning), and dual-time resolution
+  (`dual_time_amplitude`: forward from preparation, backward from
+  observation, resolving at a cut; `2^{D/2}` a side at the balanced cut
+  vs `2^D` one-way, measured). Findings worth carrying forward:
+  - the *homogeneous* causal fabric (hypercube) improves both routing
+    volume and wall-clock on the QFT; the *hub-concentrated* hierarchy
+    improves routing volume but pays it back in hub serialization —
+    availability and parallelism are separate axes, and only the
+    measured schedule tells you the net;
+  - the dual-time meeting surface can be far smaller than either
+    direction's support (interface 1 on Clifford staircases) —
+    suggesting cut *selection* (min-interface, not just balanced) as a
+    cheap optimization;
+  - next rungs: latency-weighted causal metrics (Dijkstra distances so
+    availability reflects heterogeneous calibration), diamond-restricted
+    device scheduling (only schedule the cone of the declared
+    observables), congestion-aware fabric variants (hierarchies with
+    replicated hubs), and multi-surface resolution (more than two
+    opposed directions over a cut tree).
 - **Interference histories** — `InterferenceState` aggregates per gate and
   per output state; a Feynman-path variant keeping (bounded) contribution
   histories would let destructive interference be attributed to *pairs of
