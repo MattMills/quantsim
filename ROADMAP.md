@@ -430,11 +430,22 @@ Next rungs:
 - **arity-mixed device model**: `Topology`/latency over mixed sites
   with the swap-class constraint enforced by the router (equal-dim
   corridors, native cross-arity bonds).
-- **constellation-native gates**: gates expressed directly on lattice
-  points (root translations at a chosen scale level, class-linear
-  maps) rather than through the bit-domain conversion — the tower's
-  linear address map suggests scale-local Cliffords could act on
-  digits natively; and deeper digit alphabets from the next shells
+- **constellation-native gates — SHIPPED as the cross-scale Weyl
+  pair**: `translate`/`modulate`/`reflect`/`coordinate_fourier` act
+  directly on lattice keys (no bit-domain conversion), with measured
+  self-duality (det Gram = 1, dual basis in-lattice, coordinates =
+  dual inner products), the Heisenberg law and its 2-adic scale ladder
+  (interaction below the resolution horizon, exact commutation past
+  it), W(E8) reflections as measured Cliffords, `F⁴ = 1` with
+  `F T_B F⁻¹ = M_{−b*}`, exact support uncertainty
+  (`|pos|·|mom| = 2^{8m}` on coset states), depth-1 reduction to
+  X-strings/sign diagonals against the standard framework, and
+  structured interaction at 40 qubits under 32-point support where
+  dense measurably refuses. Still open on top: a generator-based
+  stabilizer TABLEAU over ℤ/2^m (the coset family is closed under the
+  native set at 2^{km} points — an 8th-root-of-dense compression;
+  tableaux would make it polynomial), full W(E8) generator sets beyond
+  single reflections, and deeper digit alphabets from the next shells
   (norm-6/8 vectors give E8/3E8 and beyond) for non-binary
   constellation levels that would meet the mixed-arity register.
 - **edge-level co-boundary storage**: the E8×E8 system stores rays at

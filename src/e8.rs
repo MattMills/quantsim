@@ -789,8 +789,8 @@ pub mod constellation {
         shells: [Shell; 256],
     }
 
-    fn class_with(adj: &[[i64; 8]; 8], det: i64, p: &Point) -> Option<u8> {
-        let mut class = 0u8;
+    fn coords_with(adj: &[[i64; 8]; 8], det: i64, p: &Point) -> Option<[i64; 8]> {
+        let mut coords = [0i64; 8];
         for (i, row) in adj.iter().enumerate() {
             let acc: i128 = row
                 .iter()
@@ -800,10 +800,85 @@ pub mod constellation {
             if acc % det as i128 != 0 {
                 return None; // not an E8 point
             }
-            let coord = acc / det as i128;
-            class |= ((coord.rem_euclid(2)) as u8) << i;
+            coords[i] = (acc / det as i128) as i64;
         }
-        Some(class)
+        Some(coords)
+    }
+
+    fn class_with(adj: &[[i64; 8]; 8], det: i64, p: &Point) -> Option<u8> {
+        let coords = coords_with(adj, det, p)?;
+        Some(
+            coords
+                .iter()
+                .enumerate()
+                .fold(0u8, |acc, (i, &c)| acc | (((c.rem_euclid(2)) as u8) << i)),
+        )
+    }
+
+    /// Exact integer coordinates of a lattice point in the verified
+    /// basis (`p = Σ cᵢ·Bᵢ`); `None` off the lattice. [`class_of`] is
+    /// this map reduced mod 2 — and by self-duality coordinate `i` IS
+    /// the E8 inner product with the i-th [`dual_basis`] vector
+    /// (`cᵢ(p) = ⟨b*ᵢ, p⟩`, measured in tests).
+    pub fn coords_of(p: &Point) -> Option<[i64; 8]> {
+        let c = ctx();
+        coords_with(&c.adj, c.det, p)
+    }
+
+    /// Doubled inner product of two lattice points (4× the real E8
+    /// inner product), exact.
+    pub fn pdot(a: &Point, b: &Point) -> i128 {
+        a.iter().zip(b).map(|(&x, &y)| x as i128 * y as i128).sum()
+    }
+
+    /// The real Gram matrix of the verified basis (doubled dots / 4) —
+    /// an integer matrix with determinant 1 (E8 is unimodular), which
+    /// is exactly why the lattice is SELF-DUAL and the momentum-space
+    /// E8 of the Weyl pair is the same object as the position-space
+    /// one.
+    pub fn gram() -> [[i64; 8]; 8] {
+        std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                let bi: Point = BASIS[i];
+                let bj: Point = BASIS[j];
+                (pdot(&bi, &bj) / 4) as i64
+            })
+        })
+    }
+
+    /// The dual basis `b*ᵢ` (`⟨b*ᵢ, bⱼ⟩ = δᵢⱼ`) in doubled
+    /// coordinates. Every dual vector is an INTEGER combination of the
+    /// basis — i.e. an E8 point — because det(Gram) = 1: measured
+    /// self-duality, `E8* = E8`.
+    pub fn dual_basis() -> [Point; 8] {
+        // G⁻¹ = adj(G) since det(G) = 1 (asserted); b*ᵢ = Σⱼ G⁻¹ᵢⱼ bⱼ.
+        let g = gram();
+        let g128: Vec<Vec<i128>> = g
+            .iter()
+            .map(|row| row.iter().map(|&x| x as i128).collect())
+            .collect();
+        let det = bareiss_det(g128.clone());
+        assert_eq!(det, 1, "the E8 Gram determinant is 1 — unimodular");
+        let mut inv = [[0i128; 8]; 8];
+        for (i, row) in inv.iter_mut().enumerate() {
+            for (j, slot) in row.iter_mut().enumerate() {
+                let minor: Vec<Vec<i128>> = (0..8)
+                    .filter(|&r| r != j)
+                    .map(|r| (0..8).filter(|&c| c != i).map(|c| g128[r][c]).collect())
+                    .collect();
+                let sign = if (i + j) % 2 == 0 { 1 } else { -1 };
+                *slot = sign * bareiss_det(minor);
+            }
+        }
+        std::array::from_fn(|i| {
+            let mut v = [0i64; 8];
+            for (j, b) in BASIS.iter().enumerate() {
+                for (slot, &coord) in v.iter_mut().zip(b) {
+                    *slot += (inv[i][j] as i64) * coord;
+                }
+            }
+            v
+        })
     }
 
     fn ctx() -> &'static Ctx {
@@ -1023,6 +1098,153 @@ pub mod constellation {
                 .map(|k| ((bits >> (8 * k)) & 0xff) as u8)
                 .collect();
             compose(&digits)
+        }
+
+        /// Canonical representative of `p` in `E8/2^m E8`.
+        fn reduce(&self, p: &Point) -> Point {
+            compose(&decompose(p, self.levels).expect("lattice point"))
+        }
+
+        /// Native constellation gates act on the residue GROUP, which
+        /// the register is exactly when every 8-qubit block is full; a
+        /// partial top block is a qubit-embedding of a subset, where a
+        /// group translation could carry out of the register.
+        fn require_full_blocks(&self) -> crate::error::Result<()> {
+            if self.num_qubits % 8 != 0 {
+                return Err(crate::error::Error::InvalidState(format!(
+                    "native constellation gates need full 8-qubit blocks; {} qubits \
+                     embeds a subset of the residue group, not the group itself",
+                    self.num_qubits
+                )));
+            }
+            Ok(())
+        }
+
+        /// Position-side Weyl operator: `|p⟩ ↦ |p + v⟩` on the residue
+        /// group `E8/2^m E8`. Cross-scale by construction — the group
+        /// is the lattice quotient, NOT `(F₂⁸)^m`, so adding a level-j
+        /// vector carries into every higher scale level the lattice
+        /// arithmetic demands.
+        pub fn translate(&mut self, v: &Point) -> crate::error::Result<()> {
+            self.require_full_blocks()?;
+            if class_of(v).is_none() {
+                return Err(crate::error::Error::InvalidState(
+                    "translation label is not an E8 point".into(),
+                ));
+            }
+            let amps = std::mem::take(&mut self.amps);
+            self.amps = amps
+                .into_iter()
+                .map(|(p, a)| {
+                    let shifted: Point = std::array::from_fn(|k| p[k] + v[k]);
+                    (self.reduce(&shifted), a)
+                })
+                .collect();
+            Ok(())
+        }
+
+        /// Momentum-side Weyl operator: multiply `|p⟩` by the
+        /// character `χ_q(p) = e^{2πi⟨q,p⟩/2^m}`, labeled by the DUAL
+        /// E8 — which is E8 again (measured self-duality). Well-defined
+        /// on residues exactly because `⟨q, 2^m E8⟩ ⊆ 2^m ℤ` for
+        /// lattice `q`; the phase is computed from the exact integer
+        /// inner product reduced mod the period.
+        pub fn modulate(&mut self, q: &Point) -> crate::error::Result<()> {
+            self.require_full_blocks()?;
+            if class_of(q).is_none() {
+                return Err(crate::error::Error::InvalidState(
+                    "modulation label is not an E8 point".into(),
+                ));
+            }
+            // Doubled dot = 4·⟨q,p⟩ real, and the character period is
+            // 2^m: phase = 2π·(pdot mod 4·2^m)/(4·2^m), exact.
+            let modulus = 4i128 << self.levels;
+            for (p, a) in self.amps.iter_mut() {
+                let r = pdot(q, p).rem_euclid(modulus);
+                let angle = std::f64::consts::TAU * r as f64 / modulus as f64;
+                *a *= C64::new(angle.cos(), angle.sin());
+            }
+            Ok(())
+        }
+
+        /// The Weyl-GROUP side: the reflection `s_α` through a root's
+        /// hyperplane (`s_α(p) = p − ⟨p,α⟩α`, norm-2 roots), acting as
+        /// a basis permutation of the residue group. W(E8) is the
+        /// lattice's point symmetry; its conjugation action on the
+        /// Weyl pair (`s T_v s = T_{s(v)}`, `s M_q s = M_{s(q)}`) is
+        /// measured in tests — the reflections are Clifford for the
+        /// constellation's Heisenberg group.
+        pub fn reflect(&mut self, alpha: &super::Root) -> crate::error::Result<()> {
+            self.require_full_blocks()?;
+            if super::dot(alpha, alpha) != 8 {
+                return Err(crate::error::Error::InvalidState(
+                    "reflection label is not an E8 root".into(),
+                ));
+            }
+            let a: Point = std::array::from_fn(|k| alpha[k] as i64);
+            let amps = std::mem::take(&mut self.amps);
+            self.amps = amps
+                .into_iter()
+                .map(|(p, amp)| {
+                    // ⟨p,α⟩ real = pdot/4, an exact integer for
+                    // lattice points against a root.
+                    let inner = pdot(&p, &a) / 4;
+                    let image: Point = std::array::from_fn(|k| p[k] - (inner as i64) * a[k]);
+                    (self.reduce(&image), amp)
+                })
+                .collect();
+            Ok(())
+        }
+
+        /// The discrete Fourier transform along one basis direction of
+        /// the coordinate group `(ℤ/2^m)⁸ ≅ E8/2^m E8` — the gate that
+        /// turns position structure into momentum structure one
+        /// direction at a time (`F⁴ = 1`; `F` conjugates the basis
+        /// translation into the dual-basis modulation, measured).
+        /// Guard-admitted: support can grow by the factor `d = 2^m`.
+        pub fn coordinate_fourier(&mut self, dir: usize) -> crate::error::Result<()> {
+            self.require_full_blocks()?;
+            if dir >= 8 {
+                return Err(crate::error::Error::InvalidState(format!(
+                    "coordinate direction {dir} out of range (E8 has rank 8)"
+                )));
+            }
+            let d = 1usize << self.levels;
+            let entry = (std::mem::size_of::<Point>() + std::mem::size_of::<C64>() + 1) * 8 / 7;
+            crate::guard::admit_growth(
+                self.amps.len().saturating_mul(d).saturating_mul(entry),
+                "e8-constellation Fourier growth",
+            )?;
+            let mut grouped: HashMap<Point, Vec<C64>> = HashMap::new();
+            for (p, &a) in &self.amps {
+                let coords = coords_of(p).expect("stored keys are lattice points");
+                let cd = coords[dir].rem_euclid(d as i64) as usize;
+                let rest: Point = std::array::from_fn(|k| p[k] - cd as i64 * BASIS[dir][k]);
+                grouped
+                    .entry(self.reduce(&rest))
+                    .or_insert_with(|| vec![C64::new(0.0, 0.0); d])[cd] = a;
+            }
+            let norm = 1.0 / (d as f64).sqrt();
+            let mut out = HashMap::new();
+            for (rest, vec_in) in grouped {
+                for cp in 0..d {
+                    let mut acc = C64::new(0.0, 0.0);
+                    for (c, amp) in vec_in.iter().enumerate() {
+                        if amp.norm_sqr() > 0.0 {
+                            let angle = std::f64::consts::TAU * ((c * cp) % d) as f64 / d as f64;
+                            acc += C64::new(angle.cos(), angle.sin()) * amp;
+                        }
+                    }
+                    acc *= norm;
+                    if acc.norm_sqr() > crate::backend::PRUNE_TOL {
+                        let point: Point =
+                            std::array::from_fn(|k| rest[k] + cp as i64 * BASIS[dir][k]);
+                        out.insert(self.reduce(&point), acc);
+                    }
+                }
+            }
+            self.amps = out;
+            Ok(())
         }
     }
 

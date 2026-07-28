@@ -216,7 +216,23 @@ parts are swappable:
   to the u64 wall — a 63-qubit GHZ is two 80-byte lattice points
   (dense refuses 63 outright, measured), 421× faster and 4681×
   smaller than dense on GHZ-16, honestly larger and slower than dense
-  on saturated QFT-12.
+  on saturated QFT-12. On top of the tower sits the **cross-scale E8
+  Weyl pair**: a position-E8 of native `translate` gates and a
+  momentum-E8 of native `modulate` gates — the *same* lattice, because
+  E8 is self-dual (det(Gram) = 1 verified; every `dual_basis` vector
+  an E8 point; coordinates = dual inner products, measured) — obeying
+  the measured Heisenberg law `M_q T_v = e^{2πi⟨q,v⟩/2^m} T_v M_q`
+  with its 2-adic ladder (scales interact below the resolution
+  horizon, commute *exactly* past it), with W(E8) reflections as
+  measured Clifford symmetries (`s² = 1`, `sT_vs = T_{s(v)}`,
+  `sM_qs = M_{s(q)}`), `coordinate_fourier` converting one object into
+  the other (`F⁴ = 1`, `FT_BF⁻¹ = M_{−b*}`), exact support uncertainty
+  (rank-k coset states: `|pos|·|mom| = 2^{8m}` on the nose), depth-1
+  reduction to ordinary X-strings and sign diagonals (checked against
+  the standard framework), and structured coset states interacting —
+  interference, cross-scale translation, dual modulation, W(E8) —
+  at 40 qubits in ~1 ms where dense's 17.6 TB is a measured refusal:
+  rank-k structure costs `2^{km}` points instead of `2^{8m}`.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -428,7 +444,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 319 tests (43 unit + 272 across thirty-one
+`cargo test` runs 325 tests (43 unit + 278 across thirty-two
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -606,6 +622,21 @@ entirely trivial accessors and defensive guards:
   the 63-qubit GHZ stored as exactly two lattice points (digits
   pinned, census `[1,1,0]` per level, 224 bytes) where dense cannot
   construct at all.
+- **e8_weyl** — the cross-scale Weyl pair: self-duality exact (dual
+  basis in-lattice, pairing δᵢⱼ, coordinates = dual inner products on
+  points and roots); the Heisenberg law with its 2-adic ladder pinned
+  on a 3×3 scale grid (character `4·2^{i+j}` below the horizon,
+  exactly 1 past it, orderings measurably differing below and agreeing
+  to 1e−12 above); W(E8) reflections as involutions with exact
+  `T`/`M` conjugation covariance; `F⁴ = 1` and the measured conversion
+  `FT_BF⁻¹ = M_{−b*}`; support uncertainty exactly `2^{16}` at ranks
+  0/1/2; the 40-qubit structured protocol (line → cross-scale
+  translate → dual modulate → W(E8) round trip → F⁻¹ collapsing to
+  the single point carrying the modulation scale, support ≤ 32
+  throughout, dense refusing 17.6 TB in the same test); natives
+  reducing at depth 1 to the X-string on `class(v)` and the
+  `(−1)^{⟨q,p⟩}` diagonal, checked against the standard framework; and
+  partial blocks / non-lattice labels / non-root mirrors refused.
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally
@@ -812,7 +843,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  e8_compound (mixed-arity qudits over the E8 fabric),
                  e8_coboundary (E8×E8 storage, representation, both
                  systems as backends in conformance + benchmark),
-                 e8_constellation (the coset tower + n-qubit backend)
+                 e8_constellation (the coset tower + n-qubit backend),
+                 e8_weyl (the dual cross-scale Weyl pair, W(E8) Clifford)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at
