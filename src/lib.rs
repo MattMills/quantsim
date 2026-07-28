@@ -75,6 +75,7 @@ pub mod harness;
 pub mod library;
 pub mod lift;
 pub mod math;
+pub mod qudit;
 pub mod registry;
 pub mod rng;
 pub mod scalar;
@@ -121,6 +122,10 @@ pub mod prelude {
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};
+    pub use crate::qudit::{
+        algebra_capacity, dual_algebra_report, synthesize_sandwich, AlgebraicRegister,
+        DualAlgebraReport, QuditStats, SandwichOp, SandwichTerm,
+    };
     pub use crate::registry::GateRegistry;
     pub use crate::rng::Prng;
     pub use crate::scalar::{

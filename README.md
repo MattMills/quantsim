@@ -114,6 +114,22 @@ parts are swappable:
   (logarithmic horizons), and `diameter`/`ball_sizes`/
   `pair_availability` measure any fabric's causal metric, curvature
   signature and interaction availability.
+- **Hierarchical algebraic registers** ([`qudit`](src/qudit.rs)) — break
+  the flat n-wide register into a varied qudit structure: a **site
+  sector** (any backend) plus an **algebra sector** — further logical
+  qubits carried *inside every stored scalar*, using the Cayley–Dickson
+  tower as the qudit space (ℍ = 1 qubit, 𝕆 = 2, 𝕊 = 3 per scalar).
+  Gates on algebra qubits are synthesized from the **dual-algebra** —
+  the algebra acting on itself from left and right (`A ⊗ A^op`) — and
+  the sandwich span is *measured*: full operator-space rank at every
+  doubling level (16/16, 64/64, 256/256; residuals ~1e-15), zero
+  divisors and non-associativity notwithstanding, so every ℂ-linear
+  qudit gate is exactly a sum of `(a·x)·b` terms. Whether the
+  embedded-ℂ action is component-linear is measured per scalar (true
+  for ℍ, twisted from 𝕆 on) and routes site gates native vs component.
+  Conformance-swept over the full registry; and the flat u64 indexing
+  ceiling breaks: 66 exact logical qubits (63 sparse sites × a 𝕊
+  qudit) addressed as (site, component) parts.
 - **Local frames** ([`FramedState`](src/backend/frames.rs)) — deferred
   per-qubit basis changes as representation metadata over *any* inner
   backend: 1q gates absorb for free (inverse pairs cancel without touching
@@ -282,7 +298,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 262 tests (43 unit + 215 across twenty-three
+`cargo test` runs 270 tests (43 unit + 223 across twenty-four
 integration suites + 4 doctests);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
 entirely trivial accessors and defensive guards:
@@ -342,6 +358,18 @@ entirely trivial accessors and defensive guards:
   armed time budgets abort a single dense gate mid-sweep, the mera SVD
   path and scheduled runs — promptly, with measured elapsed times — and
   the identical runs complete once the budget lifts.
+- **algebraic_qudits** — the hierarchical register: qudit coordinates
+  roundtrip with the documented bit order; the dual-algebra operator
+  space measured per doubling level (full rank pinned at ℍ/𝕆/𝕊,
+  synthesized sandwiches verified operationally against their
+  matrices); full-registry conformance at ℍ and 𝕆 splits with
+  native/component routing chosen by measured embedded-linearity; the
+  encoding exact across the site↔algebra boundary and certified
+  against D[ω] at every split; projection/feedback on algebra qubits
+  collapsing the joint state; 66 logical qubits exceeding every flat
+  backend's u64 ceiling; site-sector structure surviving (support
+  counts sites); and the workload harness pricing the hierarchical
+  shapes in-run against dense.
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally
@@ -506,6 +534,7 @@ src/
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
   causal.rs      backward cones, causal diamonds, dual-time resolution
+  qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
   guard.rs       resource guard: measured memory admission, time budgets
   gates/         GateDef trait, FixedGate/ParamGate, standard library
@@ -525,7 +554,7 @@ src/
                  brickwork, ranged_pairs, rainbow (causal workload family)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           twenty-three integration suites (see Testing)
+tests/           twenty-four integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -534,7 +563,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  vs every backend), adaptive_feedback (recursive trees +
                  frame repair), capacity_probe (real walls, measured),
                  device_reproduction (real geometries × latency maps),
-                 causal_geometry (causal fabrics, diamonds, dual time)
+                 causal_geometry (causal fabrics, diamonds, dual time),
+                 algebraic_qudits (hierarchical register, dual-algebra)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

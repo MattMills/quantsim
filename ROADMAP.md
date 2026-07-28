@@ -231,6 +231,45 @@ entries, each a small self-contained `Scalar` impl plus tests:
   research.
 - **Group algebras** ℝ[G] for small finite G.
 
+## Hierarchical algebraic registers — SHIPPED (core)
+
+`qudit::AlgebraicRegister` breaks the flat register into a varied qudit
+structure: a site sector under any backend plus an algebra sector — up
+to 3 further logical qubits carried inside each Cayley–Dickson scalar —
+with dual-algebra gate synthesis (`synthesize_sandwich`: gates as sums
+of `(a·x)·b`) and measured routing (embedded-ℂ component-linearity per
+scalar decides native vs component paths). Measured findings worth
+keeping:
+
+- the sandwich span `{L_{eᵢ} R_{eⱼ}}` is FULL at every doubling level
+  (16/16 on ℍ, 64/64 on 𝕆, 256/256 on 𝕊, residuals ~1e-15): neither
+  non-associativity nor zero divisors cost the multiplication algebra
+  anything — every ℂ-linear qudit gate is a two-sided multiplication
+  sum. A Hadamard on the ℍ-qudit is exactly two terms.
+- the embedded-ℂ action stops being component-linear at 𝕆 (the CD
+  twist conjugates a coordinate) — measured at construction, never
+  assumed; ℍ splits run site gates natively on the inner backend.
+- 66 exact logical qubits (63 sparse sites × 𝕊-qudit) — past the u64
+  flat-indexing ceiling of every conventional register — addressed as
+  (site, component) parts, conformance-swept and D[ω]-certified.
+
+Next rungs:
+
+- **multi-block algebra sectors**: products of CD factors per scalar
+  (varied widths *within* one register, not just per register), and the
+  next doubling (CD⟨𝕊⟩, 32-dim, 4 algebra qubits — measure whether the
+  sandwich span stays full).
+- **sandwich-native execution**: apply algebra-sector gates by actual
+  two-sided multiplication on the stored scalars at scale (today the
+  synthesis is verified operationally; the register's hot path is the
+  component sweep).
+- **structured site sectors without materialization**: the component
+  path gathers and reloads, which flattens factored/MPS inners;
+  incremental per-entry updates would let cluster and bond structure
+  survive algebra-sector gates.
+- **algebra-sector measurement statistics** beyond projection: native
+  sampling over (site, component) parts at wide widths.
+
 ## Operational-model extensions
 
 - **Device realism — geometry + latency maps SHIPPED**: `Topology` now
