@@ -253,22 +253,41 @@ keeping:
   flat-indexing ceiling of every conventional register — addressed as
   (site, component) parts, conformance-swept and D[ω]-certified.
 
-Next rungs:
+Second wave — SHIPPED:
 
-- **multi-block algebra sectors**: products of CD factors per scalar
-  (varied widths *within* one register, not just per register), and the
-  next doubling (CD⟨𝕊⟩, 32-dim, 4 algebra qubits — measure whether the
-  sandwich span stays full).
-- **sandwich-native execution**: apply algebra-sector gates by actual
-  two-sided multiplication on the stored scalars at scale (today the
-  synthesis is verified operationally; the register's hot path is the
-  component sweep).
+- **the fifth doubling measured**: `Trigintaduonion = CD⟨𝕊⟩` (32-dim,
+  4 algebra qubits) keeps the sandwich span FULL — 1024/1024, residual
+  ~5e-15 (`#[ignore]`d test, ~17 s; run with `-- --ignored`). The
+  conjecture this data supports: the CD tower's multiplication algebra
+  is full `End_ℝ` at *every* level.
+- **sandwich-native execution**: algebra-sector gates now EXECUTE as
+  two-sided multiplications on the stored scalars — cached synthesis
+  per (gate, bits), machine-precision dust snapped (relative 1e-13) so
+  exact zeros stay exact, `QuditStats::sandwich_gates` counting, a
+  toggle for A/B against the component path, and a dimension cap
+  (default 16) so 32-dim scalars don't pay the 17 s solver implicitly.
+- **multi-block algebra sectors**: `DirectSum<T, U>` — several
+  independent qudit blocks per scalar. The measured boundary: the span
+  of blockwise sandwiches is exactly the block-diagonal algebra (32/64
+  on ℍ⊕ℍ; cross-block gates residual ~1) — algebra structure IS the
+  synthesis boundary, and the register routes such gates through the
+  component path with full conformance. Initialization corrected for
+  non-CD scalars (one() = (1,1) is not e₀ — detected and re-seeded).
+- **wide measurement statistics**: `sample_parts`/`probability_parts` —
+  deterministic Born sampling over (site, component) parts at any
+  logical width (ghz-67 sampled at 2000 shots).
+
+Remaining rungs:
+
 - **structured site sectors without materialization**: the component
   path gathers and reloads, which flattens factored/MPS inners;
   incremental per-entry updates would let cluster and bond structure
   survive algebra-sector gates.
-- **algebra-sector measurement statistics** beyond projection: native
-  sampling over (site, component) parts at wide widths.
+- CD⟨CD⟨𝕊⟩⟩ and beyond: does the span stay full at 64-dim (5 algebra
+  qubits)? The basis SVD is 4096² — needs a smarter rank probe than
+  dense Jacobi.
+- mixed direct sums of unequal blocks (ℍ⊕𝕆 has 6 complex components —
+  a non-power-of-two qudit; the register currently requires 2^k).
 
 ## Operational-model extensions
 

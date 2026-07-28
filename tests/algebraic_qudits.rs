@@ -294,7 +294,8 @@ fn site_structure_survives_the_algebra_sector() {
     assert!(max_amplitude_deviation(flat.as_ref(), &hier) < TOL);
 
     // Routing is measured, not assumed: with ℍ the site gates ran
-    // natively; the boundary gates went through the component path.
+    // natively, the boundary gate took the component path, and the
+    // algebra-only gate executed as a dual-algebra sandwich.
     let mut routed = algebraic_over_sparse::<Quaternion>(5, 1).unwrap();
     let mut small: Circuit = Circuit::new(5);
     small.h(0).h(1).cx(0, 1).cx(3, 4).h(4);
@@ -304,7 +305,146 @@ fn site_structure_survives_the_algebra_sector() {
         stats.native_site_gates, 3,
         "h(0), h(1), cx(0,1) are site-native"
     );
-    assert_eq!(stats.component_gates, 2, "cx(3,4), h(4) touch the algebra");
+    assert_eq!(stats.component_gates, 1, "cx(3,4) straddles the boundary");
+    assert_eq!(
+        stats.sandwich_gates, 1,
+        "h(4) runs as two-sided multiplication"
+    );
+}
+
+#[test]
+fn sandwich_native_execution_is_real_and_identical() {
+    // Algebra-sector gates run as actual two-sided multiplications on
+    // the stored scalars. Same circuit, native on vs off: identical
+    // amplitudes, and the counters prove which path ran.
+    let reg = GateRegistry::<C64>::standard();
+    let mut c: Circuit = Circuit::new(5);
+    c.h(0).cx(0, 1).cx(1, 3); // sites + boundary
+    c.h(3).t(3).cx(3, 4).h(4).s(4).cx(4, 3); // algebra sector
+    let bound = c.bind(&reg).unwrap();
+    let dense = Simulator::<C64>::new().run(&c).unwrap();
+
+    let mut native = algebraic_over_sparse::<Octonion>(5, 2).unwrap();
+    bound.run(&mut native).unwrap();
+    assert!(
+        native.stats().sandwich_gates >= 6,
+        "the algebra-sector gates execute as sandwiches: {:?}",
+        native.stats()
+    );
+    assert!(max_amplitude_deviation(dense.as_ref(), &native) < TOL);
+
+    let mut component = algebraic_over_sparse::<Octonion>(5, 2).unwrap();
+    component.set_sandwich_native(false);
+    bound.run(&mut component).unwrap();
+    assert_eq!(component.stats().sandwich_gates, 0);
+    assert!(max_amplitude_deviation(dense.as_ref(), &component) < TOL);
+    assert!(max_amplitude_deviation(&native, &component) < TOL);
+
+    // The synthesis is cached: replaying the same gates re-counts
+    // sandwiches without re-solving (observable as cheap, identical
+    // behavior — pinned by the counter doubling).
+    let before = native.stats().sandwich_gates;
+    bound.run(&mut native).unwrap();
+    assert_eq!(native.stats().sandwich_gates, 2 * before);
+}
+
+#[test]
+fn direct_sum_blocks_bound_the_synthesis() {
+    // DirectSum<H, H>: two independent 1-qubit blocks in one scalar.
+    // The blocks multiply independently, so the dual-algebra span is
+    // EXACTLY the block-diagonal operator algebra: half the operator
+    // space, with cross-block gates measurably outside it.
+    type HH = DirectSum<Quaternion, Quaternion>;
+    assert_eq!(algebra_capacity::<HH>(), 2);
+    let report = dual_algebra_report::<HH>().unwrap();
+    assert_eq!(report.operator_space, 64);
+    assert_eq!(
+        report.sandwich_rank, 32,
+        "blockwise multiplication spans exactly the block-diagonals"
+    );
+    assert!(
+        report.max_linear_residual > 0.1,
+        "cross-block gates are outside the span: {}",
+        report.max_linear_residual
+    );
+    assert!(
+        report.embedded_linear,
+        "diagonal embedding scales both blocks"
+    );
+
+    // Block-diagonal gates synthesize exactly: CZ over (bit 0 = within
+    // block, bit 1 = which block) touches no cross-block entry.
+    let mut cz = vec![c64(0.0, 0.0); 16];
+    for (i, phase) in [1.0, 1.0, 1.0, -1.0].iter().enumerate() {
+        cz[i * 4 + i] = c64(*phase, 0.0);
+    }
+    let (_, cz_residual) = synthesize_sandwich::<HH>(&cz).unwrap();
+    assert!(cz_residual < 1e-10, "{cz_residual}");
+
+    // SWAP(bit0, bit1) moves weight between the blocks: unreachable.
+    let mut swap = vec![c64(0.0, 0.0); 16];
+    for (r, c) in [(0, 0), (1, 2), (2, 1), (3, 3)] {
+        swap[r * 4 + c] = c64(1.0, 0.0);
+    }
+    let (_, swap_residual) = synthesize_sandwich::<HH>(&swap).unwrap();
+    assert!(
+        swap_residual > 0.1,
+        "the block boundary is measurable: {swap_residual}"
+    );
+
+    // The boundary costs routing, never correctness: the register over
+    // H ⊕ H conforms over the full registry (cross-block gates run
+    // through the component path).
+    let mut sim: Simulator = Simulator::new();
+    sim.backends_mut()
+        .register("algebraic-hh", |n| {
+            Ok(Box::new(algebraic_over_sparse::<HH>(n, 2)?))
+        })
+        .unwrap();
+    let conf = verify_backend(&sim, "algebraic-hh", &ConformanceConfig::default()).unwrap();
+    assert!(conf.passed(), "{conf}");
+}
+
+#[test]
+#[ignore = "the 32-dim basis SVD takes ~17 s; run with --ignored to reproduce"]
+fn the_fourth_doubling_keeps_the_span_full() {
+    // CD⟨S⟩ — trigintaduonions, 32-dim, a 4-qubit qudit per scalar:
+    // the sandwich span measures FULL even here (1024 of 1024,
+    // residual ~1e-15).
+    let t = dual_algebra_report::<Trigintaduonion>().unwrap();
+    assert_eq!(t.operator_space, 1024);
+    assert_eq!(t.sandwich_rank, 1024);
+    assert!(t.max_linear_residual < 1e-9, "{}", t.max_linear_residual);
+    assert!(!t.embedded_linear);
+}
+
+#[test]
+fn wide_sampling_beyond_the_ceiling() {
+    // 67 logical qubits — 63 sparse sites × a 4-qubit trigintaduonion
+    // qudit — sampled by Born weight over (site, component) parts.
+    assert_eq!(algebra_capacity::<Trigintaduonion>(), 4);
+    let n = 67;
+    let mut state = algebraic_over_sparse::<Trigintaduonion>(n, 4).unwrap();
+    assert_eq!(state.logical_qubits(), 67);
+    let reg = GateRegistry::<C64>::standard();
+    library::ghz(n).bind(&reg).unwrap().run(&mut state).unwrap();
+
+    let f = std::f64::consts::FRAC_1_SQRT_2;
+    let all_sites = (1u64 << 63) - 1;
+    assert_close(state.amplitude_parts(0, 0).re, f, TOL);
+    assert_close(state.amplitude_parts(all_sites, 0b1111).re, f, TOL);
+    assert_eq!(state.site_support(), 2);
+    assert_close(state.probability_parts(0, 0), 0.5, TOL);
+
+    let counts = state.sample_parts(2000, &mut Prng::new(11)).unwrap();
+    assert_eq!(counts.len(), 2, "GHZ samples exactly two outcomes");
+    let zeros = counts.get(&(0, 0)).copied().unwrap_or(0);
+    let ones = counts.get(&(all_sites, 0b1111)).copied().unwrap_or(0);
+    assert_eq!(zeros + ones, 2000);
+    assert!(
+        (700..=1300).contains(&zeros),
+        "fair coin within tolerance: {zeros}"
+    );
 }
 
 #[test]

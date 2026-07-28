@@ -46,11 +46,22 @@ fn main() -> Result<()> {
             name, r.sandwich_rank, r.operator_space, r.max_linear_residual, r.embedded_linear
         );
     }
-    println!("  full rank at every level: EVERY C-linear qudit gate is exactly a sum of");
-    println!("  (a·x)·b terms — the algebra acting on itself from both sides resolves the");
-    println!("  whole endomorphism ring, zero divisors (S) and non-associativity (O, S)");
-    println!("  notwithstanding. The embedded-C twist past H is measured, and routes site");
-    println!("  gates through the component path there.");
+    let hh = dual_algebra_report::<DirectSum<Quaternion, Quaternion>>()?;
+    println!(
+        "  {:<26} {:>9} {:>12} {:>13.2e} {:>16}",
+        "H(+)H (2 blocks × 1 qb)",
+        hh.sandwich_rank,
+        hh.operator_space,
+        hh.max_linear_residual,
+        hh.embedded_linear
+    );
+    println!("  full rank at every CD level: EVERY C-linear qudit gate is exactly a sum of");
+    println!("  (a·x)·b terms — zero divisors (S) and non-associativity (O, S)");
+    println!("  notwithstanding (the fifth doubling CD<S> measures 1024/1024 too:");
+    println!("  `cargo test -- --ignored`, ~17 s). The DIRECT SUM row is the boundary made");
+    println!("  measurable: blockwise multiplication spans exactly the block-diagonals");
+    println!("  (32 of 64) — cross-block gates fall outside the span (residual ~1) and");
+    println!("  route through the component path, costing routing, never correctness.");
 
     // A concrete synthesis: Hadamard on the quaternion qudit.
     let f = std::f64::consts::FRAC_1_SQRT_2;
@@ -140,17 +151,19 @@ fn main() -> Result<()> {
     println!("  the same physics at every split — the register's SHAPE is a free knob,");
     println!("  and the site sector keeps its sparse structure (support counts sites).");
 
-    // Native vs component routing, measured.
+    // Native / sandwich / component routing, measured.
     let stats_h = h20.stats();
     let stats_o = o20.stats();
     println!(
-        "  routing (measured embedded-linearity): H split ran {} gates native / {} component;",
-        stats_h.native_site_gates, stats_h.component_gates
+        "  routing (measured): H split ran {} site-native / {} sandwich / {} component;",
+        stats_h.native_site_gates, stats_h.sandwich_gates, stats_h.component_gates
     );
     println!(
-        "  O split ran {} native / {} component (the twist forbids the native path).",
-        stats_o.native_site_gates, stats_o.component_gates
+        "  O split ran {} site-native / {} sandwich / {} component — algebra-sector",
+        stats_o.native_site_gates, stats_o.sandwich_gates, stats_o.component_gates
     );
+    println!("  gates EXECUTE as two-sided multiplications on the stored scalars (cached");
+    println!("  synthesis); only boundary-straddling gates need the component sweep.");
 
     // ── 3. Beyond the flat indexing ceiling ──────────────────────────
     println!("\n── 66 logical qubits: past the u64 ceiling of every flat register");
@@ -176,6 +189,21 @@ fn main() -> Result<()> {
         fmt_bytes(wide.memory_bytes())
     );
     println!("  whose flat basis index would not fit a machine word.");
+
+    // One more doubling: 67 logical qubits, sampled.
+    let mut wider = AlgebraicRegister::<Trigintaduonion>::new(
+        63,
+        4,
+        Box::new(SparseState::<Trigintaduonion>::new(63)?),
+    )?;
+    library::ghz(67).bind(&reg)?.run(&mut wider)?;
+    let counts = wider.sample_parts(2000, &mut Prng::new(11))?;
+    let mut lines: Vec<(u64, usize, u64)> = counts.iter().map(|(&(s, c), &n)| (s, c, n)).collect();
+    lines.sort_unstable();
+    println!("  67 logical qubits (63 sites × CD<S>-qudit), ghz-67 sampled, 2000 shots:");
+    for (site, comp, n) in lines {
+        println!("    site {site:#018x} · component {comp:04b} : {n}");
+    }
 
     // ── 4. Conformance, priced by the harness ────────────────────────
     println!("\n── the hierarchical registers through the workload harness (verified in-run)");

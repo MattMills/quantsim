@@ -122,14 +122,23 @@ parts are swappable:
   Gates on algebra qubits are synthesized from the **dual-algebra** —
   the algebra acting on itself from left and right (`A ⊗ A^op`) — and
   the sandwich span is *measured*: full operator-space rank at every
-  doubling level (16/16, 64/64, 256/256; residuals ~1e-15), zero
-  divisors and non-associativity notwithstanding, so every ℂ-linear
-  qudit gate is exactly a sum of `(a·x)·b` terms. Whether the
-  embedded-ℂ action is component-linear is measured per scalar (true
-  for ℍ, twisted from 𝕆 on) and routes site gates native vs component.
-  Conformance-swept over the full registry; and the flat u64 indexing
-  ceiling breaks: 66 exact logical qubits (63 sparse sites × a 𝕊
-  qudit) addressed as (site, component) parts.
+  doubling level (16/16, 64/64, 256/256, and 1024/1024 at the fifth
+  doubling `Trigintaduonion`; residuals ~1e-15), zero divisors and
+  non-associativity notwithstanding, so every ℂ-linear qudit gate is
+  exactly a sum of `(a·x)·b` terms — and the synthesis **executes**:
+  algebra-sector gates run as actual two-sided multiplications on the
+  stored scalars (cached, counted, dust-snapped, with the exact
+  component path as fallback and A/B toggle). The boundary is
+  measurable too: a `DirectSum` scalar multiplies blockwise, so its
+  span is exactly the block-diagonals (32/64 on ℍ⊕ℍ, cross-block
+  residual ~1) — such gates route through the component path, costing
+  routing, never correctness. Whether the embedded-ℂ action is
+  component-linear is measured per scalar (true for ℍ and diagonal
+  direct sums, twisted from 𝕆 on) and routes site gates native vs
+  component. Conformance-swept over the full registry (including the
+  ℍ⊕ℍ register); and the flat u64 indexing ceiling breaks: 66–67
+  exact logical qubits (63 sparse sites × 𝕊 or `CD⟨𝕊⟩` qudits)
+  addressed and *Born-sampled* as (site, component) parts.
 - **Local frames** ([`FramedState`](src/backend/frames.rs)) — deferred
   per-qubit basis changes as representation metadata over *any* inner
   backend: 1q gates absorb for free (inverse pairs cancel without touching
@@ -298,8 +307,10 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 270 tests (43 unit + 223 across twenty-four
-integration suites + 4 doctests);
+`cargo test` runs 273 tests (43 unit + 226 across twenty-four
+integration suites + 4 doctests; one more — the 17 s measurement that
+the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
+and runs with `-- --ignored`);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
 entirely trivial accessors and defensive guards:
 
@@ -360,16 +371,22 @@ entirely trivial accessors and defensive guards:
   the identical runs complete once the budget lifts.
 - **algebraic_qudits** — the hierarchical register: qudit coordinates
   roundtrip with the documented bit order; the dual-algebra operator
-  space measured per doubling level (full rank pinned at ℍ/𝕆/𝕊,
-  synthesized sandwiches verified operationally against their
-  matrices); full-registry conformance at ℍ and 𝕆 splits with
-  native/component routing chosen by measured embedded-linearity; the
-  encoding exact across the site↔algebra boundary and certified
-  against D[ω] at every split; projection/feedback on algebra qubits
-  collapsing the joint state; 66 logical qubits exceeding every flat
-  backend's u64 ceiling; site-sector structure surviving (support
-  counts sites); and the workload harness pricing the hierarchical
-  shapes in-run against dense.
+  space measured per doubling level (full rank pinned at ℍ/𝕆/𝕊, the
+  fifth doubling `#[ignore]`d at 1024/1024, synthesized sandwiches
+  verified operationally against their matrices); **sandwich-native
+  execution** identical to the component path with the counters proving
+  which ran and the synthesis cache pinned; the **direct-sum boundary**
+  (ℍ⊕ℍ span exactly the block-diagonals 32/64, cross-block SWAP
+  measurably outside, register still fully conformant through the
+  component path); full-registry conformance at ℍ, 𝕆 and ℍ⊕ℍ splits
+  with routing chosen by measured embedded-linearity; the encoding
+  exact across the site↔algebra boundary and certified against D[ω] at
+  every split; projection/feedback on algebra qubits collapsing the
+  joint state; 66–67 logical qubits exceeding every flat backend's u64
+  ceiling, with deterministic Born sampling over (site, component)
+  parts; site-sector structure surviving (support counts sites); and
+  the workload harness pricing the hierarchical shapes in-run against
+  dense.
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally

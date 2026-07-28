@@ -129,7 +129,8 @@ pub mod prelude {
     pub use crate::registry::GateRegistry;
     pub use crate::rng::Prng;
     pub use crate::scalar::{
-        Ball, CComplex, Octonion, Quaternion, Scalar, Sedenion, SplitComplex, C64, CD,
+        Ball, CComplex, DirectSum, Octonion, Quaternion, Scalar, Sedenion, SplitComplex,
+        Trigintaduonion, C64, CD,
     };
     pub use crate::schedule::{
         FeedbackOp, GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace,

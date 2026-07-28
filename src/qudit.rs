@@ -24,9 +24,21 @@
 //! the qudit's real operator space the sandwich span actually resolves
 //! and whether every ℂ-linear gate is reachable; [`synthesize_sandwich`]
 //! solves a concrete gate into sandwich terms with a measured residual.
-//! Nothing is assumed: where the tower's twist breaks a property (the
-//! embedded-ℂ action stops being component-linear past ℍ; sedenion
-//! zero divisors), the report says so and the register routes around it.
+//! Measured on the tower: the span is FULL at every level tried —
+//! 16/16 (ℍ), 64/64 (𝕆), 256/256 (𝕊), 1024/1024
+//! ([`Trigintaduonion`](crate::scalar::Trigintaduonion), the fifth
+//! doubling) — and synthesis is not just verified but **executed**:
+//! algebra-sector gates run as actual two-sided multiplications on the
+//! stored scalars (the sandwich-native path, cached per gate, counted
+//! in [`QuditStats::sandwich_gates`], with the component path as the
+//! measured fallback). Nothing is assumed: where structure bounds the
+//! span, the residual shows it — a
+//! [`DirectSum`](crate::scalar::DirectSum) scalar multiplies blockwise,
+//! so its sandwiches span exactly the block-diagonal operators and
+//! cross-block gates measurably fall outside (they still run exactly,
+//! through the component path). Where the tower's twist breaks a
+//! property (the embedded-ℂ action stops being component-linear past
+//! ℍ), the report says so and the register routes around it.
 //!
 //! **Honesty about feasibility.** For *arbitrary* states this is a
 //! reshaping, not a compression: `2^m` sites of `2^k`-dimensional
@@ -314,10 +326,13 @@ pub fn dual_algebra_report<A: Scalar>() -> Result<DualAlgebraReport> {
 pub struct QuditStats {
     /// Gates on site qubits delegated natively to the inner backend.
     pub native_site_gates: usize,
-    /// Gates routed through the component path (algebra-touching, or
+    /// Gates routed through the component path (mixed site/algebra, or
     /// site gates on a scalar whose embedded action is not
-    /// component-linear).
+    /// component-linear, or algebra gates whose synthesis fell short).
     pub component_gates: usize,
+    /// Algebra-sector gates executed as dual-algebra sandwiches —
+    /// actual two-sided multiplications on the stored scalars.
+    pub sandwich_gates: usize,
 }
 
 /// The hierarchical register: `site_qubits` handled by any inner
@@ -335,6 +350,14 @@ pub struct AlgebraicRegister<A: Scalar> {
     algebra_qubits: usize,
     embedded_linear: bool,
     stats: QuditStats,
+    sandwich_native: bool,
+    synthesis_dim_cap: usize,
+    #[allow(clippy::type_complexity)]
+    sandwich_cache: HashMap<(Vec<u64>, Vec<usize>), Option<SandwichOp<A>>>,
+    /// `Some(e₀)` when the scalar's `one()` is not the first component
+    /// (direct sums embed diagonally): the register re-initializes the
+    /// inner state so |0…0⟩ starts every algebra qubit at |0⟩.
+    initial_fix: Option<A>,
 }
 
 impl<A: Scalar> AlgebraicRegister<A> {
@@ -359,13 +382,51 @@ impl<A: Scalar> AlgebraicRegister<A> {
                 A::algebra_name()
             )));
         }
-        Ok(AlgebraicRegister {
+        // The encoding starts the algebra sector at |0…0⟩, i.e. the
+        // amplitude of site |0…0⟩ must be the first-component unit e₀.
+        // The CD tower's one() IS e₀; a direct sum's one() = (1, 1) is
+        // not — detect and correct, at construction and on reset.
+        let e0: A = {
+            let cap = A::DIM / 2;
+            let mut comps = vec![C64::new(0.0, 0.0); cap];
+            comps[0] = C64::new(1.0, 0.0);
+            from_components(&comps)
+        };
+        let initial_fix = if A::one().approx_eq(e0, 1e-15) {
+            None
+        } else {
+            Some(e0)
+        };
+        let mut register = AlgebraicRegister {
             inner,
             site_qubits,
             algebra_qubits,
             embedded_linear: embedded_action_is_component_linear::<A>(),
             stats: QuditStats::default(),
-        })
+            sandwich_native: true,
+            synthesis_dim_cap: 16,
+            sandwich_cache: HashMap::new(),
+            initial_fix,
+        };
+        if let Some(e0) = register.initial_fix {
+            register.inner.load(&[(0, e0)])?;
+        }
+        Ok(register)
+    }
+
+    /// Enable or disable the sandwich-native path for algebra-sector
+    /// gates (on by default). Off, every algebra gate takes the
+    /// component path — useful for A/B measurement; results are
+    /// identical either way.
+    pub fn set_sandwich_native(&mut self, on: bool) {
+        self.sandwich_native = on;
+    }
+
+    /// Largest scalar dimension for which algebra gates attempt
+    /// dual-algebra synthesis (default 16 = up to 𝕊; the 32-dim
+    /// tower's basis SVD costs ~seconds, so it is opt-in).
+    pub fn set_synthesis_dim_cap(&mut self, dim: usize) {
+        self.synthesis_dim_cap = dim;
     }
 
     /// Site-sector width.
@@ -417,6 +478,128 @@ impl<A: Scalar> AlgebraicRegister<A> {
                 }
             }
         });
+    }
+
+    /// Probability of one (site, component) basis state — wide-safe.
+    pub fn probability_parts(&self, site: u64, component: usize) -> f64 {
+        self.amplitude_parts(site, component).norm_sqr()
+    }
+
+    /// Deterministic Born sampling over (site index, component) parts —
+    /// the wide counterpart of [`Backend::sample`], valid at any
+    /// logical width.
+    pub fn sample_parts(
+        &self,
+        shots: u64,
+        rng: &mut crate::rng::Prng,
+    ) -> Result<HashMap<(u64, usize), u64>> {
+        let mut entries: Vec<((u64, usize), f64)> = Vec::new();
+        self.for_each_nonzero_parts(&mut |site, comp, z| {
+            let w = z.norm_sqr();
+            if w > 0.0 {
+                entries.push(((site, comp), w));
+            }
+        });
+        entries.sort_unstable_by_key(|&(key, _)| key);
+        let mut cumulative = 0.0;
+        for e in &mut entries {
+            cumulative += e.1;
+            e.1 = cumulative;
+        }
+        if cumulative <= 0.0 || !cumulative.is_finite() {
+            return Err(Error::InvalidState(format!(
+                "total Born weight {cumulative} is not positive; cannot sample"
+            )));
+        }
+        let mut counts: HashMap<(u64, usize), u64> = HashMap::new();
+        for _ in 0..shots {
+            let u = rng.next_f64() * cumulative;
+            let hit = entries.partition_point(|&(_, c)| c <= u);
+            let key = entries[hit.min(entries.len() - 1)].0;
+            *counts.entry(key).or_insert(0) += 1;
+        }
+        Ok(counts)
+    }
+
+    /// The gate embedded on the scalar's FULL component space: entries
+    /// act on the involved algebra bits, identity elsewhere.
+    fn embed_on_capacity(matrix: &GateMatrix<C64>, alg_bits: &[usize]) -> Vec<C64> {
+        let cap = A::DIM / 2;
+        let mut full = vec![C64::new(0.0, 0.0); cap * cap];
+        let outside_mask = {
+            let involved: usize = alg_bits.iter().map(|&b| 1usize << b).sum();
+            !involved & (cap - 1)
+        };
+        for r in 0..cap {
+            for c in 0..cap {
+                if r & outside_mask != c & outside_mask {
+                    continue;
+                }
+                let sub = |x: usize| -> usize {
+                    alg_bits
+                        .iter()
+                        .enumerate()
+                        .map(|(g, &b)| ((x >> b) & 1) << g)
+                        .sum()
+                };
+                full[r * cap + c] = matrix.get(sub(r), sub(c));
+            }
+        }
+        full
+    }
+
+    /// Try the sandwich-native path for an algebra-only gate: fetch or
+    /// synthesize the dual-algebra operator, and if the measured
+    /// residual is negligible, execute it as actual two-sided
+    /// multiplications on every stored scalar. Returns `false` when the
+    /// gate is outside the sandwich span (the caller falls back to the
+    /// component path).
+    fn try_sandwich_apply(&mut self, matrix: &GateMatrix<C64>, qubits: &[usize]) -> Result<bool> {
+        let alg_bits: Vec<usize> = qubits.iter().map(|&q| q - self.site_qubits).collect();
+        let key = (
+            matrix
+                .data()
+                .iter()
+                .flat_map(|z| [z.re.to_bits(), z.im.to_bits()])
+                .collect::<Vec<u64>>(),
+            alg_bits.clone(),
+        );
+        if !self.sandwich_cache.contains_key(&key) {
+            let full = Self::embed_on_capacity(matrix, &alg_bits);
+            let entry = match synthesize_sandwich::<A>(&full) {
+                Ok((op, residual)) if residual < 1e-10 => Some(op),
+                _ => None,
+            };
+            self.sandwich_cache.insert(key.clone(), entry);
+        }
+        let Some(op) = self.sandwich_cache.get(&key).and_then(|e| e.clone()) else {
+            return Ok(false);
+        };
+        let mut entries: Vec<(u64, A)> = Vec::new();
+        self.inner.for_each_nonzero(&mut |site, x| {
+            // The algebra multiplications leave machine-precision dust
+            // (~1e-16) in components an exact 0.0 matrix entry keeps
+            // exactly zero — snap it (relative 1e-13, far above the
+            // dust, far below any meaningful amplitude ratio) so
+            // support counts stay honest on the native path too.
+            let y = op.apply(x);
+            let floor = 1e-13 * y.abs_sqr().sqrt();
+            let comps: Vec<C64> = components::<A>(y)
+                .into_iter()
+                .map(|z| {
+                    if z.norm() <= floor {
+                        C64::new(0.0, 0.0)
+                    } else {
+                        z
+                    }
+                })
+                .collect();
+            entries.push((site, from_components::<A>(&comps)));
+        });
+        entries.retain(|(_, x)| x.abs_sqr() > 0.0);
+        self.inner.load(&entries)?;
+        self.stats.sandwich_gates += 1;
+        Ok(true)
     }
 
     fn assert_indexable(&self) {
@@ -590,6 +773,14 @@ impl<A: Scalar> Backend<C64> for AlgebraicRegister<A> {
             self.stats.native_site_gates += 1;
             return self.inner.apply(&embedded, qubits);
         }
+        let algebra_only = qubits.iter().all(|&q| q >= self.site_qubits);
+        if algebra_only
+            && self.sandwich_native
+            && A::DIM <= self.synthesis_dim_cap
+            && self.try_sandwich_apply(matrix, qubits)?
+        {
+            return Ok(());
+        }
         self.component_apply(matrix, qubits)
     }
 
@@ -671,6 +862,11 @@ impl<A: Scalar> Backend<C64> for AlgebraicRegister<A> {
 
     fn reset(&mut self) {
         self.inner.reset();
+        if let Some(e0) = self.initial_fix {
+            self.inner
+                .load(&[(0, e0)])
+                .expect("the corrected initial state is valid");
+        }
     }
 
     fn load(&mut self, entries: &[(u64, C64)]) -> Result<()> {

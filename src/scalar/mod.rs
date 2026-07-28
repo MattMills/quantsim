@@ -34,11 +34,13 @@
 mod ball;
 mod cayley_dickson;
 mod complex;
+mod direct_sum;
 mod real;
 mod split_complex;
 
 pub use ball::Ball;
-pub use cayley_dickson::{CComplex, Octonion, Quaternion, Sedenion, CD};
+pub use cayley_dickson::{CComplex, Octonion, Quaternion, Sedenion, Trigintaduonion, CD};
+pub use direct_sum::DirectSum;
 pub use split_complex::SplitComplex;
 
 /// The default amplitude type: `num_complex::Complex<f64>`.
