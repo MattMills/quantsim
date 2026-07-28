@@ -637,6 +637,506 @@ pub mod rep {
     }
 }
 
+/// The infinite E8 constellation: E8 copies positioned at the points
+/// of E8 itself, one scale level per copy — the recursion that expands
+/// the 8-qubit representation to any register width.
+///
+/// The measured foundation is the coset structure **E8/2E8 ≅ F₂⁸**:
+/// exactly 256 classes, represented by the origin, the 120 antipodal
+/// root pairs (on the √2-sphere), and 135 frames of 16 among the 2160
+/// norm-2 vectors (on the 2-sphere) — 1 + 120 + 135 = 256 = one byte,
+/// verified here by exact integer arithmetic, not quoted. So "the
+/// identity position of *this* E8" is one byte choosing a point on the
+/// concentric shells of the parent copy at doubled scale, and the
+/// recursion never ends: [`compose`](constellation::compose) maps an
+/// m-digit string to the lattice point `Σ 2ᵏ·rep(digitₖ)`, a bijection
+/// onto `E8/2^m E8` (measured), self-similar under doubling (doubling
+/// a point prepends digit 0). An n-qubit basis state **is** one E8
+/// point known to resolution `2^⌈n/8⌉`.
+///
+/// [`E8ConstellationState`](constellation::E8ConstellationState)
+/// makes this a first-class backend
+/// (`"e8-constellation"`): amplitudes keyed by the lattice points
+/// themselves, at any width up to the trait's 63-qubit u64 index wall
+/// — past the single-copy representation's native 8.
+pub mod constellation {
+    use crate::backend::Backend;
+    use crate::scalar::C64;
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+
+    /// A lattice point in doubled coordinates, wide enough for deep
+    /// scale towers (a depth-m tower needs coordinates up to `2^{m+2}`).
+    pub type Point = [i64; 8];
+
+    /// Which concentric shell of its scale level a coset digit's
+    /// canonical point occupies.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Shell {
+        /// The origin (class 0 only).
+        Center,
+        /// The 240-root sphere, real radius √2 (120 classes).
+        RootSphere,
+        /// The 2160-vector sphere, real radius 2 (135 classes).
+        FrameSphere,
+    }
+
+    impl Shell {
+        /// Real squared radius of the shell (0, 2 or 4).
+        pub fn radius_sqr(self) -> i64 {
+            match self {
+                Shell::Center => 0,
+                Shell::RootSphere => 2,
+                Shell::FrameSphere => 4,
+            }
+        }
+    }
+
+    /// The 2160 norm-2 vectors of E8 in doubled coordinates (doubled
+    /// dot = 16), constructed by shape and verified: `±2eᵢ` (16),
+    /// `±eᵢ±eⱼ±eₖ±eₗ` (1120) and the odd-spinor `(±3/2, (±1/2)⁷)`
+    /// family with the lattice parity condition (1024).
+    pub fn norm4_vectors() -> Vec<Point> {
+        let mut out = Vec::with_capacity(2160);
+        for i in 0..8 {
+            for s in [4i64, -4] {
+                let mut v = [0i64; 8];
+                v[i] = s;
+                out.push(v);
+            }
+        }
+        for mask in 0u32..256 {
+            if mask.count_ones() == 4 {
+                for signs in 0u32..16 {
+                    let mut v = [0i64; 8];
+                    let mut bit = 0;
+                    for (slot, item) in v.iter_mut().enumerate() {
+                        if (mask >> slot) & 1 == 1 {
+                            *item = if (signs >> bit) & 1 == 1 { -2 } else { 2 };
+                            bit += 1;
+                        }
+                    }
+                    out.push(v);
+                }
+            }
+        }
+        for pos in 0..8 {
+            for signs in 0u32..256 {
+                let v: Point = std::array::from_fn(|i| {
+                    let mag = if i == pos { 3 } else { 1 };
+                    if (signs >> i) & 1 == 1 {
+                        -mag
+                    } else {
+                        mag
+                    }
+                });
+                if v.iter().sum::<i64>().rem_euclid(4) == 0 {
+                    out.push(v);
+                }
+            }
+        }
+        for v in &out {
+            debug_assert_eq!(v.iter().map(|c| c * c).sum::<i64>(), 16);
+        }
+        assert_eq!(out.len(), 2160, "the norm-2 shell of E8 has 2160 vectors");
+        out
+    }
+
+    /// A Z-basis of E8 in doubled coordinates (lower triangular, so
+    /// its determinant 4·2⁶·1 = 256 = 2⁸ is the doubling of a
+    /// unimodular real basis — re-verified at context build).
+    const BASIS: [[i64; 8]; 8] = [
+        [4, 0, 0, 0, 0, 0, 0, 0],
+        [-2, 2, 0, 0, 0, 0, 0, 0],
+        [0, -2, 2, 0, 0, 0, 0, 0],
+        [0, 0, -2, 2, 0, 0, 0, 0],
+        [0, 0, 0, -2, 2, 0, 0, 0],
+        [0, 0, 0, 0, -2, 2, 0, 0],
+        [0, 0, 0, 0, 0, -2, 2, 0],
+        [1, 1, 1, 1, 1, 1, 1, 1],
+    ];
+
+    /// Fraction-free (Bareiss) determinant — exact integer arithmetic.
+    fn bareiss_det(mut a: Vec<Vec<i128>>) -> i128 {
+        let n = a.len();
+        let mut sign = 1i128;
+        let mut prev = 1i128;
+        for k in 0..n {
+            if a[k][k] == 0 {
+                let Some(swap) = (k + 1..n).find(|&r| a[r][k] != 0) else {
+                    return 0;
+                };
+                a.swap(k, swap);
+                sign = -sign;
+            }
+            for i in (k + 1)..n {
+                for j in (k + 1)..n {
+                    a[i][j] = (a[i][j] * a[k][k] - a[i][k] * a[k][j]) / prev;
+                }
+                a[i][k] = 0;
+            }
+            prev = a[k][k];
+        }
+        sign * a[n - 1][n - 1]
+    }
+
+    struct Ctx {
+        /// Adjugate of the basis-column matrix: coordinates are
+        /// `adj·p / det`, exact for lattice points.
+        adj: [[i64; 8]; 8],
+        det: i64,
+        reps: [Point; 256],
+        shells: [Shell; 256],
+    }
+
+    fn class_with(adj: &[[i64; 8]; 8], det: i64, p: &Point) -> Option<u8> {
+        let mut class = 0u8;
+        for (i, row) in adj.iter().enumerate() {
+            let acc: i128 = row
+                .iter()
+                .zip(p)
+                .map(|(&a, &x)| a as i128 * x as i128)
+                .sum();
+            if acc % det as i128 != 0 {
+                return None; // not an E8 point
+            }
+            let coord = acc / det as i128;
+            class |= ((coord.rem_euclid(2)) as u8) << i;
+        }
+        Some(class)
+    }
+
+    fn ctx() -> &'static Ctx {
+        static CTX: OnceLock<Ctx> = OnceLock::new();
+        CTX.get_or_init(|| {
+            // Basis vectors as COLUMNS: p = M·c for coordinate vector c.
+            let m: Vec<Vec<i128>> = (0..8)
+                .map(|i| (0..8).map(|j| BASIS[j][i] as i128).collect())
+                .collect();
+            let det128 = bareiss_det(m.clone());
+            assert_eq!(det128.abs(), 256, "doubled E8 basis must have |det| 2⁸");
+            // Adjugate via cofactors: adj[i][j] = (−1)^{i+j}·minor(j, i).
+            let mut adj = [[0i64; 8]; 8];
+            for (i, row) in adj.iter_mut().enumerate() {
+                for (j, slot) in row.iter_mut().enumerate() {
+                    let minor: Vec<Vec<i128>> = (0..8)
+                        .filter(|&r| r != j)
+                        .map(|r| (0..8).filter(|&c| c != i).map(|c| m[r][c]).collect())
+                        .collect();
+                    let sign = if (i + j) % 2 == 0 { 1 } else { -1 };
+                    *slot = (sign * bareiss_det(minor)) as i64;
+                }
+            }
+            let det = det128 as i64;
+            // Verify M·adj = det·I exactly.
+            for (r, m_row) in m.iter().enumerate() {
+                for c in 0..8 {
+                    let acc: i128 = m_row
+                        .iter()
+                        .zip(&adj)
+                        .map(|(&mv, adj_row)| mv * adj_row[c] as i128)
+                        .sum();
+                    assert_eq!(acc, if r == c { det128 } else { 0 }, "adjugate check");
+                }
+            }
+            // The 256 classes, measured from the shells: origin, the
+            // 240 roots, the 2160 norm-2 vectors.
+            let mut buckets: HashMap<u8, Vec<Point>> = HashMap::new();
+            buckets.insert(
+                class_with(&adj, det, &[0; 8]).expect("origin"),
+                vec![[0; 8]],
+            );
+            for r in super::roots() {
+                let p: Point = std::array::from_fn(|k| r[k] as i64);
+                let c = class_with(&adj, det, &p).expect("roots are lattice points");
+                buckets.entry(c).or_default().push(p);
+            }
+            for p in norm4_vectors() {
+                let c = class_with(&adj, det, &p).expect("norm-2 shell is in the lattice");
+                buckets.entry(c).or_default().push(p);
+            }
+            assert_eq!(buckets.len(), 256, "E8/2E8 must have 2⁸ classes");
+            let mut reps = [[0i64; 8]; 256];
+            let mut shells = [Shell::Center; 256];
+            let (mut singles, mut pairs, mut frames) = (0, 0, 0);
+            for (c, mut members) in buckets {
+                members.sort_unstable();
+                let rep = members[0];
+                let norm: i64 = rep.iter().map(|x| x * x).sum();
+                let shell = match (members.len(), norm) {
+                    (1, 0) => {
+                        singles += 1;
+                        Shell::Center
+                    }
+                    (2, 8) => {
+                        pairs += 1;
+                        Shell::RootSphere
+                    }
+                    (16, 16) => {
+                        frames += 1;
+                        Shell::FrameSphere
+                    }
+                    other => panic!("impossible coset structure {other:?}"),
+                };
+                reps[c as usize] = rep;
+                shells[c as usize] = shell;
+            }
+            assert_eq!(
+                (singles, pairs, frames),
+                (1, 120, 135),
+                "coset census: origin + root pairs + frames"
+            );
+            Ctx {
+                adj,
+                det,
+                reps,
+                shells,
+            }
+        })
+    }
+
+    /// The 8-bit coset address of a lattice point — the coordinates of
+    /// `E8/2E8 ≅ F₂⁸`, computed exactly. `None` when the doubled
+    /// coordinates are not an E8 point at all. The map is linear:
+    /// `class(x + y) = class(x) XOR class(y)` (measured in tests).
+    pub fn class_of(p: &Point) -> Option<u8> {
+        let c = ctx();
+        class_with(&c.adj, c.det, p)
+    }
+
+    /// The canonical (lexicographically least) representative of a
+    /// coset class — the origin, a root, or a norm-2 frame vector.
+    pub fn representative(class: u8) -> Point {
+        ctx().reps[class as usize]
+    }
+
+    /// The shell the class representative occupies — the "sphere" a
+    /// constellation digit points at.
+    pub fn shell_of(class: u8) -> Shell {
+        ctx().shells[class as usize]
+    }
+
+    /// Position of a digit string in the constellation: the lattice
+    /// point `Σ 2ᵏ·rep(digitₖ)`. Digit k is the coset address at scale
+    /// `2ᵏ`; the map is a bijection onto `E8/2^m E8` (measured) and
+    /// self-similar (doubling a point prepends digit 0).
+    pub fn compose(digits: &[u8]) -> Point {
+        assert!(digits.len() < 60, "tower depth would overflow i64");
+        let mut out = [0i64; 8];
+        for (k, &d) in digits.iter().enumerate() {
+            let rep = representative(d);
+            for (slot, &r) in out.iter_mut().zip(&rep) {
+                *slot += r << k;
+            }
+        }
+        out
+    }
+
+    /// Recover the first `levels` constellation digits of a lattice
+    /// point (inverse of [`compose`] on composed points). `None` when
+    /// the input is not an E8 point.
+    pub fn decompose(point: &Point, levels: usize) -> Option<Vec<u8>> {
+        let mut x = *point;
+        let mut digits = Vec::with_capacity(levels);
+        for _ in 0..levels {
+            let c = class_of(&x)?;
+            digits.push(c);
+            let rep = representative(c);
+            for (slot, &r) in x.iter_mut().zip(&rep) {
+                debug_assert_eq!((*slot - r) % 2, 0, "x − rep(class(x)) lies in 2E8");
+                *slot = (*slot - r) / 2;
+            }
+        }
+        Some(digits)
+    }
+
+    /// The constellation as a first-class qubit [`Backend`], named
+    /// `"e8-constellation"`: amplitudes keyed by **lattice points** —
+    /// residues in `E8/2^m E8` with `m = ⌈n/8⌉` — so a basis state is
+    /// literally a position in the scale tower, at any width up to the
+    /// trait's 63-qubit u64 index wall (the same wall sparse has; the
+    /// geometry itself is unbounded). Gate application converts
+    /// through the measured tower bijection; that conversion cost is
+    /// what the benchmark harness prices.
+    pub struct E8ConstellationState {
+        num_qubits: usize,
+        levels: usize,
+        amps: HashMap<Point, C64>,
+    }
+
+    impl E8ConstellationState {
+        /// A fresh register of `n ≤ 63` qubits, `⌈n/8⌉` scale levels.
+        pub fn new(num_qubits: usize) -> crate::error::Result<Self> {
+            if num_qubits > 63 {
+                return Err(crate::error::Error::TooManyQubits {
+                    requested: num_qubits,
+                    max: 63,
+                });
+            }
+            let mut amps = HashMap::new();
+            amps.insert([0i64; 8], C64::new(1.0, 0.0));
+            Ok(E8ConstellationState {
+                num_qubits,
+                levels: num_qubits.div_ceil(8),
+                amps,
+            })
+        }
+
+        /// The stored support as constellation points, sorted — the
+        /// representation's native coordinates.
+        pub fn stored_points(&self) -> Vec<Point> {
+            let mut points: Vec<Point> = self.amps.keys().copied().collect();
+            points.sort_unstable();
+            points
+        }
+
+        /// Per-level shell occupation over the stored support:
+        /// `census[k] = [center, root-sphere, frame-sphere]` counts of
+        /// the level-k digits — the state's measured geography in the
+        /// constellation.
+        pub fn shell_census(&self) -> Vec<[usize; 3]> {
+            let mut census = vec![[0usize; 3]; self.levels];
+            for p in self.amps.keys() {
+                let digits = decompose(p, self.levels).expect("stored keys are lattice points");
+                for (k, &d) in digits.iter().enumerate() {
+                    let slot = match shell_of(d) {
+                        Shell::Center => 0,
+                        Shell::RootSphere => 1,
+                        Shell::FrameSphere => 2,
+                    };
+                    census[k][slot] += 1;
+                }
+            }
+            census
+        }
+
+        fn bits_of(&self, p: &Point) -> u64 {
+            decompose(p, self.levels)
+                .expect("stored keys are lattice points")
+                .iter()
+                .enumerate()
+                .fold(0u64, |acc, (k, &d)| acc | (u64::from(d)) << (8 * k))
+        }
+
+        fn key_of(&self, bits: u64) -> Point {
+            let digits: Vec<u8> = (0..self.levels)
+                .map(|k| ((bits >> (8 * k)) & 0xff) as u8)
+                .collect();
+            compose(&digits)
+        }
+    }
+
+    impl Backend<C64> for E8ConstellationState {
+        fn name(&self) -> &str {
+            "e8-constellation"
+        }
+
+        fn num_qubits(&self) -> usize {
+            self.num_qubits
+        }
+
+        fn apply(
+            &mut self,
+            matrix: &crate::math::GateMatrix<C64>,
+            qubits: &[usize],
+        ) -> crate::error::Result<()> {
+            crate::backend::validate_apply(self.num_qubits, matrix, qubits)?;
+            let d = 1usize << qubits.len();
+            let mask: u64 = qubits.iter().map(|&q| 1u64 << q).sum();
+            let scatter = crate::backend::scatter_table(qubits);
+            let mut grouped: HashMap<u64, Vec<C64>> = HashMap::new();
+            for (p, &amp) in &self.amps {
+                let bits = self.bits_of(p);
+                let sub = crate::backend::sub_index(bits, qubits);
+                grouped
+                    .entry(bits & !mask)
+                    .or_insert_with(|| vec![C64::new(0.0, 0.0); d])[sub] = amp;
+            }
+            let mdata = matrix.data();
+            let mut amps = HashMap::new();
+            for (rest, vec_in) in grouped {
+                for r in 0..d {
+                    let mut acc = C64::new(0.0, 0.0);
+                    for (c, amp) in vec_in.iter().enumerate() {
+                        acc += mdata[r * d + c] * amp;
+                    }
+                    if acc.norm_sqr() > crate::backend::PRUNE_TOL {
+                        // The tower map is a bijection at fixed depth,
+                        // so distinct bits are distinct points.
+                        amps.insert(self.key_of(rest | scatter[r]), acc);
+                    }
+                }
+            }
+            self.amps = amps;
+            Ok(())
+        }
+
+        fn amplitude(&self, index: u64) -> C64 {
+            if self.num_qubits < 64 && index >> self.num_qubits != 0 {
+                return C64::new(0.0, 0.0);
+            }
+            self.amps
+                .get(&self.key_of(index))
+                .copied()
+                .unwrap_or(C64::new(0.0, 0.0))
+        }
+
+        fn for_each_nonzero(&self, f: &mut dyn FnMut(u64, C64)) {
+            for (p, &amp) in &self.amps {
+                f(self.bits_of(p), amp);
+            }
+        }
+
+        fn nonzero_count(&self) -> usize {
+            self.amps.len()
+        }
+
+        fn project(&mut self, qubit: usize, outcome: bool, renorm: f64) {
+            if qubit >= self.num_qubits {
+                return;
+            }
+            let scale = C64::new(renorm, 0.0);
+            let amps = std::mem::take(&mut self.amps);
+            self.amps = amps
+                .into_iter()
+                .filter(|(p, _)| ((self.bits_of(p) >> qubit) & 1 == 1) == outcome)
+                .map(|(key, a)| (key, a * scale))
+                .collect();
+        }
+
+        fn reset(&mut self) {
+            self.amps.clear();
+            self.amps.insert([0i64; 8], C64::new(1.0, 0.0));
+        }
+
+        fn load(&mut self, entries: &[(u64, C64)]) -> crate::error::Result<()> {
+            for &(i, _) in entries {
+                if self.num_qubits < 64 && i >> self.num_qubits != 0 {
+                    return Err(crate::error::Error::QubitOutOfRange {
+                        qubit: 64 - i.leading_zeros() as usize,
+                        num_qubits: self.num_qubits,
+                    });
+                }
+            }
+            self.amps.clear();
+            for &(i, a) in entries {
+                if a.norm_sqr() > 0.0 {
+                    self.amps.insert(self.key_of(i), a);
+                }
+            }
+            Ok(())
+        }
+
+        fn memory_bytes(&self) -> usize {
+            self.amps.len() * (std::mem::size_of::<Point>() + 16) + std::mem::size_of::<Self>()
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+}
+
 /// An embedding of the four arity chains (`A₁ … A₄`, i.e. the su(2),
 /// su(3), su(4), su(5) frames of binary/ternary/quaternary/quintary
 /// sub-qudits) into the one E8 root system, with the measured overlap

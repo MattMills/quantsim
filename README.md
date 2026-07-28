@@ -202,7 +202,21 @@ parts are swappable:
   structural reason) — both swept through `verify_backend` over the
   full registry and priced in `compare_backends` next to
   dense/sparse/mps/mera, with the d = 16 co-boundary protocol itself
-  as a workload every representation must reproduce.
+  as a workload every representation must reproduce. And the
+  representation expands to **any width** via the infinite E8
+  constellation (`e8::constellation`): the measured coset theorem
+  **E8/2E8 ≅ F₂⁸** — exactly 256 classes: 1 origin + 120 antipodal
+  root pairs (√2-sphere) + 135 sixteen-frames (2-sphere), verified by
+  exact integer arithmetic — makes one byte the identity position of
+  an E8 on the shells of its parent at doubled scale. The scale tower
+  `Σ 2ᵏ·rep(digitₖ)` is a measured bijection onto `E8/2^m E8`,
+  self-similar under doubling, so an n-qubit basis state *is* one
+  lattice point at resolution `2^⌈n/8⌉`; `E8ConstellationState`
+  (`"e8-constellation"`) keys amplitudes by those points at any width
+  to the u64 wall — a 63-qubit GHZ is two 80-byte lattice points
+  (dense refuses 63 outright, measured), 421× faster and 4681×
+  smaller than dense on GHZ-16, honestly larger and slower than dense
+  on saturated QFT-12.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -410,7 +424,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 312 tests (43 unit + 265 across thirty
+`cargo test` runs 317 tests (43 unit + 270 across thirty-one
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -568,6 +582,21 @@ entirely trivial accessors and defensive guards:
   pairing gate at the measured window wall); and the native
   mixed-arity protocol equal amplitude-by-amplitude to its
   qubit-encoded run on dense, both equal to the independent DFT.
+- **e8_constellation** — the infinite constellation: the coset
+  theorem measured in full (origin + 240 roots + 2160 norm-2 vectors
+  bucket into exactly 256 classes sized 1/2/16 with census 1/120/135,
+  representatives on their spheres, the address map linear, non-lattice
+  input refused); the scale tower a bijection (all 65 536 depth-2
+  strings round-trip to distinct points, depth-7 towers round-trip,
+  doubling prepends digit 0); backend conformance over the full
+  registry at default and widened widths plus multi-block random
+  circuits at 10 and 12 qubits against dense, with the 63/64 u64
+  wall; the harness pricing it beside dense/sparse/factored/mps while
+  e8-rep's native-8 wall is recorded in the same table (GHZ-16 two
+  points ≪ dense, saturated QFT-12 honestly larger than dense); and
+  the 63-qubit GHZ stored as exactly two lattice points (digits
+  pinned, census `[1,1,0]` per level, 224 bytes) where dense cannot
+  construct at all.
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally
@@ -734,7 +763,7 @@ src/
   bounds.rs      boundary atlas: measured growth laws, advantage scan
   sampling.rs    sampling-task hardness: XEB, spoof curves, exact refs
   mixed.rs       mixed-arity compound qudits: volumes, fabric, flow, backend
-  e8.rs          E8 roots built+verified; chains, rep backend, obstruction
+  e8.rs          E8 roots built+verified; chains, rep + constellation
   causal.rs      backward cones, causal diamonds, dual-time resolution
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
@@ -773,7 +802,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  sampling_hardness (XEB, spoofing economics, exact refs),
                  e8_compound (mixed-arity qudits over the E8 fabric),
                  e8_coboundary (E8×E8 storage, representation, both
-                 systems as backends in conformance + benchmark)
+                 systems as backends in conformance + benchmark),
+                 e8_constellation (the coset tower + n-qubit backend)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

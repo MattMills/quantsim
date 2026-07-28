@@ -397,6 +397,22 @@ run amplitude-verified against dense, MPS refusing the 8-qubit pairing
 gate at its measured window wall, and the native two-site 16-level
 protocol equal amplitude-by-amplitude to its qubit encoding.
 
+Third wave — SHIPPED: **the infinite E8 constellation**
+(`e8::constellation`). The measured coset theorem E8/2E8 ≅ F₂⁸ (the
+origin + 240 roots + 2160 norm-2 vectors bucket into exactly 256
+classes: 1 + 120 antipodal pairs + 135 sixteen-frames, on shells of
+radius 0/√2/2 — verified by exact integer arithmetic over a
+triangular doubled basis with |det| = 2⁸ and its verified adjugate)
+makes one byte the identity position of an E8 on its parent's
+spheres. `compose`/`decompose` realize the scale tower
+Σ 2ᵏ·rep(digitₖ) as a measured bijection onto E8/2^m E8, self-similar
+under doubling; `E8ConstellationState` (`"e8-constellation"`) keys
+amplitudes by lattice points at any width to the u64 wall, passes
+full-registry conformance at default/widened/multi-block widths, and
+is priced in the harness beside the standard backends (GHZ-63 = two
+80-byte points where dense refuses to construct; saturated QFT-12
+honestly costs more than dense).
+
 Next rungs:
 
 - **auto-split on disentanglement**: volumes currently merge and stay
@@ -414,6 +430,13 @@ Next rungs:
 - **arity-mixed device model**: `Topology`/latency over mixed sites
   with the swap-class constraint enforced by the router (equal-dim
   corridors, native cross-arity bonds).
+- **constellation-native gates**: gates expressed directly on lattice
+  points (root translations at a chosen scale level, class-linear
+  maps) rather than through the bit-domain conversion — the tower's
+  linear address map suggests scale-local Cliffords could act on
+  digits natively; and deeper digit alphabets from the next shells
+  (norm-6/8 vectors give E8/3E8 and beyond) for non-binary
+  constellation levels that would meet the mixed-arity register.
 - **edge-level co-boundary storage**: the E8×E8 system stores rays at
   paired POINTS (ℂP²³⁹, measured invisible/recoverable); the measured
   b₁ = 4241 says the complex carries that much invariant EDGE data
