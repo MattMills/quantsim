@@ -171,7 +171,19 @@ parts are swappable:
   A1⊥A2⊥A3 the orthogonal-A4 search exhausts (rank 10 > 8), so the
   four frames *must* share directions: the canonical embedding couples
   exactly the quaternary–quintary pair (doubled Gram overlap 44), and
-  the compound register runs over precisely that fabric.
+  the compound register runs over precisely that fabric. The **E8×E8
+  co-boundary system** builds on top: two 240-level copies, diagonally
+  paired, store a data field as the *relative* rays across paired
+  points — projective (a global phase is physically nothing, capacity
+  ℂP²³⁹ per layer), provably invisible to either copy alone (marginals
+  uniform to 1.7e-18, measured), and recovered exactly (1.9e-15) only
+  through cross-copy interference. The complex's own cochain structure
+  is measured too: 6720 −1-edges each closing into one zero-sum
+  triangle (2240 total — the 2-cells are the additive relations
+  α+β+γ = 0), and GF(2) Betti number **b₁ = 4241**: the invariant
+  edge-storage the complex carries beyond anything derivable from
+  points. Wide-qudit fast paths (O(d) diagonal, O(d²)-validated
+  permutation gates) make the 240-level protocol run in milliseconds.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -379,7 +391,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 299 tests (43 unit + 252 across twenty-seven
+`cargo test` runs 303 tests (43 unit + 256 across twenty-eight
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -503,6 +515,16 @@ entirely trivial accessors and defensive guards:
   merges (a 10¹⁰-entry merge refuses with measured bytes and leaves
   the register intact); sampling matching stated probabilities; and
   arity-priced scaling (5³ = 125 entries vs 2·3·4 = 24).
+- **e8_coboundary** — the E8×E8 co-boundary system: the root complex's
+  measured counts ((1,56,126,56,0) at every point, 6720 edges, 2240
+  zero-sum triangles verified as additive relations, b₁ = 4241 by
+  GF(2) rank); the stored field invisible to either copy (all
+  marginals exactly uniform) and projective (global phase changes
+  nothing); recovery equal to the independently-computed DFT only via
+  cross-copy interference with the flow record proving both copies
+  were touched; and the wide-qudit fast paths validating exactly
+  (non-bijections and non-unimodular phases refused as errors, refused
+  gates leaving the register untouched).
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally
@@ -706,7 +728,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  qudit_scaling (measured scaling laws + honest costs),
                  advantage_bounds (the boundary atlas + advantage scan),
                  sampling_hardness (XEB, spoofing economics, exact refs),
-                 e8_compound (mixed-arity qudits over the E8 fabric)
+                 e8_compound (mixed-arity qudits over the E8 fabric),
+                 e8_coboundary (E8×E8 projective co-boundary storage)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

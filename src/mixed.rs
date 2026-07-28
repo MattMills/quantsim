@@ -412,6 +412,105 @@ impl CompoundRegister {
         Ok(())
     }
 
+    /// Apply a diagonal phase field to one site: `entries[j]` multiplies
+    /// every amplitude whose site digit is `j`. Validated exactly in
+    /// O(d) (each phase must be unimodular) — the fast path for
+    /// coboundary-style phase storage on wide qudits.
+    pub fn apply_1_diagonal(&mut self, site: usize, entries: &[C64]) -> Result<()> {
+        self.check_site(site)?;
+        let d = self.dims[site];
+        if entries.len() != d {
+            return Err(Error::BadDimension {
+                expected: d,
+                got: entries.len(),
+            });
+        }
+        for (j, e) in entries.iter().enumerate() {
+            if (e.norm() - 1.0).abs() > 1e-9 {
+                return Err(Error::InvalidState(format!(
+                    "diagonal entry {j} is not unimodular"
+                )));
+            }
+        }
+        let v = self.site_volume[site];
+        let (stride, _) = self.volumes[v].stride_of(&self.dims, site);
+        for (idx, amp) in self.volumes[v].amps.iter_mut() {
+            let digit = ((idx / stride) % d as u64) as usize;
+            *amp *= entries[digit];
+        }
+        self.log.push(Interaction {
+            step: self.steps,
+            sites: vec![site],
+            merged: false,
+        });
+        self.steps += 1;
+        Ok(())
+    }
+
+    /// Apply a classical reversible map to a site pair:
+    /// `perm(a, b) = (a', b')` must be a bijection on the digit pairs —
+    /// validated exactly in O(d_a·d_b), which is what makes wide-qudit
+    /// permutation gates (a 240-level `cshift`, its inverse, a swap)
+    /// affordable where a dense unitarity check would not be. Merges
+    /// volumes like any interaction.
+    pub fn apply_2_permutation(
+        &mut self,
+        a: usize,
+        b: usize,
+        perm: &dyn Fn(usize, usize) -> (usize, usize),
+    ) -> Result<()> {
+        self.check_site(a)?;
+        self.check_site(b)?;
+        if a == b {
+            return Err(Error::DuplicateQubits { qubits: vec![a, b] });
+        }
+        let (da, db) = (self.dims[a], self.dims[b]);
+        let mut seen = vec![false; da * db];
+        for xa in 0..da {
+            for xb in 0..db {
+                let (ya, yb) = perm(xa, xb);
+                if ya >= da || yb >= db {
+                    return Err(Error::InvalidState(format!(
+                        "permutation image ({ya}, {yb}) out of range"
+                    )));
+                }
+                let slot = ya + da * yb;
+                if seen[slot] {
+                    return Err(Error::InvalidState(
+                        "map is not a bijection on digit pairs".into(),
+                    ));
+                }
+                seen[slot] = true;
+            }
+        }
+        let merged = self.site_volume[a] != self.site_volume[b];
+        if merged {
+            self.merge(self.site_volume[a], self.site_volume[b])?;
+        }
+        let v = self.site_volume[a];
+        let (stride_a, _) = self.volumes[v].stride_of(&self.dims, a);
+        let (stride_b, _) = self.volumes[v].stride_of(&self.dims, b);
+        let amps = std::mem::take(&mut self.volumes[v].amps);
+        let mut out = HashMap::with_capacity(amps.len());
+        for (idx, amp) in amps {
+            let xa = ((idx / stride_a) % da as u64) as usize;
+            let xb = ((idx / stride_b) % db as u64) as usize;
+            let (ya, yb) = perm(xa, xb);
+            let new = idx - (xa as u64) * stride_a - (xb as u64) * stride_b
+                + (ya as u64) * stride_a
+                + (yb as u64) * stride_b;
+            out.insert(new, amp);
+        }
+        self.volumes[v].amps = out;
+        self.log.push(Interaction {
+            step: self.steps,
+            sites: vec![a, b],
+            merged,
+        });
+        self.steps += 1;
+        Ok(())
+    }
+
     fn merge(&mut self, va: usize, vb: usize) -> Result<()> {
         let (keep, drop) = (va.min(vb), va.max(vb));
         // Admission first: the merged volume's worst case is the entry

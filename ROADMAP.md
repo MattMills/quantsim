@@ -393,6 +393,16 @@ coupling fabric. Next rungs:
 - **arity-mixed device model**: `Topology`/latency over mixed sites
   with the swap-class constraint enforced by the router (equal-dim
   corridors, native cross-arity bonds).
+- **edge-level co-boundary storage**: the E8×E8 system stores rays at
+  paired POINTS (ℂP²³⁹, measured invisible/recoverable); the measured
+  b₁ = 4241 says the complex carries that much invariant EDGE data
+  beyond points — encode qudit fields on the 6720 edges modulo the
+  2240 triangle relations and build the readout interferometry for
+  the cocycle classes.
+- **Weyl-symmetric storage bases**: decompose stored fields over the
+  root graph's spectrum (the −1 adjacency is highly symmetric) so the
+  co-boundary payload is addressed by symmetry sector rather than raw
+  point index.
 
 ## Operational-model extensions
 

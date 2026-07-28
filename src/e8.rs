@@ -158,6 +158,123 @@ pub fn find_a_chain(k: usize, avoid: &[Root]) -> Option<Vec<Root>> {
     }
 }
 
+/// The measured neighbourhood of a root: how many of the OTHER 239
+/// roots sit at each doubled inner product (−8, −4, 0, 4, 8). For E8
+/// this comes out (1, 56, 126, 56, 0) at every root — the antipode,
+/// 56 at −1, 126 orthogonal, 56 at +1, and nothing but the root
+/// itself at +2. Measured here, not quoted.
+pub fn neighbor_profile(root: &Root) -> [usize; 5] {
+    let mut out = [0usize; 5];
+    for r in roots() {
+        if r == *root {
+            continue;
+        }
+        match dot(root, &r) {
+            -8 => out[0] += 1,
+            -4 => out[1] += 1,
+            0 => out[2] += 1,
+            4 => out[3] += 1,
+            8 => out[4] += 1,
+            other => panic!("impossible inner product {other}"),
+        }
+    }
+    out
+}
+
+/// The −1 adjacency (doubled inner product −4) as an edge list over
+/// root indices into [`roots`], each pair once.
+pub fn minus_one_edges() -> Vec<(usize, usize)> {
+    let rs = roots();
+    let mut edges = Vec::new();
+    for i in 0..rs.len() {
+        for j in (i + 1)..rs.len() {
+            if dot(&rs[i], &rs[j]) == -4 {
+                edges.push((i, j));
+            }
+        }
+    }
+    edges
+}
+
+/// The zero-sum triangles {α, β, γ} with α + β + γ = 0: because every
+/// norm-2 vector of the E8 lattice is a root, EVERY −1 edge closes
+/// into exactly one such triangle — the 2-cells of the root complex
+/// are the additive relations themselves.
+pub fn zero_sum_triangles() -> Vec<[usize; 3]> {
+    let rs = roots();
+    let mut triangles = Vec::new();
+    for i in 0..rs.len() {
+        for j in (i + 1)..rs.len() {
+            if dot(&rs[i], &rs[j]) != -4 {
+                continue;
+            }
+            let gamma: Root = std::array::from_fn(|k| -rs[i][k] - rs[j][k]);
+            if let Some(g) = rs.iter().position(|r| *r == gamma) {
+                if g > j {
+                    triangles.push([i, j, g]);
+                }
+            }
+        }
+    }
+    triangles
+}
+
+/// The GF(2) first Betti number of the root complex (vertices = the
+/// 240 roots, edges = the −1 pairs, 2-cells = the zero-sum
+/// triangles): the dimension of edge-stored data that is a cocycle
+/// but NOT a coboundary — the invariant storage capacity of the
+/// complex beyond point data. Computed by rank over GF(2), never
+/// assumed.
+pub fn triangle_complex_b1() -> usize {
+    let edges = minus_one_edges();
+    let triangles = zero_sum_triangles();
+    let mut edge_id = std::collections::HashMap::new();
+    for (id, &e) in edges.iter().enumerate() {
+        edge_id.insert(e, id);
+    }
+    let words = edges.len().div_ceil(64);
+    let key = |a: usize, b: usize| (a.min(b), a.max(b));
+    // Column per triangle over GF(2), eliminated to count the rank of ∂₂.
+    let mut basis: Vec<Vec<u64>> = Vec::new();
+    let mut rank = 0usize;
+    for t in &triangles {
+        let mut col = vec![0u64; words];
+        for &(a, b) in &[(t[0], t[1]), (t[0], t[2]), (t[1], t[2])] {
+            let id = edge_id[&key(a, b)];
+            col[id / 64] ^= 1u64 << (id % 64);
+        }
+        for row in &basis {
+            let pivot = row.iter().rposition(|&w| w != 0).unwrap();
+            let bit = 63 - row[pivot].leading_zeros() as usize;
+            if col[pivot] >> bit & 1 == 1 {
+                for (c, r) in col.iter_mut().zip(row) {
+                    *c ^= r;
+                }
+            }
+        }
+        if col.iter().any(|&w| w != 0) {
+            basis.push(col);
+            rank += 1;
+        }
+    }
+    // b₁ = E − V + components − rank ∂₂ (the −1 graph is connected: one
+    // component, verified cheaply here).
+    let mut parent: Vec<usize> = (0..240).collect();
+    fn find(p: &mut Vec<usize>, x: usize) -> usize {
+        if p[x] != x {
+            let r = find(p, p[x]);
+            p[x] = r;
+        }
+        p[x]
+    }
+    for &(a, b) in &edges {
+        let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+        parent[ra] = rb;
+    }
+    let components = (0..240).filter(|&v| find(&mut parent, v) == v).count();
+    edges.len() - 240 + components - rank
+}
+
 /// An embedding of the four arity chains (`A₁ … A₄`, i.e. the su(2),
 /// su(3), su(4), su(5) frames of binary/ternary/quaternary/quintary
 /// sub-qudits) into the one E8 root system, with the measured overlap
