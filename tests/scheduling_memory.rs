@@ -280,24 +280,31 @@ fn factored_degenerates_honestly_on_global_entanglement() {
     assert_eq!(factored.factor_count(), 1);
     assert_eq!(factored.largest_factor_qubits(), 10);
     assert!(state.amplitude(0).approx_eq(c64(FRAC_1_SQRT_2, 0.0), TOL));
-    // And a merge that would exceed the single-factor cap errors cleanly:
-    // two 14-qubit entangled chains (cheap factors) bridged by one CX that
-    // would need a 28-qubit factor.
-    let mut wide: Circuit = Circuit::new(28);
+    // And a merge that would exceed the machine errors with the MEASURED
+    // numbers: two 22-qubit entangled chains (64 MiB factors — real, and
+    // admitted) bridged by one CX whose merged 44-qubit factor would be
+    // 256 TiB. The inhibition is the resource guard's admission against
+    // measured memory, not a presumed factor-width constant.
+    let mut wide: Circuit = Circuit::new(44);
     wide.h(0);
-    for q in 0..13 {
+    for q in 0..21 {
         wide.cx(q, q + 1);
     }
-    wide.h(14);
-    for q in 14..27 {
+    wide.h(22);
+    for q in 22..43 {
         wide.cx(q, q + 1);
     }
-    wide.cx(13, 14); // bridge: 14 + 14 = 28 > FACTOR_MAX_QUBITS
+    wide.cx(21, 22); // bridge: 22 + 22 = 44-qubit factor = 256 TiB
     match sim.run_on("factored", &wide) {
-        Err(Error::TooManyQubits { requested, max }) => {
-            assert_eq!((requested, max), (28, 26));
+        Err(Error::OutOfMemory {
+            requested,
+            available,
+            ..
+        }) => {
+            assert_eq!(requested, 16usize << 44);
+            assert!(available < requested, "the budget is a measurement");
         }
-        other => panic!("expected factor-width error, got {:?}", other.err()),
+        other => panic!("expected measured OutOfMemory, got {:?}", other.err()),
     }
 }
 

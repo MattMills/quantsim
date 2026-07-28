@@ -76,13 +76,22 @@ impl<S: Scalar> InterferenceState<S> {
                 max: DENSE_MAX_QUBITS,
             });
         }
-        let mut amps = vec![S::zero(); 1usize << num_qubits];
+        let mut amps = crate::guard::try_vec(
+            1usize << num_qubits,
+            S::zero(),
+            &format!("interference state ({num_qubits} qubits)"),
+        )?;
         amps[0] = S::one();
+        let destroyed_at = crate::guard::try_vec(
+            1usize << num_qubits,
+            0.0f64,
+            &format!("interference ledger ({num_qubits} qubits)"),
+        )?;
         Ok(InterferenceState {
             num_qubits,
             amps,
             records: Vec::new(),
-            destroyed_at: vec![0.0; 1usize << num_qubits],
+            destroyed_at,
         })
     }
 
@@ -133,6 +142,9 @@ impl<S: Scalar> Backend<S> for InterferenceState<S> {
         let mut path_total = 0.0f64;
         let mut net_total = 0.0f64;
         for g in 0..groups {
+            if g % (1 << 20) == 0 {
+                crate::guard::checkpoint()?;
+            }
             let base = super::expand_index(g as u64, &sorted);
             for (j, slot) in scratch.iter_mut().enumerate() {
                 *slot = self.amps[(base | scatter[j]) as usize];

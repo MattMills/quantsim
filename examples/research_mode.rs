@@ -72,8 +72,11 @@ fn main() -> Result<()> {
     );
 
     // ── Step 1: conformance before benchmarks ─────────────────────────────
+    // Every standard representation must pass the registry-wide sweep —
+    // the custom bbq-37 gates included, discovered automatically — before
+    // a single benchmark number is trusted.
     let cfg = ConformanceConfig::default();
-    for backend in ["sparse", "adaptive"] {
+    for backend in ["sparse", "adaptive", "factored", "mps", "mera"] {
         let report = verify_backend(&sim, backend, &cfg)?;
         print!("{report}");
         assert!(report.passed(), "do not benchmark an unverified backend");
@@ -81,7 +84,6 @@ fn main() -> Result<()> {
 
     // ── Step 2: measure what each representation buys ─────────────────────
     let workloads = vec![
-        Workload::ghz(20),
         Workload::qft(12),
         Workload::from_circuit(
             "bbq37-random-10q",
@@ -92,11 +94,28 @@ fn main() -> Result<()> {
     let report = compare_backends(
         &sim,
         &workloads,
-        &["dense", "sparse", "adaptive"],
+        &["dense", "sparse", "adaptive", "factored", "mps", "mera"],
         &BenchConfig::default(),
     )?;
     println!("\n{report}");
-    println!("max deviation anywhere: {:.2e}", report.max_deviation());
+
+    // GHZ-20 separately: the mera rung-1 limitation is that a chain
+    // crossing the root cut materializes the 2^20 block (a slow SVD), so
+    // it sits this workload out — stated, not hidden. MPS holds the same
+    // state at bond 2.
+    let ghz = compare_backends(
+        &sim,
+        &[Workload::ghz(20)],
+        &["dense", "sparse", "adaptive", "factored", "mps"],
+        &BenchConfig::default(),
+    )?;
+    println!("{ghz}");
+    println!(
+        "(mera skips ghz-20: a root-crossing chain pays the 2^20 block — the\n rung-1 cost path updates on the roadmap remove; see examples/coarse_register)"
+    );
+    let max_dev = report.max_deviation().max(ghz.max_deviation());
+    println!("\nmax deviation anywhere: {max_dev:.2e}");
+    let report = ghz;
 
     // ── The headline numbers, extracted programmatically ─────────────────
     if let (Some(speed), Some(mem)) = (

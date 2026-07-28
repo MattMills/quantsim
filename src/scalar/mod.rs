@@ -15,6 +15,7 @@
 //! | [`Octonion`]        | 𝕆                      | 8   | non-associative; still a division algebra |
 //! | [`Sedenion`]        | 𝕊                      | 16  | zero divisors; Born weights need not be conserved |
 //! | [`SplitComplex`]    | ℝ⊕ℝj, j² = +1          | 2   | non-Cayley–Dickson; indefinite Born form |
+//! | [`Ball`]            | ℂ, midpoint ± radius   | 2   | coarse-grained certified arithmetic; midpoints track `C64` exactly |
 //!
 //! Two magnitude notions are deliberately separate:
 //!
@@ -30,12 +31,16 @@
 //! ℝ-algebras — `scale` and the norm hooks will grow p-adic-aware variants)
 //! and further non-Cayley–Dickson constructions.
 
+mod ball;
 mod cayley_dickson;
 mod complex;
+mod direct_sum;
 mod real;
 mod split_complex;
 
-pub use cayley_dickson::{CComplex, Octonion, Quaternion, Sedenion, CD};
+pub use ball::Ball;
+pub use cayley_dickson::{CComplex, Octonion, Quaternion, Sedenion, Trigintaduonion, CD};
+pub use direct_sum::DirectSum;
 pub use split_complex::SplitComplex;
 
 /// The default amplitude type: `num_complex::Complex<f64>`.

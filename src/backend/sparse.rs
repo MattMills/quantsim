@@ -10,6 +10,13 @@ use crate::scalar::Scalar;
 /// Maximum width for the sparse representation (basis indices are `u64`).
 pub const SPARSE_MAX_QUBITS: usize = 63;
 
+/// Approximate bytes one stored map entry costs (key + value + control
+/// byte at hashbrown's 7/8 load factor) — the unit sparse growth
+/// admission is measured in.
+fn entry_bytes<S>() -> usize {
+    (std::mem::size_of::<u64>() + std::mem::size_of::<S>() + 1) * 8 / 7
+}
+
 /// Nonzero amplitudes stored in an `FxHashMap<u64, S>`.
 ///
 /// Gate cost scales with the number of nonzero amplitudes times the gate
@@ -118,6 +125,10 @@ impl<S: Scalar> SparseState<S> {
                 algebra: S::algebra_name(),
             }
         })?;
+        crate::guard::admit_growth(
+            self.map.len().saturating_mul(2 * entry_bytes::<S>()),
+            "sparse Pauli-rotation growth",
+        )?;
         let mut out = FxHashMap::default();
         out.reserve(self.map.len() * 2);
         for (&idx, &a) in &self.map {
@@ -275,9 +286,22 @@ impl<S: Scalar> Backend<S> for SparseState<S> {
             }
         }
 
+        // Worst-case fill is support × matrix column fill; admit that
+        // growth against measured memory before building it.
+        let max_fill = cols.iter().map(|c| c.len()).max().unwrap_or(1);
+        crate::guard::admit_growth(
+            self.map
+                .len()
+                .saturating_mul(max_fill)
+                .saturating_mul(entry_bytes::<S>()),
+            "sparse state growth",
+        )?;
         let mut out: FxHashMap<u64, S> = FxHashMap::default();
         out.reserve(self.map.len());
-        for (&idx, &amp) in &self.map {
+        for (count, (&idx, &amp)) in self.map.iter().enumerate() {
+            if count % (1 << 18) == 0 {
+                crate::guard::checkpoint()?;
+            }
             let rest = idx & !target_mask;
             let mut sub = 0usize;
             for (b, &q) in qubits.iter().enumerate() {

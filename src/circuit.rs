@@ -53,7 +53,8 @@ pub enum Op<S: Scalar> {
 }
 
 impl<S: Scalar> Op<S> {
-    fn qubits(&self) -> &[usize] {
+    /// Target qubits, for any operation variant.
+    pub fn qubits(&self) -> &[usize] {
         match self {
             Op::Named { qubits, .. } | Op::Raw { qubits, .. } | Op::Diagonal { qubits, .. } => {
                 qubits
@@ -156,6 +157,23 @@ impl<S: Scalar> Circuit<S> {
             qubits: qubits.into(),
         });
         self
+    }
+
+    /// Split into the first `cut` operations and the rest — the two
+    /// evolution directions of a dual-time resolution
+    /// ([`crate::causal::dual_time_amplitude`]): the front half runs
+    /// forward from the preparation boundary, the back half runs
+    /// *backward* (inverted) from the observation boundary.
+    ///
+    /// # Panics
+    /// Panics if `cut > self.len()`.
+    pub fn split_at(&self, cut: usize) -> (Circuit<S>, Circuit<S>) {
+        assert!(cut <= self.ops.len(), "split_at past the end");
+        let mut front = Circuit::new(self.num_qubits);
+        front.ops = self.ops[..cut].to_vec();
+        let mut back = Circuit::new(self.num_qubits);
+        back.ops = self.ops[cut..].to_vec();
+        (front, back)
     }
 
     /// Append every operation of `other`, remapping its qubit `q` to
@@ -340,7 +358,10 @@ impl<S: Scalar> BoundCircuit<S> {
         &self.gates
     }
 
-    /// Run every gate, in order, on `backend`.
+    /// Run every gate, in order, on `backend`. Opens a resource-guard
+    /// deadline scope: with a time budget armed (see
+    /// [`crate::guard::set_time_budget`]) an over-scale run aborts
+    /// mid-gate with [`Error::Timeout`] instead of running unbounded.
     pub fn run(&self, backend: &mut dyn crate::backend::Backend<S>) -> Result<()> {
         if backend.num_qubits() != self.num_qubits {
             return Err(Error::WidthMismatch {
@@ -348,7 +369,9 @@ impl<S: Scalar> BoundCircuit<S> {
                 backend: backend.num_qubits(),
             });
         }
+        let _scope = crate::guard::enter();
         for g in &self.gates {
+            crate::guard::checkpoint()?;
             match &g.kernel {
                 GateKernel::Matrix(m) => backend.apply(m, &g.qubits)?,
                 GateKernel::Diagonal(d) => backend.apply_diagonal(d, &g.qubits)?,

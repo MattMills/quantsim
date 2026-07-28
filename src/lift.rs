@@ -21,8 +21,10 @@
 //!
 //! Per outcome the data register carries exactly `T|ψ⟩` — outcome 1 up to
 //! a known global phase `e^{iπ/4}` (`e^{−iπ/4}` for `tdg`), which
-//! [`outcome_phase`] reports so verification can be **exact**, not
-//! up-to-phase. Run on a [`CliffordFramedState`], every unitary in the
+//! [`LiftedCircuit::outcome_phase`] reports so verification can be
+//! **exact**, not up-to-phase. Run on a
+//! [`CliffordFramedState`](crate::backend::CliffordFramedState), every
+//! unitary in the
 //! lifted schedule absorbs into the frame, measurements project natively
 //! through the tableau, and the only amplitude work left in the entire
 //! computation is the resource preparation — [`ResourcePrep`] chooses
@@ -65,7 +67,7 @@ pub struct LiftedCircuit<S: Scalar> {
     /// `data_qubits..data_qubits + ancillas`, in order of consumption.
     pub ancillas: usize,
     /// `+1` for each `t`, `−1` for each `tdg`, in ancilla order — the
-    /// outcome-1 phase bookkeeping for [`outcome_phase`].
+    /// outcome-1 phase bookkeeping for [`LiftedCircuit::outcome_phase`].
     pub phase_signs: Vec<i32>,
 }
 

@@ -7,15 +7,21 @@
 //!   and phase, running *simultaneously* with every other loop,
 //! * **one-shot events** — ops at absolute ticks,
 //! * **measurement events** ([`MeasureEvent`]) — measurements whose
-//!   outcomes enqueue further ops (classical feedback as queue messages).
+//!   outcomes enqueue further [`FeedbackOp`]s: gates, or **further
+//!   measurements with their own branches**, recursively. A feedback
+//!   branch is a finite tree, so adaptive protocols of any bounded depth —
+//!   outcome-dependent measurement choices, bounded repeat-until-success
+//!   ladders, gate-teleportation cascades — run inside one schedule, and
+//!   termination is structural (the tree is finite data), not hoped for.
 //!
 //! Execution drains a deterministic priority queue ordered by
 //! `(tick, sequence)`. Simultaneity is real: multiple events can share a
 //! tick. Same-tick ordering is deterministic (one-shots, then loops in
-//! insertion order, then measurements, then feedback), and
+//! insertion order, then measurements, then feedback in enqueue order), and
 //! [`OverlapPolicy::Error`] instead rejects schedules where same-tick
 //! events touch overlapping qubits — use it when "simultaneous" must mean
-//! "commuting by construction".
+//! "commuting by construction". (The policy is checked over the *static*
+//! schedule; feedback ops are causally ordered by construction and exempt.)
 //!
 //! A measurement-free schedule can be flattened to an ordinary
 //! [`Circuit`] with [`Schedule::to_circuit`], which is also how schedule
@@ -115,18 +121,68 @@ pub struct GateLoop<S: Scalar> {
     pub body: Vec<TimedOp<S>>,
 }
 
-/// A measurement at a tick; the outcome enqueues one of two op lists at
-/// offsets relative to the measurement tick (message-queue feedback).
+/// One feedback action enqueued by a measurement outcome: apply a gate, or
+/// perform a **further measurement** whose own branches may nest deeper.
+/// Offsets are relative to the parent measurement's tick. Because branches
+/// are owned finite trees, adaptivity has structural termination: every
+/// run fires finitely many events regardless of outcomes.
+#[derive(Debug, Clone)]
+pub enum FeedbackOp<S: Scalar> {
+    /// Apply a kernel at a relative offset.
+    Gate(TimedOp<S>),
+    /// Measure again at a relative offset (`event.at` is relative here),
+    /// with its own `on_zero`/`on_one` feedback branches.
+    Measure(Box<MeasureEvent<S>>),
+}
+
+impl<S: Scalar> FeedbackOp<S> {
+    /// Named-gate feedback op at a relative offset.
+    pub fn gate(
+        at: u64,
+        name: impl Into<String>,
+        params: impl Into<Vec<f64>>,
+        qubits: impl Into<Vec<usize>>,
+    ) -> Self {
+        FeedbackOp::Gate(TimedOp::gate(at, name, params, qubits))
+    }
+
+    /// Nested measurement at a relative offset, with its own branches.
+    pub fn measure(
+        at: u64,
+        qubit: usize,
+        on_zero: Vec<FeedbackOp<S>>,
+        on_one: Vec<FeedbackOp<S>>,
+    ) -> Self {
+        FeedbackOp::Measure(Box::new(MeasureEvent {
+            at,
+            qubit,
+            on_zero,
+            on_one,
+        }))
+    }
+}
+
+impl<S: Scalar> From<TimedOp<S>> for FeedbackOp<S> {
+    fn from(op: TimedOp<S>) -> Self {
+        FeedbackOp::Gate(op)
+    }
+}
+
+/// A measurement at a tick; the outcome enqueues one of two feedback
+/// branches at offsets relative to the measurement tick (message-queue
+/// feedback). Branches may contain further measurements — see
+/// [`FeedbackOp`]. As a top-level event `at` is absolute; nested inside a
+/// branch it is relative to the parent measurement's tick.
 #[derive(Debug, Clone)]
 pub struct MeasureEvent<S: Scalar> {
-    /// Measurement tick.
+    /// Measurement tick (absolute at top level, relative when nested).
     pub at: u64,
     /// Qubit to measure.
     pub qubit: usize,
-    /// Ops enqueued when the outcome is 0.
-    pub on_zero: Vec<TimedOp<S>>,
-    /// Ops enqueued when the outcome is 1.
-    pub on_one: Vec<TimedOp<S>>,
+    /// Feedback enqueued when the outcome is 0.
+    pub on_zero: Vec<FeedbackOp<S>>,
+    /// Feedback enqueued when the outcome is 1.
+    pub on_one: Vec<FeedbackOp<S>>,
 }
 
 /// How to treat same-tick events with overlapping qubits.
@@ -184,9 +240,10 @@ enum Item<S: Scalar> {
         kernel: ScheduledKernel<S>,
         qubits: Vec<usize>,
     },
-    Measure {
-        index: usize,
-    },
+    /// An owned measurement event (static events are cloned in; feedback
+    /// events are spliced from their parent's branches). The heap entry's
+    /// time is authoritative; the event's own `at` is not consulted again.
+    Measure { event: MeasureEvent<S> },
 }
 
 struct HeapEntry<S: Scalar> {
@@ -294,13 +351,31 @@ impl<S: Scalar> Schedule<S> {
         self
     }
 
-    /// Add a measurement event with feedback branches.
+    /// Add a measurement event whose branches apply gates only (the common
+    /// case; see [`Schedule::measure_branching_at`] for adaptive trees).
     pub fn measure_at(
         &mut self,
         time: u64,
         qubit: usize,
         on_zero: Vec<TimedOp<S>>,
         on_one: Vec<TimedOp<S>>,
+    ) -> &mut Self {
+        self.measure_branching_at(
+            time,
+            qubit,
+            on_zero.into_iter().map(FeedbackOp::Gate).collect(),
+            on_one.into_iter().map(FeedbackOp::Gate).collect(),
+        )
+    }
+
+    /// Add a measurement event with full feedback branches — gates and
+    /// nested measurements ([`FeedbackOp`]), adaptive to any finite depth.
+    pub fn measure_branching_at(
+        &mut self,
+        time: u64,
+        qubit: usize,
+        on_zero: Vec<FeedbackOp<S>>,
+        on_one: Vec<FeedbackOp<S>>,
     ) -> &mut Self {
         self.measures.push(MeasureEvent {
             at: time,
@@ -379,12 +454,18 @@ impl<S: Scalar> Schedule<S> {
                 iteration += 1;
             }
         }
-        for (index, measure) in self.measures.iter().enumerate() {
+        for measure in &self.measures {
             if measure.at > self.horizon {
                 skipped += 1;
                 continue;
             }
-            items.push((measure.at, seq, Item::Measure { index }));
+            items.push((
+                measure.at,
+                seq,
+                Item::Measure {
+                    event: measure.clone(),
+                },
+            ));
             seq += 1;
         }
         if self.policy == OverlapPolicy::Error {
@@ -404,7 +485,7 @@ impl<S: Scalar> Schedule<S> {
             while j < sorted.len() && sorted[j].0 == tick {
                 let qubits: Vec<usize> = match &sorted[j].2 {
                     Item::Gate { qubits, .. } => qubits.clone(),
-                    Item::Measure { index } => vec![self.measures[*index].qubit],
+                    Item::Measure { event } => vec![event.qubit],
                 };
                 for q in qubits {
                     if used.contains(&q) {
@@ -470,8 +551,10 @@ impl<S: Scalar> Schedule<S> {
             .map(|(time, seq, item)| HeapEntry { time, seq, item })
             .collect();
         let mut rng = Prng::new(seed);
+        let _scope = crate::guard::enter();
 
         while let Some(entry) = heap.pop() {
+            crate::guard::checkpoint()?;
             match entry.item {
                 Item::Gate { kernel, qubits } => {
                     let label = kernel.label().to_string();
@@ -482,8 +565,7 @@ impl<S: Scalar> Schedule<S> {
                         qubits,
                     });
                 }
-                Item::Measure { index } => {
-                    let event = &self.measures[index];
+                Item::Measure { event } => {
                     let outcome = state.measure(event.qubit, &mut rng)?;
                     trace.measurements.push((entry.time, event.qubit, outcome));
                     trace.events.push(TraceEntry {
@@ -491,24 +573,30 @@ impl<S: Scalar> Schedule<S> {
                         label: format!("measure→{}", outcome as u8),
                         qubits: vec![event.qubit],
                     });
-                    let branch = if outcome {
-                        &event.on_one
-                    } else {
-                        &event.on_zero
-                    };
+                    let branch = if outcome { event.on_one } else { event.on_zero };
                     for op in branch {
-                        let time = entry.time + op.at;
+                        let (time, item) = match op {
+                            FeedbackOp::Gate(op) => (
+                                entry.time + op.at,
+                                Item::Gate {
+                                    kernel: op.kernel,
+                                    qubits: op.qubits,
+                                },
+                            ),
+                            FeedbackOp::Measure(nested) => {
+                                (entry.time + nested.at, Item::Measure { event: *nested })
+                            }
+                        };
                         if time > self.horizon {
+                            // A skipped nested measurement drops its whole
+                            // subtree; it counts once here.
                             trace.skipped_past_horizon += 1;
                             continue;
                         }
                         heap.push(HeapEntry {
                             time,
                             seq: next_seq,
-                            item: Item::Gate {
-                                kernel: op.kernel.clone(),
-                                qubits: op.qubits.clone(),
-                            },
+                            item,
                         });
                         next_seq += 1;
                     }

@@ -8,7 +8,7 @@ use common::*;
 use quantsim::prelude::*;
 use std::f64::consts::FRAC_1_SQRT_2;
 
-const BACKENDS: [&str; 5] = ["dense", "sparse", "adaptive", "factored", "mps"];
+const BACKENDS: [&str; 6] = ["dense", "sparse", "adaptive", "factored", "mps", "mera"];
 
 #[test]
 fn initial_state_is_all_zeros() {
@@ -74,7 +74,7 @@ fn sampling_matches_probabilities_and_is_backend_independent() {
     }
     // Same seed, other representations: byte-identical counts, because
     // sampling accumulates weights in basis order on every backend.
-    for name in ["sparse", "adaptive", "factored", "mps"] {
+    for name in ["sparse", "adaptive", "factored", "mps", "mera"] {
         let state = run_named(name, &c);
         let counts = state.sample(8192, &mut Prng::new(42)).unwrap();
         assert_eq!(counts, dense_counts, "{name} sampling differs from dense");
@@ -284,13 +284,29 @@ fn measure_out_of_range_errors() {
 
 #[test]
 fn width_limits_enforced() {
+    // The structural bound is u64 indexing; below it, over-scale widths
+    // are inhibited by the resource guard at REAL capacity: a 44-qubit
+    // dense vector is 256 TiB, refused with the measured numbers rather
+    // than a presumed width constant (see tests/capacity.rs for the
+    // guard's own suite).
     assert!(matches!(
-        DenseState::<C64>::new(33),
+        DenseState::<C64>::new(64),
         Err(Error::TooManyQubits {
-            requested: 33,
-            max: 32
+            requested: 64,
+            max: 63
         })
     ));
+    match DenseState::<C64>::new(44) {
+        Err(Error::OutOfMemory {
+            requested,
+            available,
+            ..
+        }) => {
+            assert_eq!(requested, 16 << 44);
+            assert!(available < requested, "measured budget must be real");
+        }
+        other => panic!("44 dense qubits must be inhibited by measurement: {other:?}"),
+    }
     assert!(SparseState::<C64>::new(63).is_ok());
     assert!(matches!(
         SparseState::<C64>::new(64),

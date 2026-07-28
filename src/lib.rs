@@ -4,13 +4,16 @@
 //!
 //! 1. **The amplitude algebra** ([`scalar::Scalar`]): ℝ, ℂ (default),
 //!    quaternions ℍ, octonions 𝕆, sedenions — via a generic Cayley–Dickson
-//!    construction — plus non-Cayley–Dickson algebras like split-complex.
+//!    construction — plus non-Cayley–Dickson algebras like split-complex
+//!    and [`scalar::Ball`] (certified midpoint ± radius arithmetic).
 //!    Every gate matrix, state representation and measurement rule is
-//!    generic over it.
+//!    generic over it. The [`exact`] module supplies float-free absolute
+//!    reference values for the Clifford+T fragment.
 //! 2. **The state representation** ([`backend::Backend`]): dense state
-//!    vector (the BQP reference), sparse hash-map state, and an adaptive
-//!    backend that promotes sparse → dense; further representations
-//!    (matrix-product states, p-adic explorations) register by name.
+//!    vector (the BQP reference), sparse hash-map state, adaptive
+//!    sparse→dense promotion, factored entanglement clusters, matrix
+//!    product states, and the hierarchical `mera` tree with coarse views
+//!    at every scale; further representations register by name.
 //!
 //! Gates live in a [`registry::GateRegistry`] — research gates are
 //! first-class: implement [`gates::GateDef`] or hand the registry a closure,
@@ -60,15 +63,19 @@
 #![warn(missing_docs)]
 
 pub mod backend;
+pub mod causal;
 pub mod circuit;
 pub mod conformance;
 pub mod discovery;
 pub mod error;
+pub mod exact;
 pub mod gates;
+pub mod guard;
 pub mod harness;
 pub mod library;
 pub mod lift;
 pub mod math;
+pub mod qudit;
 pub mod registry;
 pub mod rng;
 pub mod scalar;
@@ -90,7 +97,11 @@ pub mod prelude {
         max_amplitude_deviation, pauli_expectation, AdaptiveState, ArityPolicy, Backend,
         BackendRegistry, CliffordFrameStats, CliffordFramedState, DenseState, DeviceState,
         DurationModel, FactoredState, FrameStats, FramedState, InterferenceRecord,
-        InterferenceState, MpsConfig, MpsState, PauliString, PhysicalOp, SparseState, Topology,
+        InterferenceState, LatencyMap, MeraConfig, MeraState, MpsConfig, MpsState, PauliString,
+        PhysicalOp, SparseState, Topology,
+    };
+    pub use crate::causal::{
+        backward_cone, causal_diamond, dual_time_amplitude, DiamondReport, DualTimeResolution,
     };
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
     pub use crate::conformance::{
@@ -101,7 +112,9 @@ pub mod prelude {
         Insertion, StabilizerCheck, TransparencyReport,
     };
     pub use crate::error::{Error, Result};
+    pub use crate::exact::{DOmega, ExactReal, ExactState};
     pub use crate::gates::{FixedGate, GateDef, ParamGate, Pauli};
+    pub use crate::guard;
     pub use crate::harness::{
         compare_backends, select_backend, BenchConfig, BenchmarkReport, SelectionCriterion,
         SelectionReport, Workload,
@@ -109,13 +122,19 @@ pub mod prelude {
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};
+    pub use crate::qudit::{
+        algebra_capacity, dual_algebra_report, synthesize_sandwich, AlgebraicRegister,
+        DualAlgebraReport, QuditStats, SandwichOp, SandwichTerm,
+    };
     pub use crate::registry::GateRegistry;
     pub use crate::rng::Prng;
     pub use crate::scalar::{
-        CComplex, Octonion, Quaternion, Scalar, Sedenion, SplitComplex, C64, CD,
+        Ball, CComplex, DirectSum, Octonion, Quaternion, Scalar, Sedenion, SplitComplex,
+        Trigintaduonion, C64, CD,
     };
     pub use crate::schedule::{
-        GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace, ScheduledKernel, TimedOp,
+        FeedbackOp, GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace,
+        ScheduledKernel, TimedOp,
     };
     pub use crate::sim::Simulator;
 }

@@ -44,6 +44,9 @@ pub type Quaternion = CD<C64>;
 pub type Octonion = CD<Quaternion>;
 /// The sedenions 𝕊 (first Cayley–Dickson algebra with zero divisors).
 pub type Sedenion = CD<Octonion>;
+/// The trigintaduonions (32-dimensional, the fifth doubling) — as a
+/// register scalar, a 4-algebra-qubit qudit.
+pub type Trigintaduonion = CD<Sedenion>;
 
 impl<T: Scalar> CD<T> {
     /// Build from the two halves.

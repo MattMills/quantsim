@@ -86,6 +86,21 @@ fn every_variant_formats_informatively() {
             Error::InvalidState("negative weight".into()),
             &["invalid state", "negative weight"],
         ),
+        (
+            Error::OutOfMemory {
+                requested: 1 << 40,
+                available: 1 << 30,
+                what: "dense state (36 qubits)".into(),
+            },
+            &["out of memory", "dense state (36 qubits)", "measured"],
+        ),
+        (
+            Error::Timeout {
+                budget_ms: 1000,
+                elapsed_ms: 1417,
+            },
+            &["time budget exceeded", "1417", "1000"],
+        ),
     ];
     for (err, fragments) in cases {
         let rendered = err.to_string();

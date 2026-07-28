@@ -6,17 +6,31 @@ parts are swappable:
 - **Amplitude algebra** — every gate matrix, state and measurement rule is
   generic over a [`Scalar`](src/scalar/mod.rs) trait. Shipped: ℝ, ℂ
   (default), a generic **Cayley–Dickson doubling** `CD<T>` giving
-  quaternions ℍ, octonions 𝕆 and sedenions 𝕊, plus **split-complex** as a
-  first non-Cayley–Dickson algebra. Planned (see [ROADMAP](ROADMAP.md)):
-  truncated p-adics, dual numbers, split-quaternions, Clifford scalars.
+  quaternions ℍ, octonions 𝕆 and sedenions 𝕊, **split-complex** as a
+  first non-Cayley–Dickson algebra, and **[`Ball`](src/scalar/ball.rs)** —
+  coarse-grained certified arithmetic (complex midpoint ± certified
+  radius; midpoints track `C64` bit-for-bit, radii propagate soundly, and
+  `quantize` is a deliberate resolution dial). Planned (see
+  [ROADMAP](ROADMAP.md)): truncated p-adics, dual numbers,
+  split-quaternions, Clifford scalars.
 - **State representation** — a [`Backend<S>`](src/backend/mod.rs) trait with
-  five shipped implementations: **dense** state vector (the BQP reference),
+  six shipped implementations: **dense** state vector (the BQP reference),
   **sparse** hash-map state, an **adaptive** backend that promotes sparse →
   dense at ¼ density, the **factored** backend (product of dense factors
-  over qubit regions — memory tracks entanglement *clusters*), and **MPS**
+  over qubit regions — memory tracks entanglement *clusters*), **MPS**
   (matrix product states on a dependency-free Jacobi SVD — memory tracks
-  Schmidt rank / *bond dimension*). Three orthogonal compression axes —
-  support, clusters, bonds — all conformance-verified against dense.
+  Schmidt rank / *bond dimension*), and **mera** (a hierarchical
+  isometry tree — memory tracks *renormalization structure*; see below).
+  Four orthogonal compression axes — support, clusters, bonds,
+  hierarchy — all conformance-verified against dense.
+- **Exact reference** ([`exact`](src/exact.rs)) — a `D[ω] = ℤ[1/√2, e^{iπ/4}]`
+  evaluator (checked `i128` coefficients) for the Clifford+T fragment and
+  all standard rotations at eighth-turn angles: **absolute** reference
+  values with no float error at all. Unitarity holds *exactly*, exact
+  zeros are decidable (`H·T⁴·H` leaves a measured ~1e-16 residue on the
+  float path and exactly 0 here), and `max_deviation_vs` turns any
+  backend's output into an absolute error measurement — including the
+  dense reference's own, and the certification of `Ball` radii.
 - **Gates** — a registry (`name → GateDef`) with a 32-gate standard library
   (plus aliases), defined once over ℂ and projected into each algebra;
   over ℝ you automatically get the real subset. Research gates are a
@@ -34,10 +48,14 @@ parts are swappable:
   sets either pass measurably or fail with the offending gate named.
 - **Evented scheduling** ([`schedule`](src/schedule.rs)) — simultaneous
   gate *loops* with periods and phases, one-shot events, and measurement
-  events whose outcomes enqueue further ops: circuit time as a message
-  queue, with deterministic same-tick ordering and an optional
-  must-be-disjoint overlap policy. Measurement-free schedules flatten to
-  circuits for equivalence testing.
+  events whose outcomes enqueue further [`FeedbackOp`]s: gates, or
+  **further measurements with their own branches, recursively** — adaptive
+  measurement trees of any bounded depth (outcome-dependent measurement
+  choices, bounded repeat-until-success ladders) inside one schedule,
+  with *structural* termination (branches are finite owned trees).
+  Circuit time as a message queue, with deterministic same-tick ordering
+  and an optional must-be-disjoint overlap policy. Measurement-free
+  schedules flatten to circuits for equivalence testing.
 - **Factored geometry** ([`FactoredState`](src/backend/factored.rs)) — the
   state as a product of factors over qubit regions: gates merge factors
   only when they couple them, measurement splits them exactly, rank-1
@@ -45,6 +63,21 @@ parts are swappable:
   factor sizes — non-exponential while entanglement stays hierarchically
   local (and honestly dense when it doesn't). The live factor partition and
   lifetime peak costs are inspectable: entanglement geometry as data.
+- **Hierarchical register** ([`MeraState`](src/backend/mera.rs)) — the
+  state as a **renormalization hierarchy**: a balanced binary isometry
+  tree (the MERA family's isometry layer — a tree tensor network, with
+  disentanglers as the named next rung), bonds capped per super-site,
+  gates costing exactly the smallest subtree spanning their targets.
+  The coarse-evaluate-then-refine API is the point:
+  `coarse_state(depth)` is the exact state on the super-site basis at
+  any scale — the 16-qubit GHZ at depth 1 **is** a two-super-site
+  maximally entangled pair (both coarse singular values exactly 1/√2,
+  pinned in the tests) — and `refine_basis` expands any super-site one
+  level, down to physical amplitudes. Truncation is a measured dial
+  (`discarded_weight`, `is_exact`), width-40 registers run in kilobytes
+  while entanglement stays hierarchy-local, and the whole thing composes
+  with `Ball` so coarse representation and certified coarse arithmetic
+  stack.
 - **Structure discovery** ([`discovery`](src/discovery.rs)) — find gates
   that stabilize the current state (identity up to phase), and verify
   n-wide **signal threads**: ops spliced at several points of the circuit
@@ -56,10 +89,56 @@ parts are swappable:
   interference *independently* (per-gate path-weight vs net ledger, per-state
   destruction map; diagonals provably destroy 0; H·H destroys exactly 1.0);
   [`DeviceState`](src/backend/device.rs) reproduces the physical operation
-  order of a real machine — coupling [`Topology`] (linear/ring/grid/custom),
-  SWAP-routing that walks entanglement stepwise through adjacency with a
-  persistent logical→physical mapping, per-qubit latency clocks, and a full
-  physical op log — while answering in logical indices identical to dense.
+  order of a real machine — coupling [`Topology`] with real register
+  geometries (`heavy_hex_falcon27`, `sycamore_like`, `complete` all-to-all,
+  plus linear/ring/grid/custom) and causally organized research fabrics
+  (`hierarchical`, `hypercube`), SWAP-routing that walks entanglement
+  stepwise through adjacency with a persistent logical→physical mapping,
+  per-qubit latency clocks driven by a [`LatencyMap`] (era-representative
+  `DurationModel` presets + per-site/per-edge calibration overrides), an
+  injectable inner representation (chip-scale geometry over a sparse
+  inner: GHZ across all 54 Sycamore sites), a full physical op log, and
+  `elapsed`/`serial_time` as the measured parallelism ratio — while
+  answering in logical indices identical to dense.
+- **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
+  register elements as an operational object: backward light cones and
+  **causal diamonds** (prune a circuit to the cone of an observation
+  surface — provably identical marginals, measurably fewer ops), and
+  **dual-time resolution** (`dual_time_amplitude`): the preparation
+  boundary evolves forward, the observation boundary evolves backward,
+  and the two opposed directions resolve at a cut —
+  `⟨t|U|0⟩ = ⟨U₂†t|U₁0⟩` — each paying only its own cone's support
+  (measured: `2^{D/2}` a side at the balanced cut where one direction
+  pays `2^D`). On the register side, [`Topology::hierarchical`] and
+  [`Topology::hypercube`] build fabrics *organized by causal scale*
+  (logarithmic horizons), and `diameter`/`ball_sizes`/
+  `pair_availability` measure any fabric's causal metric, curvature
+  signature and interaction availability.
+- **Hierarchical algebraic registers** ([`qudit`](src/qudit.rs)) — break
+  the flat n-wide register into a varied qudit structure: a **site
+  sector** (any backend) plus an **algebra sector** — further logical
+  qubits carried *inside every stored scalar*, using the Cayley–Dickson
+  tower as the qudit space (ℍ = 1 qubit, 𝕆 = 2, 𝕊 = 3 per scalar).
+  Gates on algebra qubits are synthesized from the **dual-algebra** —
+  the algebra acting on itself from left and right (`A ⊗ A^op`) — and
+  the sandwich span is *measured*: full operator-space rank at every
+  doubling level (16/16, 64/64, 256/256, and 1024/1024 at the fifth
+  doubling `Trigintaduonion`; residuals ~1e-15), zero divisors and
+  non-associativity notwithstanding, so every ℂ-linear qudit gate is
+  exactly a sum of `(a·x)·b` terms — and the synthesis **executes**:
+  algebra-sector gates run as actual two-sided multiplications on the
+  stored scalars (cached, counted, dust-snapped, with the exact
+  component path as fallback and A/B toggle). The boundary is
+  measurable too: a `DirectSum` scalar multiplies blockwise, so its
+  span is exactly the block-diagonals (32/64 on ℍ⊕ℍ, cross-block
+  residual ~1) — such gates route through the component path, costing
+  routing, never correctness. Whether the embedded-ℂ action is
+  component-linear is measured per scalar (true for ℍ and diagonal
+  direct sums, twisted from 𝕆 on) and routes site gates native vs
+  component. Conformance-swept over the full registry (including the
+  ℍ⊕ℍ register); and the flat u64 indexing ceiling breaks: 66–67
+  exact logical qubits (63 sparse sites × 𝕊 or `CD⟨𝕊⟩` qudits)
+  addressed and *Born-sampled* as (site, component) parts.
 - **Local frames** ([`FramedState`](src/backend/frames.rs)) — deferred
   per-qubit basis changes as representation metadata over *any* inner
   backend: 1q gates absorb for free (inverse pairs cancel without touching
@@ -79,10 +158,13 @@ parts are swappable:
   proven **exactly** the Clifford subgroup by a bidirectional sweep
   against an independent dense Pauli-normalizer check, so nothing
   non-Clifford rides free), Pauli measurements run natively through the
-  tableau (no flush, `measure_pauli` — per-measurement cost is the
-  rotation envelope, and the *measured* compounding of stored-basis
-  drift under long sequences is pinned in the tests rather than
-  papered over), Pauli-axis rotations conjugate through the tableau
+  tableau (no flush, `measure_pauli`) **with frame repair** — after each
+  projection the frame becomes `C·V` for a repair Clifford chosen so the
+  measured string is Z-type in the new stored basis, the true tableau
+  measurement update, so projection growth no longer compounds (measured:
+  peak stored support 2 across 40 sequential measurements at width 40,
+  where the unrepaired path — still selectable, still pinned in the
+  tests — pays `2^m`), Pauli-axis rotations conjugate through the tableau
   onto **native sparse Pauli-string rotations** (`O(support)`, ≤2× growth,
   weight-independent), diagonals Walsh-decompose into Z-string rotations,
   generic 1q gates split ZYZ; anything else flushes and goes raw. The
@@ -95,20 +177,40 @@ parts are swappable:
   qubits, every unitary Clifford, each T executed by gate teleportation
   (resource ancilla → CX → native measurement → outcome-conditioned
   Clifford correction, as an evented `Schedule`). Exact including
-  per-outcome phases, and honestly instrumented: the lifted loop runs at
-  zero flushes with all-Clifford dynamics, but the measured cost
-  *relocation* is a finding, not the textbook story — projections
-  collapse the register in the physical basis, the frame scrambles that
-  cancellation structure, and stored support drifts (direct run peaks 16
-  where both lift orderings peak 8192 on the same seeded circuit). The
-  magic is linear to *hold* (`|T⟩^⊗t` in the factored backend) and
-  currently expensive to *consume* — which is the measured motivation
-  for frame repair on measurement and frame-aligned stabilizer-rank
-  storage on the roadmap.
+  per-outcome phases, and honestly instrumented — twice. The original
+  finding: without frame repair, projections drift the stored basis and
+  both prep orderings peaked at 8192 where the direct run peaked 16.
+  Frame repair (the roadmap rung that finding motivated) landed, the
+  pinned assertion **fired as designed**, and the measured story now
+  reads: just-in-time prep runs the whole loop at a peak comparable to
+  the direct route (one `|T⟩` in flight, each measurement repaired
+  away — consumption is *cheap*), while upfront prep pays `2^t` for
+  *holding* all resource states at once. The magic stays linear to hold
+  in the factored backend; composing that with the frame is the
+  remaining rung, alongside stabilizer-rank storage.
 - **VOLK-style selection** ([`harness::select_backend`]) — profile candidate
   backends on your workload on *this* machine and pick the best by time or
   memory, with fidelity as a hard gate: a fast-but-wrong kernel is rejected
   on measured deviation, never chosen.
+- **The resource guard** ([`guard`](src/guard.rs)) — over-scale inhibition
+  as a property of the library, automatic for every representation.
+  Large allocations are **admitted against measured capacity** (cgroup
+  limit / `MemAvailable`, read at allocation time) with fallible
+  reservation as backstop: an inadmissible request fails with
+  `OutOfMemory { requested, available }` — both numbers measured, never
+  a presumed width constant. The former capacity constants
+  (`DENSE_MAX_QUBITS` & co.) are structural index bounds only; adaptive
+  promotion consults real capacity and stays sparse when dense wouldn't
+  fit *this* machine right now. `guard::set_time_budget` arms a
+  wall-clock budget that the long kernels (dense/sparse/exact sweeps,
+  Jacobi SVD, merges) checkpoint *inside* their loops: an over-scale
+  run aborts mid-gate with `Timeout { budget, elapsed }` instead of
+  being pre-skipped on a cost estimate.
+  [`capacity_probe`](examples/capacity_probe.rs) verifies the guard
+  against reality: subprocess-isolated width walks per axis until the
+  actual wall — guard refusals with measured numbers, deadline aborts,
+  and (with admission disabled) real OOM kills observed by signal with
+  peak RSS recorded.
 
 BQP support: the standard registry contains a universal set (`h`, `t`, `cx`,
 …), so any BQP circuit family runs exactly on the dense backend — at the
@@ -205,7 +307,10 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 203 tests (199 across seventeen suites + 4 doctests);
+`cargo test` runs 273 tests (43 unit + 226 across twenty-four
+integration suites + 4 doctests; one more — the 17 s measurement that
+the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
+and runs with `-- --ignored`);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
 entirely trivial accessors and defensive guards:
 
@@ -221,16 +326,94 @@ entirely trivial accessors and defensive guards:
   gates); width/depth cost of the free sector asserted polynomial
   (support 1 at width 63, log-linear at depth 4000); and the boundary
   pinned from both sides — T scatters amplitudes the moment it arrives,
-  native measurement is seed-identical with dense with its ≤2×-per-op,
-  compounding-across-sequences envelope pinned, and full amplitude
-  extraction flushes.
+  native measurement is seed-identical with dense, **frame repair holds
+  adaptive sequences flat** (peak 2 across 40 measurements at width 40;
+  the unrepaired `2^m` envelope stays pinned alongside, with same-seed
+  outcome equality between the two), and full amplitude extraction
+  flushes. The repair steps' conjugation rules are unit-tested against
+  the dense Pauli-decomposition ground truth.
 - **clifford_lift** — the dimensional lift verified exactly (data
   register vs unlifted dense, per-outcome phases divided out, both
   resource orderings); the feedback loop shown all-Clifford (zero
   flushes, corrections fire exactly on outcome 1); the cost *location*
-  measured, with the stored-basis drift finding pinned as an assertion
-  designed to fail loudly the day a representation change makes the
-  lift win — that failure would be a discovery, and the test says so.
+  measured **twice**: the original drift finding was pinned by an
+  assertion designed to fail loudly the day a representation change made
+  the lift win — frame repair made it fire as intended, and the test now
+  pins the repaired story (JIT ≈ direct; upfront = the `2^t` holding
+  cost; the drift preserved on a repair-off backend for comparison).
+- **adaptive_feedback** — recursive measurement trees in the scheduler:
+  nested events fire exactly on the selecting outcome (GHZ-correlated),
+  a depth-3 repeat-until-success ladder with per-seed retry accounting,
+  same-tick branch ordering, horizon pruning of whole subtrees, and
+  adaptive replay determinism across backends.
+- **exact_reference** — the dense reference's float error measured
+  against the `D[ω]` ring (absolute, not relative); exact unitarity;
+  exact zeros where floats leave ~1e-16 residue; GHZ amplitudes exactly
+  1/√2; Grover through diagonal oracles vs the closed form; overflow
+  fails loudly.
+- **ball_certification** — every final amplitude ball *contains* the
+  exact ring value, at full resolution and under quantized (coarse)
+  gates; refining the grid shrinks certified radii; midpoints reproduce
+  the `C64` simulator bit-for-bit; the interval dependency growth is
+  measured and documented, not hidden.
+- **mera** — full-registry conformance; the GHZ coarse view **is** a
+  maximally entangled super-site pair; coarse views conserve weight at
+  every depth; truncation degrades measurably, never silently; gate cost
+  is the spanning subtree with honest caps; width-40 hierarchy-local
+  circuits in kilobytes; composition with `Ball`.
+- **capacity** — the resource guard as behavior: over-scale allocations
+  refused by *measurement* (requested vs available bytes in the error,
+  auto-measured and under explicit limits); adaptive stays sparse when
+  dense is inadmissible and promotes when the limit lifts; sparse
+  growth, mera blocks and factored merges all admitted not presumed;
+  armed time budgets abort a single dense gate mid-sweep, the mera SVD
+  path and scheduled runs — promptly, with measured elapsed times — and
+  the identical runs complete once the budget lifts.
+- **algebraic_qudits** — the hierarchical register: qudit coordinates
+  roundtrip with the documented bit order; the dual-algebra operator
+  space measured per doubling level (full rank pinned at ℍ/𝕆/𝕊, the
+  fifth doubling `#[ignore]`d at 1024/1024, synthesized sandwiches
+  verified operationally against their matrices); **sandwich-native
+  execution** identical to the component path with the counters proving
+  which ran and the synthesis cache pinned; the **direct-sum boundary**
+  (ℍ⊕ℍ span exactly the block-diagonals 32/64, cross-block SWAP
+  measurably outside, register still fully conformant through the
+  component path); full-registry conformance at ℍ, 𝕆 and ℍ⊕ℍ splits
+  with routing chosen by measured embedded-linearity; the encoding
+  exact across the site↔algebra boundary and certified against D[ω] at
+  every split; projection/feedback on algebra qubits collapsing the
+  joint state; 66–67 logical qubits exceeding every flat backend's u64
+  ceiling, with deterministic Born sampling over (site, component)
+  parts; site-sector structure surviving (support counts sites); and
+  the workload harness pricing the hierarchical shapes in-run against
+  dense.
+- **causal_geometry** — the causal-geometry suite across every backend:
+  the register metric measured through the router on six geometries
+  (swaps = graph distance − 1, the clock in exact agreement); causally
+  organized fabrics (`hierarchical`, `hypercube`) collapsing horizon,
+  ball growth, availability and measured QFT routing versus flat
+  fabrics; causal range priced per representation geometry (mobile MPS
+  and device pay time, mera's fixed tree pays rank at the crossed cut —
+  saturating honestly to dense scale at maximal range — factored
+  clustering and Clifford frames blind); the light cone measured at
+  width 63 (marginals exactly zero outside, schedule length = causal
+  depth); causal diamonds observationally identical at a quarter of the
+  ops; dual-time resolution cut-invariant with `2^{D/2}` supports at
+  the balanced cut and the fold-back destruction ledger matching the
+  closed form `Σ(√2)^j`; everything certified against the exact D[ω]
+  ring and Ball containment, and the whole family swept through the
+  benchmark harness over ten backends.
+- **device_geometries** — real machines reproduced structurally
+  (Falcon-27 heavy-hex: 27 sites, 28 couplers, degree ≤ 3, the known
+  adjacencies; Sycamore-class 54-site diagonal lattice; ion-trap
+  all-to-all) and operationally: swap cost is a property of the coupling
+  map while the amplitudes stay bit-for-bit on the reference; a
+  per-coupler latency override on the critical path moves the clock by
+  *exactly* the override and off-path overrides move nothing;
+  parallelism is the measured `serial_time/elapsed` ratio; the three era
+  clocks rescale an *identical* physical op sequence; chip-scale
+  geometry (GHZ across all 54 Sycamore sites) runs over a sparse inner
+  in under a megabyte.
 - **gate_matrices** — every standard gate vs literature values; exact
   per-algebra gate-support lists.
 - **gate_identities** — HXH = Z and friends, SWAP = 3·CX, the Nielsen–Chuang
@@ -290,7 +473,12 @@ Memory is asserted, not just plotted (`tests/memory_scaling.rs`): dense is
 `2^n · sizeof(S)` + O(1) and doubles per qubit *and* per algebra-dimension
 doubling; sparse GHZ is width-independent (125 B out to 63 qubits); saturated
 sparse is strictly worse than dense; adaptive ends within 64 B of whichever
-representation is cheaper. Sample of the example's output on this machine —
+representation is cheaper. Capacity itself is tested as behavior
+(`tests/capacity.rs`): over-scale allocations refuse with measured
+requested/available bytes, adaptive stays sparse under a tight budget,
+and armed time budgets abort dense sweeps, SVDs and schedules mid-kernel
+with measured elapsed times. `cargo run --release --example
+capacity_probe` walks every axis to its real wall on your machine. Sample of the example's output on this machine —
 note the estimate matching the measured RSS delta once states are large:
 
 ```
@@ -359,28 +547,41 @@ report must localize the corruption to the exact gates it breaks
 
 ```
 src/
-  scalar/        Scalar trait; f64, C64, CD<T> (ℍ/𝕆/𝕊), split-complex
+  scalar/        Scalar trait; f64, C64, CD<T> (ℍ/𝕆/𝕊), split-complex,
+                 Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
+  causal.rs      backward cones, causal diamonds, dual-time resolution
+  qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
+  exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
+  guard.rs       resource guard: measured memory admission, time budgets
   gates/         GateDef trait, FixedGate/ParamGate, standard library
   registry.rs    GateRegistry<S>: validated registration, aliases
   circuit.rs     Circuit<S> (chainable builders, raw + diagonal kernels,
                  append), BoundCircuit<S> (bind-time validation, inverse())
   backend/       Backend<S> trait + dense / sparse / adaptive / factored /
-                 mps / interference / device / frames / clifford_frame,
-                 BackendRegistry<S>, pauli_expectation
-  schedule.rs    evented scheduler: simultaneous loops, events, feedback
+                 mps / mera / interference / device / frames /
+                 clifford_frame, BackendRegistry<S>, pauli_expectation
+  schedule.rs    evented scheduler: simultaneous loops, events, recursive
+                 measurement feedback (adaptive trees)
   lift.rs        Clifford+T → measurement-feedback loop on n+t qubits
   conformance.rs registry-wide backend verification (research safety net)
   harness.rs     workload benchmarking with in-run correctness checks
   discovery.rs   point stabilizers, signal threads, transparency reports
-  library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit
+  library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit,
+                 brickwork, ranged_pairs, rainbow (causal workload family)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           seventeen integration suites (see Testing)
+tests/           twenty-four integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
-                 verify_models, frames_demo, clifford_space, clifford_lift
+                 verify_models, frames_demo, clifford_space, clifford_lift,
+                 coarse_register (mera + Ball), absolute_reference (D[ω]
+                 vs every backend), adaptive_feedback (recursive trees +
+                 frame repair), capacity_probe (real walls, measured),
+                 device_reproduction (real geometries × latency maps),
+                 causal_geometry (causal fabrics, diamonds, dual time),
+                 algebraic_qudits (hierarchical register, dual-algebra)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at
@@ -388,11 +589,15 @@ runtime; `proptest` and `criterion` for development.
 
 ## Where this is going
 
-See [ROADMAP.md](ROADMAP.md): stabilizer-rank compression and native Pauli
-measurement for the Clifford frame (the crude `2^t` product bound is not the
-≈`2^{0.4t}` state of the art — the gap is measurable here), per-factor and
-MPS-bond-gauge frames, truncated p-adic amplitudes (the
-`scale`/`born_weight` split is the designed seam), dual numbers and other
-non-Cayley–Dickson scalars, mid-circuit measurement as circuit ops, noise
-channels, and gate fusion (gated on `Scalar::ASSOCIATIVE`, which is `false`
-from octonions onward for a reason).
+See [ROADMAP.md](ROADMAP.md): stabilizer-rank compression for the Clifford
+frame (the crude `2^t` product bound is not the ≈`2^{0.4t}` state of the
+art — the gap is measurable here) and frames over factored inners (the
+lift's remaining `2^t` is a *holding* cost, measured), the MERA completion
+(disentanglers, path updates that replace block materialization, gauge
+maintenance so truncation bounds certify, ascending superoperators so
+operators renormalize instead of blocks), per-factor and MPS-bond-gauge
+frames, truncated p-adic amplitudes (the `scale`/`born_weight` split is
+the designed seam), dual numbers and other non-Cayley–Dickson scalars,
+classical registers for the scheduler's feedback trees, noise channels,
+and gate fusion (gated on `Scalar::ASSOCIATIVE`, which is `false` from
+octonions onward for a reason).

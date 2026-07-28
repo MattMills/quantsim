@@ -673,8 +673,9 @@ fn flush_replays_the_log_in_absorption_order() {
 #[test]
 fn measurement_is_native_and_the_frame_survives() {
     // Measuring Z_q projects the *stored* state with the conjugated
-    // string: no flush, the 3-gate GHZ frame outlives the measurement,
-    // and the collapsed physics is still exact.
+    // string: no flush, the 3-gate GHZ frame outlives the measurement
+    // (grown by the repair Clifford, never replayed), and the collapsed
+    // physics is still exact.
     let sim = sim_with_clifford();
     let mut c = Circuit::new(3);
     c.h(0).cx(0, 1).cx(1, 2);
@@ -684,10 +685,14 @@ fn measurement_is_native_and_the_frame_survives() {
         .as_any()
         .downcast_ref::<CliffordFramedState<C64>>()
         .unwrap();
-    assert_eq!(framed.frame_gates(), 3, "frame survives measurement");
+    assert!(
+        framed.frame_gates() >= 3,
+        "frame survives measurement (plus its repair gates)"
+    );
     let stats = framed.stats();
     assert_eq!(stats.flushes, 0);
     assert_eq!(stats.native_measurements, 1);
+    assert_eq!(stats.frame_repairs, 1, "a random outcome triggers repair");
     assert_close(state.total_weight(), 1.0, TOL);
     // GHZ collapse: all three qubits agree (probability() flushes — after
     // the fact, as an observation should).
@@ -726,19 +731,18 @@ fn measurement_is_native_and_the_frame_survives() {
     let dev = max_amplitude_deviation(&dense, &framed);
     assert!(dev < 1e-9, "collapsed states diverge: {dev}");
 
-    // The honest envelope at width past dense — discovered by measurement,
-    // not assumed: projecting the *stored* state is exact physics at
-    // O(support) with ≤2× growth per measurement, but the growth
-    // COMPOUNDS: a long adaptive sequence drifts the stored state away
-    // from the frame (physically the register collapses toward a product
-    // state |b⟩; the stored side becomes C†|b⟩, generically full-support).
-    // Measuring m of n qubits is bounded by 2^m — cheap for few
-    // measurements and for fresh-ancilla feedback loops (the lift), NOT
-    // polynomial for unbounded sequences. Closing that (true tableau
-    // frame repair on measurement) is the named roadmap rung; asserting
-    // O(1) here would be the same over-claim this suite exists to refuse.
+    // The adaptive-sequence envelope at width past dense — measured on
+    // both sides of the frame-repair switch. Without repair, projection's
+    // ≤2× growth COMPOUNDS: the register collapses physically while the
+    // stored side becomes C†|b⟩, so m measurements are bounded by 2^m
+    // (the pre-repair finding, kept measurable for the record). With
+    // repair (the default — the true tableau measurement update, C ← C·V
+    // re-aligning the stored basis after each projection), the same
+    // sequence stays FLAT: peak stored support 2, final support 1, at any
+    // sequence length. That is the Gottesman–Knill measurement sector
+    // reproduced through the frame mechanism — and it is asserted, not
+    // hoped for.
     let n = 40;
-    let m = 6;
     let mut c = Circuit::new(n);
     let mut rng = Prng::new(23);
     for _ in 0..300 {
@@ -753,27 +757,63 @@ fn measurement_is_native_and_the_frame_survives() {
             _ => c.cz(q, r),
         };
     }
-    let mut state = CliffordFramedState::<C64>::new(n).unwrap();
-    c.bind(&reg).unwrap().run(&mut state).unwrap();
-    let mut rng = Prng::new(41);
-    for q in 0..m {
-        state.measure(q, &mut rng).unwrap();
+    let bound = c.bind(&reg).unwrap();
+
+    // Pre-repair envelope, pinned for the record (m kept small: the cost
+    // is genuinely exponential in m).
+    let m_off = 6;
+    let mut drifting = CliffordFramedState::<C64>::new(n).unwrap();
+    drifting.set_measure_repair(false);
+    bound.run(&mut drifting).unwrap();
+    let mut rng_off = Prng::new(41);
+    let mut outcomes_off = Vec::new();
+    for q in 0..m_off {
+        outcomes_off.push(drifting.measure(q, &mut rng_off).unwrap());
     }
-    let stats = state.stats();
-    assert_eq!(stats.native_measurements, m);
-    assert_eq!(stats.flushes, 0, "prep + evolve + measure, no flush");
+    assert_eq!(drifting.stats().flushes, 0);
+    assert_eq!(drifting.stats().frame_repairs, 0);
     assert!(
-        state.peak_stored_support() <= 1 << m,
-        "support bounded by 2^measurements: {}",
-        state.peak_stored_support()
+        drifting.peak_stored_support() <= 1 << m_off,
+        "unrepaired support bounded by 2^measurements: {}",
+        drifting.peak_stored_support()
     );
     assert!(
-        state.peak_stored_support() > 1,
-        "and the drift is real — the stored state left the frame"
+        drifting.peak_stored_support() > 1,
+        "the unrepaired drift is real — the stored state left the frame"
     );
-    // (No observation here on purpose: flushing this 40-qubit drifted
-    // stabilizer state would materialize ~2^n physical support — the
-    // weight-1 invariant is already asserted on the cheap widths above.)
+
+    // Repaired run: same circuit, same seed — identical outcomes (repair
+    // happens after the draw and never touches the physics), flat cost,
+    // and a long sequence (every qubit) stays flat too.
+    let m_on = n;
+    let mut repaired = CliffordFramedState::<C64>::new(n).unwrap();
+    bound.run(&mut repaired).unwrap();
+    let mut rng_on = Prng::new(41);
+    let mut outcomes_on = Vec::new();
+    for q in 0..m_on {
+        outcomes_on.push(repaired.measure(q, &mut rng_on).unwrap());
+    }
+    assert_eq!(&outcomes_on[..m_off], &outcomes_off[..], "same physics");
+    let stats = repaired.stats();
+    assert_eq!(stats.native_measurements, m_on);
+    assert_eq!(
+        stats.flushes, 0,
+        "prep + evolve + measure + repair, no flush"
+    );
+    assert!(stats.frame_repairs > 0, "random outcomes trigger repairs");
+    assert!(
+        repaired.peak_stored_support() <= 2,
+        "repaired adaptive sequences stay flat: peak {}",
+        repaired.peak_stored_support()
+    );
+    assert_eq!(
+        repaired.stored_nonzero_count(),
+        1,
+        "after measuring all 40 qubits the stored state is one basis state"
+    );
+    // (No observation flush here on purpose: materializing the physical
+    // amplitudes of the drifted run would cost ~2^n; the weight-1
+    // invariant is already asserted on the cheap widths above.)
 }
 
 #[test]

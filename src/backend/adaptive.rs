@@ -2,7 +2,7 @@
 
 use super::{Backend, DenseState, SparseState};
 use crate::backend::dense::DENSE_MAX_QUBITS;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::math::GateMatrix;
 use crate::scalar::Scalar;
 
@@ -18,8 +18,11 @@ enum Repr<S: Scalar> {
 }
 
 /// Starts sparse; promotes itself to dense when the state grows dense enough
-/// that the flat vector is cheaper. Widths beyond the dense limit
-/// ([`DENSE_MAX_QUBITS`]) never promote.
+/// that the flat vector is cheaper. Promotion is **capacity-aware**: the
+/// dense vector is attempted only when the [resource
+/// guard](crate::guard) measures it admissible right now, so an
+/// over-scale register stays sparse instead of failing — a policy
+/// derived from the machine, not from a presumed width constant.
 ///
 /// Promotion is one-way: measurement can re-sparsify a state, but the
 /// simpler invariant is easier to reason about, and a dense state that
@@ -64,10 +67,18 @@ impl<S: Scalar> AdaptiveState<S> {
             }
             let threshold = (1u64 << n) / PROMOTE_DENSITY_DENOM;
             if (s.nonzero_count() as u64) >= threshold.max(1) {
-                let mut dense = DenseState::new(n)?;
-                let entries: Vec<(u64, S)> = s.entries().collect();
-                dense.load(&entries)?;
-                self.repr = Repr::Dense(dense);
+                match DenseState::new(n) {
+                    Ok(mut dense) => {
+                        let entries: Vec<(u64, S)> = s.entries().collect();
+                        dense.load(&entries)?;
+                        self.repr = Repr::Dense(dense);
+                    }
+                    // The guard measured the dense vector inadmissible
+                    // right now: stay sparse rather than fail — the
+                    // whole point of the adaptive policy.
+                    Err(Error::OutOfMemory { .. }) => {}
+                    Err(other) => return Err(other),
+                }
             }
         }
         Ok(())

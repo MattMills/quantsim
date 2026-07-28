@@ -43,9 +43,11 @@ use crate::scalar::Scalar;
 pub const MPS_MAX_QUBITS: usize = 63;
 /// Widest gate window (contiguous sites contracted at once).
 pub const MPS_MAX_WINDOW: usize = 5;
-/// Widest register accepted by [`Backend::load`] (state compilation is
-/// exponential in width).
-pub const MPS_LOAD_MAX_QUBITS: usize = 12;
+/// Structural width bound for [`Backend::load`] (basis indices fit
+/// `u64`); the exponential compilation buffer is admitted by the
+/// [resource guard](crate::guard) against measured memory, and the
+/// compilation itself checkpoints the guard's time budget.
+pub const MPS_LOAD_MAX_QUBITS: usize = 63;
 
 /// Truncation knobs for the MPS backend.
 #[derive(Debug, Clone, Copy)]
@@ -738,7 +740,11 @@ impl<S: Scalar> Backend<S> for MpsState<S> {
         // Identity layout, then compile the dense vector into the chain.
         self.site_of_logical = (0..n).collect();
         self.logical_at_site = (0..n).collect();
-        let mut theta = vec![S::zero(); 1usize << n];
+        let mut theta = crate::guard::try_vec(
+            1usize << n,
+            S::zero(),
+            &format!("mps load compilation ({n} qubits)"),
+        )?;
         for &(i, a) in entries {
             theta[i as usize] = a;
         }

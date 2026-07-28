@@ -46,6 +46,13 @@ fn main() -> Result<()> {
     sim.backends_mut().register("clifford-framed", |n| {
         Ok(Box::new(CliffordFramedState::<C64>::new(n)?))
     })?;
+    // The same backend with measurement repair disabled: the pre-repair
+    // drift, kept runnable so the finding stays a live comparison.
+    sim.backends_mut().register("clifford-framed-drift", |n| {
+        let mut state = CliffordFramedState::<C64>::new(n)?;
+        state.set_measure_repair(false);
+        Ok(Box::new(state))
+    })?;
 
     let n = 6;
     let t = 8;
@@ -78,6 +85,22 @@ fn main() -> Result<()> {
     );
 
     for prep in [ResourcePrep::Upfront, ResourcePrep::JustInTime] {
+        // Pre-repair drift peak, for the comparison row.
+        let lifted = lift::to_clifford_feedback(&circuit, prep)?;
+        let (drift_state, _) = lifted.schedule.run_on(&sim, "clifford-framed-drift", 77)?;
+        let drift_peak = drift_state
+            .as_any()
+            .downcast_ref::<CliffordFramedState<C64>>()
+            .unwrap()
+            .peak_stored_support();
+        println!(
+            "  {:<28} {:>12} {:>14} {:>10}",
+            format!("lifted, {prep:?} (drift)"),
+            drift_peak,
+            "-",
+            "feedback"
+        );
+
         let lifted = lift::to_clifford_feedback(&circuit, prep)?;
         let (state, trace) = lifted.schedule.run_on(&sim, "clifford-framed", 77)?;
         let framed = state
@@ -108,7 +131,7 @@ fn main() -> Result<()> {
         }
         println!(
             "  {:<28} {:>12} {:>14} {:>10}",
-            format!("lifted, {prep:?}"),
+            format!("lifted, {prep:?} (repaired)"),
             peak,
             format!("{worst:.1e}"),
             "feedback"
@@ -120,15 +143,16 @@ fn main() -> Result<()> {
     println!("    dynamics are 100% Clifford absorption + native measurements +");
     println!("    conditioned Clifford corrections — zero flushes, physics exact");
     println!("    including the per-outcome e^(+/-i pi/4) bookkeeping.");
-    println!("  * but the relocated cost did NOT vanish and did NOT stay in the");
-    println!("    resource states: measurement projections collapse the register");
-    println!("    in the PHYSICAL basis, the frame scrambles that cancellation");
-    println!("    structure, and the STORED support drifts — both prep orderings");
-    println!("    peak far above the direct run. The residue moved to a place");
-    println!("    this representation handles worse, not better.");
-    println!("  * mechanism to change that (roadmap): frame repair on measurement");
-    println!("    (re-align C after each projection — the true tableau update),");
-    println!("    and frame-aligned sums (stabilizer-rank storage) for the magic.");
+    println!("  * frame repair on measurement (the true tableau update, C <- C*V");
+    println!("    after each projection) is what made consumption cheap: with");
+    println!("    just-in-time prep at most one |T> is in flight and the loop");
+    println!("    peaks near the direct route. The (drift) rows above rerun the");
+    println!("    identical loop with repair disabled — the pre-repair finding,");
+    println!("    kept live: both orderings drift far above the direct run.");
+    println!("  * upfront prep still pays 2^t: the cost of HOLDING all t");
+    println!("    resource states in one sparse register at once — a holding");
+    println!("    cost, not drift. Frame-aligned sums (stabilizer-rank storage)");
+    println!("    and frames over factored inners are the remaining rungs.");
 
     // The resource itself is cheap in a product-structured representation:
     // |T>^(x)t in the factored backend is linear in t — the composition
@@ -144,6 +168,7 @@ fn main() -> Result<()> {
         }
         print!("t={tt}: {}B  ", f.memory_bytes());
     }
-    println!("(linear — the magic is cheap to HOLD, expensive to CONSUME)");
+    println!("(linear — cheap to HOLD there; repair made it cheap to CONSUME");
+    println!(" just-in-time, and composing the two is the factored-inner rung)");
     Ok(())
 }

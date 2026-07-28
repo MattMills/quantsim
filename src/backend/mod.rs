@@ -24,6 +24,7 @@ mod device;
 mod factored;
 mod frames;
 mod interference;
+mod mera;
 mod mps;
 mod sparse;
 
@@ -33,10 +34,11 @@ pub use clifford_frame::{
     CLIFFORD_RECOGNITION_MAX,
 };
 pub use dense::{DenseState, DENSE_MAX_QUBITS};
-pub use device::{ArityPolicy, DeviceState, DurationModel, PhysicalOp, Topology};
+pub use device::{ArityPolicy, DeviceState, DurationModel, LatencyMap, PhysicalOp, Topology};
 pub use factored::{FactoredState, FACTORED_MAX_QUBITS, FACTOR_MAX_QUBITS};
 pub use frames::{FrameStats, FramedState, FRAME_CONJUGATION_MAX};
 pub use interference::{InterferenceRecord, InterferenceState};
+pub use mera::{MeraConfig, MeraState, MERA_LOAD_MAX_QUBITS, MERA_MAX_QUBITS};
 pub use mps::{MpsConfig, MpsState, MPS_LOAD_MAX_QUBITS, MPS_MAX_QUBITS, MPS_MAX_WINDOW};
 pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
 
@@ -314,8 +316,9 @@ impl<S: Scalar> BackendRegistry<S> {
     }
 
     /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"`,
-    /// `"factored"` and `"mps"` backends. (`"mps"` requires a commutative
-    /// division algebra and reports an error at creation elsewhere.)
+    /// `"factored"`, `"mps"` and `"mera"` backends. (`"mps"` and `"mera"`
+    /// require a commutative division algebra and report an error at
+    /// creation elsewhere.)
     pub fn standard() -> Self {
         let mut reg = Self::new();
         reg.register("dense", |n| Ok(Box::new(DenseState::<S>::new(n)?)))
@@ -327,6 +330,8 @@ impl<S: Scalar> BackendRegistry<S> {
         reg.register("factored", |n| Ok(Box::new(FactoredState::<S>::new(n)?)))
             .expect("fresh registry");
         reg.register("mps", |n| Ok(Box::new(MpsState::<S>::new(n)?)))
+            .expect("fresh registry");
+        reg.register("mera", |n| Ok(Box::new(MeraState::<S>::new(n)?)))
             .expect("fresh registry");
         reg
     }
@@ -423,13 +428,27 @@ pub(crate) fn sub_index(index: u64, qubits: &[usize]) -> usize {
 
 // In-place gate kernels over a flat amplitude slice, shared by the dense and
 // factored backends (the factored backend calls them with factor-local qubit
-// positions).
+// positions). All checkpoint the resource guard's deadline at coarse
+// intervals so an over-scale sweep aborts mid-gate instead of running
+// unbounded.
 
-pub(crate) fn apply_single_in_place<S: Scalar>(amps: &mut [S], m: &GateMatrix<S>, q: usize) {
+/// Deadline-checkpoint stride inside amplitude sweeps (in loop
+/// iterations): coarse enough to be free, fine enough that a single
+/// over-budget gate is caught within a fraction of a second.
+const CHECK_STRIDE: usize = 1 << 20;
+
+pub(crate) fn apply_single_in_place<S: Scalar>(
+    amps: &mut [S],
+    m: &GateMatrix<S>,
+    q: usize,
+) -> Result<()> {
     let (m00, m01, m10, m11) = (m.get(0, 0), m.get(0, 1), m.get(1, 0), m.get(1, 1));
     let mask = 1usize << q;
     let half = amps.len() >> 1;
     for i in 0..half {
+        if i % CHECK_STRIDE == 0 {
+            crate::guard::checkpoint()?;
+        }
         let low = i & (mask - 1);
         let i0 = ((i >> q) << (q + 1)) | low;
         let i1 = i0 | mask;
@@ -438,13 +457,14 @@ pub(crate) fn apply_single_in_place<S: Scalar>(amps: &mut [S], m: &GateMatrix<S>
         amps[i0] = m00 * a0 + m01 * a1;
         amps[i1] = m10 * a0 + m11 * a1;
     }
+    Ok(())
 }
 
 pub(crate) fn apply_general_in_place<S: Scalar>(
     amps: &mut [S],
     m: &GateMatrix<S>,
     qubits: &[usize],
-) {
+) -> Result<()> {
     let k = qubits.len();
     let d = 1usize << k;
     let mut sorted = qubits.to_vec();
@@ -454,6 +474,9 @@ pub(crate) fn apply_general_in_place<S: Scalar>(
     let mdata = m.data();
     let mut scratch = vec![S::zero(); d];
     for g in 0..groups {
+        if g % CHECK_STRIDE == 0 {
+            crate::guard::checkpoint()?;
+        }
         let base = expand_index(g as u64, &sorted);
         for (j, slot) in scratch.iter_mut().enumerate() {
             *slot = amps[(base | scatter[j]) as usize];
@@ -466,12 +489,21 @@ pub(crate) fn apply_general_in_place<S: Scalar>(
             amps[(base | scatter[r]) as usize] = acc;
         }
     }
+    Ok(())
 }
 
-pub(crate) fn apply_diagonal_in_place<S: Scalar>(amps: &mut [S], entries: &[S], qubits: &[usize]) {
+pub(crate) fn apply_diagonal_in_place<S: Scalar>(
+    amps: &mut [S],
+    entries: &[S],
+    qubits: &[usize],
+) -> Result<()> {
     for (i, a) in amps.iter_mut().enumerate() {
+        if i % CHECK_STRIDE == 0 {
+            crate::guard::checkpoint()?;
+        }
         *a = entries[sub_index(i as u64, qubits)] * *a;
     }
+    Ok(())
 }
 
 /// Expand `group` (an index over non-target bit patterns) into a full basis
