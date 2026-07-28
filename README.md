@@ -184,6 +184,17 @@ parts are swappable:
   edge-storage the complex carries beyond anything derivable from
   points. Wide-qudit fast paths (O(d) diagonal, O(d²)-validated
   permutation gates) make the 240-level protocol run in milliseconds.
+  And E8×E8 is an **8-qubit representation** outright (`e8::rep`): the
+  128 even-parity basis states *are* the spinor roots, the odd sector
+  pairs onto the second copy (128+128 = 256), and two basis states at
+  Hamming distance 2 differ by exactly an **integer root** — the 112
+  integer roots are the 2-local transition labels, verified against
+  real gate matrices over every pair and basis state. Entanglement
+  reads as measured root geometry: GHZ is exactly one antipodal pair
+  (no 2-local root connects its ends), products sit at affine
+  dimension 0, random states flood the root graph (3584 edges), and
+  Schmidt rank obeys the geometric projected-support bound on every
+  state and cut tested.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -391,7 +402,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 303 tests (43 unit + 256 across twenty-eight
+`cargo test` runs 307 tests (43 unit + 260 across twenty-nine
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -525,6 +536,15 @@ entirely trivial accessors and defensive guards:
   were touched; and the wide-qudit fast paths validating exactly
   (non-bijections and non-unimodular phases refused as errors, refused
   gates leaving the register untouched).
+- **e8_representation** — E8×E8 as an 8-qubit representation: the
+  spinor bijection (128+128 injective over all 256 basis states); the
+  transitions-are-integer-roots theorem verified both geometrically
+  (all 112 covered) and against real `rxx(π)` gate matrices over all
+  28 pairs × 256 states; entanglement as root geometry (GHZ an
+  antipodal pair with zero root edges, rainbow affine-dimension 4 with
+  exact per-cut entropies, random flooding the graph); and the
+  projected-support bound on Schmidt rank holding on every family and
+  cut, tight where the geometry is exact.
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally

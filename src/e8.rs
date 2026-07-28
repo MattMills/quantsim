@@ -275,6 +275,196 @@ pub fn triangle_complex_b1() -> usize {
     edges.len() - 240 + components - rank
 }
 
+/// The E8×E8 qubit representation: 8 qubits held ON the root
+/// geometry, with entanglement structure and state adjacency read off
+/// as measured root geometry. See [`rep`].
+pub mod rep {
+    use super::{dot, Root};
+    use crate::backend::Backend;
+    use crate::math::svd_thin;
+    use crate::scalar::C64;
+
+    /// The spinor root of an even-parity 8-bit string: bit `i` = 0 maps
+    /// to coordinate +1, bit 1 to −1 (doubled units). `None` for odd
+    /// parity — odd strings live on the SECOND E8 copy (see
+    /// [`sector_of`]).
+    pub fn spinor_of_bits(bits: u8) -> Option<Root> {
+        if bits.count_ones() % 2 != 0 {
+            return None;
+        }
+        Some(std::array::from_fn(|i| {
+            if (bits >> i) & 1 == 0 {
+                1
+            } else {
+                -1
+            }
+        }))
+    }
+
+    /// The bit string of a spinor root (inverse of [`spinor_of_bits`]).
+    pub fn bits_of_spinor(root: &Root) -> Option<u8> {
+        if root.iter().any(|&c| c != 1 && c != -1) {
+            return None;
+        }
+        let mut bits = 0u8;
+        for (i, &c) in root.iter().enumerate() {
+            if c == -1 {
+                bits |= 1 << i;
+            }
+        }
+        Some(bits)
+    }
+
+    /// Which E8 copy an 8-qubit basis state lives on: copy 0 holds the
+    /// even-parity sector directly; copy 1 holds the odd sector via
+    /// the fixed pairing `s ↦ s ⊕ 1` (flip qubit 0). Together the two
+    /// spinor sectors are exactly the 256 basis states — E8×E8 as the
+    /// full 8-qubit space.
+    pub fn sector_of(bits: u8) -> (usize, Root) {
+        if bits.count_ones() % 2 == 0 {
+            (0, spinor_of_bits(bits).unwrap())
+        } else {
+            (1, spinor_of_bits(bits ^ 1).unwrap())
+        }
+    }
+
+    /// The integer root connecting two SAME-sector basis states at
+    /// Hamming distance 2: their spinor difference, which is always an
+    /// integer root (±2 at exactly the two flipped positions). `None`
+    /// when the states are not a distance-2 same-parity pair — the
+    /// measured content: the 112 integer roots ARE the 2-local
+    /// transition labels of the representation.
+    pub fn transition_root(x: u8, y: u8) -> Option<Root> {
+        if x.count_ones() % 2 != y.count_ones() % 2 || (x ^ y).count_ones() != 2 {
+            return None;
+        }
+        let (sx, sy) = (sector_of(x).1, sector_of(y).1);
+        let diff: Root = std::array::from_fn(|i| sy[i] - sx[i]);
+        debug_assert_eq!(dot(&diff, &diff), 8);
+        Some(diff)
+    }
+
+    /// The measured geometry of a state's basis support on the root
+    /// system.
+    #[derive(Debug, Clone)]
+    pub struct SupportGeometry {
+        /// Occupied basis states.
+        pub points: usize,
+        /// Split across the two E8 copies (even, odd sector).
+        pub sectors: (usize, usize),
+        /// Root-adjacent pairs inside the support (same sector,
+        /// Hamming distance 2 — i.e. pairs connected by an integer
+        /// root).
+        pub root_edges: usize,
+        /// GF(2) affine dimension of the support's bit strings — the
+        /// smallest coset the state lives in.
+        pub affine_dim: usize,
+        /// Antipodal pairs in the support (a copy's maximal-distance
+        /// geometry — GHZ lives on exactly one).
+        pub antipodal_pairs: usize,
+    }
+
+    /// Measure the support geometry of an 8-qubit state.
+    pub fn support_geometry(state: &dyn Backend<C64>) -> SupportGeometry {
+        assert_eq!(state.num_qubits(), 8, "the E8 representation is 8 qubits");
+        let mut support: Vec<u8> = Vec::new();
+        state.for_each_nonzero(&mut |idx, _| support.push(idx as u8));
+        support.sort_unstable();
+        let mut sectors = (0, 0);
+        for &s in &support {
+            if s.count_ones() % 2 == 0 {
+                sectors.0 += 1;
+            } else {
+                sectors.1 += 1;
+            }
+        }
+        let mut root_edges = 0;
+        let mut antipodal_pairs = 0;
+        for (i, &x) in support.iter().enumerate() {
+            for &y in &support[i + 1..] {
+                if transition_root(x, y).is_some() {
+                    root_edges += 1;
+                }
+                if x ^ y == 0xff {
+                    antipodal_pairs += 1;
+                }
+            }
+        }
+        // Affine dimension over GF(2): rank of {s ⊕ s₀}.
+        let mut basis: Vec<u8> = Vec::new();
+        if let Some(&s0) = support.first() {
+            for &s in &support[1..] {
+                let mut v = s ^ s0;
+                for &b in &basis {
+                    let pivot = 7 - b.leading_zeros() as usize;
+                    if (v >> pivot) & 1 == 1 {
+                        v ^= b;
+                    }
+                }
+                if v != 0 {
+                    basis.push(v);
+                }
+            }
+        }
+        SupportGeometry {
+            points: support.len(),
+            sectors,
+            root_edges,
+            affine_dim: basis.len(),
+            antipodal_pairs,
+        }
+    }
+
+    /// Schmidt rank and entanglement entropy (bits) across the cut
+    /// whose LOW side is the qubits set in `cut_mask`, computed by SVD
+    /// of the reshaped amplitude matrix.
+    pub fn schmidt(state: &dyn Backend<C64>, cut_mask: u8) -> (usize, f64) {
+        assert_eq!(state.num_qubits(), 8);
+        let low: Vec<usize> = (0..8).filter(|q| (cut_mask >> q) & 1 == 1).collect();
+        let high: Vec<usize> = (0..8).filter(|q| (cut_mask >> q) & 1 == 0).collect();
+        let (rows, cols) = (1usize << low.len(), 1usize << high.len());
+        let mut m = vec![C64::new(0.0, 0.0); rows * cols];
+        state.for_each_nonzero(&mut |idx, amp| {
+            let mut r = 0usize;
+            for (bit, &q) in low.iter().enumerate() {
+                r |= (((idx >> q) & 1) as usize) << bit;
+            }
+            let mut c = 0usize;
+            for (bit, &q) in high.iter().enumerate() {
+                c |= (((idx >> q) & 1) as usize) << bit;
+            }
+            m[r * cols + c] = amp;
+        });
+        let svd = svd_thin::<C64>(rows, cols, &m, 1e-12, 1e-13).expect("C64 svd");
+        let weights: Vec<f64> = svd.sigma.iter().map(|s| s * s).collect();
+        let total: f64 = weights.iter().sum();
+        let mut entropy = 0.0;
+        let mut rank = 0;
+        for w in weights {
+            let p = w / total;
+            if p > 1e-12 {
+                rank += 1;
+                entropy -= p * p.log2();
+            }
+        }
+        (rank, entropy)
+    }
+
+    /// The projected-support bound: Schmidt rank across a cut can
+    /// never exceed the number of distinct low-side (or high-side)
+    /// bit patterns in the support — a geometric bound on
+    /// entanglement, checkable against [`schmidt`].
+    pub fn projected_support_bound(state: &dyn Backend<C64>, cut_mask: u8) -> usize {
+        let mut low = std::collections::HashSet::new();
+        let mut high = std::collections::HashSet::new();
+        state.for_each_nonzero(&mut |idx, _| {
+            low.insert((idx as u8) & cut_mask);
+            high.insert((idx as u8) & !cut_mask);
+        });
+        low.len().min(high.len())
+    }
+}
+
 /// An embedding of the four arity chains (`A₁ … A₄`, i.e. the su(2),
 /// su(3), su(4), su(5) frames of binary/ternary/quaternary/quintary
 /// sub-qudits) into the one E8 root system, with the measured overlap

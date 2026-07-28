@@ -98,6 +98,50 @@ fn main() -> Result<()> {
     println!("\n  storage = rays across paired E8 points; invisibility = uniform local");
     println!("  marginals (measured); recovery = cross-copy interference (measured);");
     println!("  and beyond point data the complex itself offers b₁ = {b1} invariant");
-    println!("  edge degrees of freedom. The co-boundary is where the information is.");
+    println!("  edge degrees of freedom. The co-boundary is where the information is.\n");
+
+    // ── 4. The same E8×E8 as a QUBIT representation ──────────────────
+    use quantsim::e8::rep;
+    println!("── E8×E8 as an 8-qubit representation (entanglement as root geometry)");
+    println!("  the 128 even-parity basis states ARE the spinor roots (bit ↦ sign);");
+    println!("  the odd sector pairs onto the second copy: 128 + 128 = all 256.");
+    println!("  Two basis states at Hamming distance 2 differ by exactly an INTEGER");
+    println!("  root — the 112 integer roots are the 2-local transition labels,");
+    println!("  verified against real gate matrices in tests/e8_representation.rs.");
+    let sim: Simulator = Simulator::new();
+    println!(
+        "  {:<22} {:>7} {:>9} {:>11} {:>10} {:>10} {:>10}",
+        "state", "points", "sectors", "root edges", "affine", "antipodes", "S(center)"
+    );
+    for (name, circuit) in [
+        ("product", {
+            let mut c: Circuit = Circuit::new(8);
+            c.x(1).x(4);
+            c
+        }),
+        ("ghz-8", library::ghz(8)),
+        ("rainbow-8", library::rainbow(8)),
+        ("random-8", library::random_circuit(8, 200, 7)),
+    ] {
+        let state = sim.run(&circuit)?;
+        let geo = rep::support_geometry(state.as_ref());
+        let (_, entropy) = rep::schmidt(state.as_ref(), 0b1111);
+        println!(
+            "  {:<22} {:>7} {:>4}+{:<4} {:>11} {:>10} {:>10} {:>9.3}b",
+            name,
+            geo.points,
+            geo.sectors.0,
+            geo.sectors.1,
+            geo.root_edges,
+            geo.affine_dim,
+            geo.antipodal_pairs,
+            entropy
+        );
+    }
+    println!("  GHZ is exactly one ANTIPODAL PAIR of the root geometry (no 2-local");
+    println!("  root connects its ends); products sit at affine dimension 0; random");
+    println!("  states flood the root graph. Schmidt rank obeys the geometric");
+    println!("  projected-support bound on every state and cut tested — entanglement");
+    println!("  investigated as measured geometry, adjacency included.");
     Ok(())
 }
