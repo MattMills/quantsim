@@ -858,7 +858,13 @@ runtime; `proptest` and `criterion` for development.
 
 ## Where this is going
 
-See [ROADMAP.md](ROADMAP.md): stabilizer-rank compression for the Clifford
+Two companion documents: [LANDSCAPES.md](LANDSCAPES.md) is the research
+charter for *computations* — a staged catalog of pristine, valid quantum
+implementations (hidden-subgroup on the E8 Weyl pair, semiclassical phase
+estimation, resource-honest Shor, matchgate physics, stabilizer-code cycles,
+CHSH certification, …), each with its honest advantage status and the
+alternate representation/geometry landscapes to measure it across.
+[ROADMAP.md](ROADMAP.md) tracks the *machinery*: stabilizer-rank compression for the Clifford
 frame (the crude `2^t` product bound is not the ≈`2^{0.4t}` state of the
 art — the gap is measurable here) and frames over factored inners (the
 lift's remaining `2^t` is a *holding* cost, measured), the MERA completion

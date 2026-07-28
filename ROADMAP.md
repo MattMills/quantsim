@@ -1,5 +1,9 @@
 # Roadmap
 
+(Machinery lives here; the staged catalog of target *computations* — with
+honest advantage labels and their alternate-landscape axes — lives in
+[LANDSCAPES.md](LANDSCAPES.md).)
+
 The crate is organized around two swappable axes — the **amplitude algebra**
 (`Scalar`) and the **state representation** (`Backend<S>`) — so most planned
 work is "fill in another cell of the matrix":
