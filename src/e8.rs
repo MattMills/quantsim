@@ -1196,6 +1196,108 @@ pub mod constellation {
             Ok(())
         }
 
+        /// The scale-embedding isometry `V_a: |p⟩ ↦ |2^a·p⟩` into a
+        /// register `a` levels deeper — the coarse-to-fine leg of the
+        /// scale-composition algebra. Weight-preserving and injective
+        /// (the self-similarity theorem: doubling prepends digit 0);
+        /// operators transport covariantly across it
+        /// (`T_{2v}∘V₁ = V₁∘T_v`, `M_q∘V₁ = V₁∘M_q`, measured), which
+        /// is what makes it the encoder of the cross-scale comb codes.
+        pub fn scale_embed(&self, extra_levels: usize) -> crate::error::Result<Self> {
+            self.require_full_blocks()?;
+            let num_qubits = self.num_qubits + 8 * extra_levels;
+            if num_qubits > 63 {
+                return Err(crate::error::Error::TooManyQubits {
+                    requested: num_qubits,
+                    max: 63,
+                });
+            }
+            let amps = self
+                .amps
+                .iter()
+                .map(|(p, &a)| (p.map(|c| c << extra_levels), a))
+                .collect();
+            Ok(E8ConstellationState {
+                num_qubits,
+                levels: self.levels + extra_levels,
+                amps,
+            })
+        }
+
+        /// The decimation `R_a: |2^a·p⟩ ↦ |p⟩` onto a register `a`
+        /// levels coarser — the fine-to-coarse leg. Defined exactly on
+        /// states whose support carries NO fine-scale data (every point
+        /// divisible by `2^a`); anything else refuses with the level
+        /// named, because decimating live fine digits would silently
+        /// destroy information — correct first, then coarsen.
+        pub fn decimate(&self, drop_levels: usize) -> crate::error::Result<Self> {
+            self.require_full_blocks()?;
+            if drop_levels > self.levels {
+                return Err(crate::error::Error::InvalidState(format!(
+                    "cannot drop {drop_levels} of {} scale levels",
+                    self.levels
+                )));
+            }
+            let mut amps = HashMap::with_capacity(self.amps.len());
+            for (p, &a) in &self.amps {
+                // Divisibility by 2^drop in the LATTICE sense: the
+                // dropped digits must all be class 0 (componentwise
+                // evenness is not enough — integer roots have even
+                // coordinates but nonzero class).
+                let digits = decompose(p, drop_levels).expect("stored keys are lattice points");
+                if let Some(level) = digits.iter().position(|&d| d != 0) {
+                    return Err(crate::error::Error::InvalidState(format!(
+                        "support carries fine-scale data at level {level}; \
+                         correct before decimating"
+                    )));
+                }
+                amps.insert(p.map(|c| c >> drop_levels), a);
+            }
+            Ok(E8ConstellationState {
+                num_qubits: self.num_qubits - 8 * drop_levels,
+                levels: self.levels - drop_levels,
+                amps,
+            })
+        }
+
+        /// The eigenphase of the modulation `M_q` on this state — the
+        /// syndrome read of the cross-scale codes: a comb codeword
+        /// returns exactly 1, a displaced codeword returns the
+        /// character of its displacement. Refuses (with the measured
+        /// spread) when the state is NOT an `M_q` eigenstate, so a
+        /// syndrome can never be silently fabricated from a
+        /// non-stabilized state.
+        pub fn modulation_eigenphase(&self, q: &Point) -> crate::error::Result<C64> {
+            if class_of(q).is_none() {
+                return Err(crate::error::Error::InvalidState(
+                    "modulation label is not an E8 point".into(),
+                ));
+            }
+            let modulus = 4i128 << self.levels;
+            let mut phase: Option<C64> = None;
+            let mut worst: f64 = 0.0;
+            for p in self.amps.keys() {
+                let r = pdot(q, p).rem_euclid(modulus);
+                let angle = std::f64::consts::TAU * r as f64 / modulus as f64;
+                let chi = C64::new(angle.cos(), angle.sin());
+                match phase {
+                    None => phase = Some(chi),
+                    Some(first) => worst = worst.max((chi - first).norm()),
+                }
+            }
+            let Some(phase) = phase else {
+                return Err(crate::error::Error::InvalidState(
+                    "empty support has no eigenphase".into(),
+                ));
+            };
+            if worst > 1e-9 {
+                return Err(crate::error::Error::InvalidState(format!(
+                    "state is not an M_q eigenstate: character spread {worst:.3e}"
+                )));
+            }
+            Ok(phase)
+        }
+
         /// The discrete Fourier transform along one basis direction of
         /// the coordinate group `(ℤ/2^m)⁸ ≅ E8/2^m E8` — the gate that
         /// turns position structure into momentum structure one

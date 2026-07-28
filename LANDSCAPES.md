@@ -214,14 +214,21 @@ ledger*: T-count in vs fidelity out vs frame-representation cost — connecting
 the shipped doped-Clifford scatter laws to the actual protocol that motivates
 them.
 
-#### E3. Lattice-code landscapes (the E8/GKP bridge) — `SPEC / research`
+#### E3. Lattice-code landscapes (the E8/GKP bridge) — `first rung SHIPPED`
 The Weyl-pair work gives this tree a discrete cross-scale cousin of
 symplectic-lattice GKP codes: stabilizer groups inside the constellation
-Heisenberg group over (ℤ/2^m)⁸, with W(E8) as native Cliffords. Pristine
-research target: define a mod-2^m stabilizer tableau (ROADMAP rung), exhibit a
-small code whose logicals are W(E8) orbits, and measure its distance-vs-cost
-against qubit codes of equal length. **Status: open research — the entry
-exists to keep it honest and staged.**
+Heisenberg group over (ℤ/2^m)⁸, with W(E8) as native Cliffords. **Shipped
+(`tests/e8_dual_scale.rs`): cross-scale comb codes** — coarse-translation +
+fine-modulation checks commuting past the horizon, logical operators at the
+middle scales, syndrome windows tiling exactly the bidirectional commutation
+inequality (one measured matrix), end-to-end displacement correction by exact
+phase readout, and code self-similarity under decimation (the RG flow of the
+code is the code). Also shipped beside it: the folding theorems (interleaved
+bidirectional sequences collapsing to a single two-gate layer; deep periodic
+time folded to its measured period with the exact quadratic Weyl phase).
+Remaining research: physical-ancilla syndrome extraction, noise trajectories
+over the codes, the mod-2^m stabilizer tableau, and distance-vs-cost against
+qubit codes of equal length.
 
 ### F. Protocols: communication, nonlocality, verification
 

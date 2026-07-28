@@ -232,7 +232,26 @@ parts are swappable:
   the standard framework), and structured coset states interacting —
   interference, cross-scale translation, dual modulation, W(E8) —
   at 40 qubits in ~1 ms where dense's 17.6 TB is a measured refusal:
-  rank-k structure costs `2^{km}` points instead of `2^{8m}`.
+  rank-k structure costs `2^{km}` points instead of `2^{8m}`. And on
+  top of the pair sits **multi-scale dual time**: the distilled scale
+  operad (`scale_embed`/`decimate` isometries composing exactly, the
+  Weyl pair transporting covariantly across them, decimation of live
+  fine-scale data refusing with the level named), **cross-scale comb
+  codes** whose coarse-translation + fine-modulation checks all
+  commute past the horizon, whose logical operators live at the middle
+  scales, whose syndrome windows tile *exactly* the same bidirectional
+  inequality as the commutation ladder (the m×m FIRE matrix, measured),
+  with end-to-end correction — inject fine displacements, decode them
+  exactly from cross-scale syndrome phases alone, correct, decimate to
+  the pristine coarse state — and code self-similarity (decimating the
+  (m=4,a=2) code IS the (m=3,a=1) code); plus the **folding
+  theorems**: an interleaved bidirectional sequence (ascending
+  translations against descending modulations) reorders through
+  beyond-horizon commutations into exactly one two-gate layer (the
+  below-horizon control measurably refuses), and deep periodic time
+  folds to its measured period — 2⁴⁰+5 blocks evaluated as 5 in
+  ~100 µs, certified by the exact small-t Weyl closed form
+  `U^t = χ^{t(t−1)/2}·T_{tV}M_{tQ}` plus modular arithmetic.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -444,7 +463,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 326 tests (43 unit + 279 across thirty-two
+`cargo test` runs 332 tests (43 unit + 285 across thirty-three
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -643,6 +662,20 @@ entirely trivial accessors and defensive guards:
   reducing at depth 1 to the X-string on `class(v)` and the
   `(−1)^{⟨q,p⟩}` diagonal, checked against the standard framework; and
   partial blocks / non-lattice labels / non-root mirrors refused.
+- **e8_dual_scale** — multi-scale dual time: the scale operad exact
+  (embeddings compose, R∘V = id, Weyl operators transport covariantly,
+  decimation of live fine data refused with the level named — and the
+  lattice-divisibility subtlety pinned: componentwise evenness is NOT
+  divisibility); comb codes with cross-scale commuting checks, middle-
+  scale logicals (X̄ flips Z̄'s eigenphase while every check stays +1),
+  and code self-similarity under decimation; the full m×m syndrome
+  matrix tiling the horizon inequality exactly; end-to-end correction
+  (displacements (3,…,1,…) decoded exactly from syndrome phases alone,
+  corrected to 0.0 deviation, decimated to the pristine coarse state)
+  with the past-window blindness measured honestly; the interleave
+  fold to one two-gate layer with its below-horizon refusal control;
+  and deep periodic time folded to the measured period P = 8 with the
+  exact quadratic Weyl phase pinned at small t.
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally
@@ -850,7 +883,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  e8_coboundary (E8×E8 storage, representation, both
                  systems as backends in conformance + benchmark),
                  e8_constellation (the coset tower + n-qubit backend),
-                 e8_weyl (the dual cross-scale Weyl pair, W(E8) Clifford)
+                 e8_weyl (the dual cross-scale Weyl pair, W(E8) Clifford),
+                 e8_dual_scale (scale operad, cross-scale QEC, folding)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

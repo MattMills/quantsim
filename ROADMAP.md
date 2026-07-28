@@ -417,6 +417,31 @@ is priced in the harness beside the standard backends (GHZ-63 = two
 80-byte points where dense refuses to construct; saturated QFT-12
 honestly costs more than dense).
 
+Fourth wave — SHIPPED: **multi-scale dual time**
+(`e8::constellation` scale methods + `tests/e8_dual_scale.rs`). The
+distilled scale operad: `scale_embed`/`decimate` isometries with exact
+composition (`V_a∘V_b = V_{a+b}`, `R∘V = id`), covariant Weyl
+transport (`T_{2v}∘V = V∘T_v`, `M_q∘V = V∘M_q`), and the honest
+divisibility subtlety pinned (componentwise evenness is NOT lattice
+divisibility — decimation demands digit-zero levels and refuses live
+fine data with the level named). Cross-scale comb codes: coarse
+translation checks + fine modulation checks, all commuting past the
+horizon; logical operators at the middle scales; the m×m syndrome
+matrix tiling EXACTLY the Weyl commutation inequality (detection
+window = bidirectional horizon — one measured matrix unifies QEC and
+the Heisenberg ladder); end-to-end correction with exact binary
+phase-readout decoding and honest past-window blindness; code
+self-similarity (decimated (m=4,a=2) code = (m=3,a=1) code, state
+identity). Folding theorems: the interleaved ascending-T/descending-M
+sequence reorders through beyond-horizon commutations only into one
+two-gate layer (below-horizon control measurably refuses); deep
+periodic time folds to the measured period (P = 8 at m = 3) with the
+exact quadratic Weyl phase `χ^{t(t−1)/2}` pinned at small t — 2⁴⁰+5
+blocks evaluated as 5 in ~100 µs. Next rung on top: syndrome
+extraction as physical ancilla interferometry (the eigenphase read is
+currently simulator-direct), noise-model trajectories over the comb
+codes, and the mod-2^m tableau that would make all of it polynomial.
+
 Next rungs:
 
 - **auto-split on disentanglement**: volumes currently merge and stay
