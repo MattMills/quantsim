@@ -581,7 +581,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  frame repair), capacity_probe (real walls, measured),
                  device_reproduction (real geometries × latency maps),
                  causal_geometry (causal fabrics, diamonds, dual time),
-                 algebraic_qudits (hierarchical register, dual-algebra)
+                 algebraic_qudits (hierarchical register, dual-algebra),
+                 qudit_scaling (measured scaling laws + honest costs)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at
