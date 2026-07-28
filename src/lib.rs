@@ -102,8 +102,9 @@ pub mod prelude {
         PhysicalOp, SparseState, Topology,
     };
     pub use crate::bounds::{
-        advantage_scan, classify_law, resource_profile, AxisProbe, AxisScan, FamilyScan, Law,
-        ResourceProfile, Verdict,
+        advantage_scan, classify_law, fit_law, resource_profile, select_by_scaling, AxisProbe,
+        AxisScan, FamilyScan, Law, LawFit, ResourceProfile, ScalingChoice, ScalingSelection,
+        Verdict,
     };
     pub use crate::causal::{
         backward_cone, causal_diamond, dual_time_amplitude, DiamondReport, DualTimeResolution,

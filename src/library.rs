@@ -94,6 +94,113 @@ pub fn rainbow<S: Scalar>(n: usize) -> Circuit<S> {
     c
 }
 
+/// An IQP-style circuit: an `H` wall, a commuting diagonal core (a
+/// `t` on every qubit and `pairs` seeded `cz` couplings), and a second
+/// `H` wall. The `long_range` flag is the structural knob: `false`
+/// draws the `cz` pairs nearest-neighbour (the fragment known — and
+/// here measured — to stay easy across linear cuts), `true` draws them
+/// uniformly at random (the sampling-hardness regime, which escapes
+/// every representation in the crate at once).
+pub fn iqp<S: Scalar>(n: usize, pairs: usize, long_range: bool, seed: u64) -> Circuit<S> {
+    assert!(n >= 2, "iqp needs at least two qubits");
+    let mut rng = Prng::new(seed);
+    let mut c = Circuit::new(n);
+    for q in 0..n {
+        c.h(q);
+    }
+    for q in 0..n {
+        c.t(q);
+    }
+    for _ in 0..pairs {
+        if long_range {
+            let a = (rng.next_u64() % n as u64) as usize;
+            let b = ((a + 1) + (rng.next_u64() % (n as u64 - 1)) as usize) % n;
+            c.cz(a, b);
+        } else {
+            let a = (rng.next_u64() % (n as u64 - 1)) as usize;
+            c.cz(a, a + 1);
+        }
+    }
+    for q in 0..n {
+        c.h(q);
+    }
+    c
+}
+
+/// A depth-`depth` brickwork over a `width × height` grid (row-major
+/// sites): a seeded `ry` rotation layer, then alternating row-neighbour
+/// and column-neighbour `cx` bricks per layer. At fixed shallow depth
+/// the entanglement any cut sees grows with the *boundary* of the
+/// region, not its volume — the constant-depth-2D regime where the
+/// cut-rank assumptions fail slowly instead of exponentially.
+pub fn brickwork_2d<S: Scalar>(width: usize, height: usize, depth: usize, seed: u64) -> Circuit<S> {
+    let n = width * height;
+    let site = |r: usize, c: usize| r * width + c;
+    let mut rng = Prng::new(seed);
+    let mut circuit = Circuit::new(n);
+    for layer in 0..depth {
+        for q in 0..n {
+            circuit.ry(q, 0.4 + rng.next_f64());
+        }
+        if layer % 2 == 0 {
+            for r in 0..height {
+                let mut c = r % 2;
+                while c + 1 < width {
+                    circuit.cx(site(r, c), site(r, c + 1));
+                    c += 2;
+                }
+            }
+        } else {
+            for c in 0..width {
+                let mut r = c % 2;
+                while r + 1 < height {
+                    circuit.cx(site(r, c), site(r + 1, c));
+                    r += 2;
+                }
+            }
+        }
+    }
+    circuit
+}
+
+/// A `t`-doped Clifford circuit: `cliffords` seeded Clifford gates over
+/// an `H` wall, with `t` T gates spread evenly through the stream. The
+/// doping level is the magic resource dial: at `t = O(log n)` the
+/// stabilizer-frame assumption still holds (stored support `≤ 2^t` is
+/// polynomial) however entangling the Clifford bulk is; at `t = Θ(n)`
+/// it fails with everything else.
+pub fn doped_clifford<S: Scalar>(n: usize, cliffords: usize, t: usize, seed: u64) -> Circuit<S> {
+    assert!(n >= 2, "doped_clifford needs at least two qubits");
+    let mut rng = Prng::new(seed);
+    let mut c = Circuit::new(n);
+    for q in 0..n {
+        c.h(q);
+    }
+    let stride = cliffords / (t + 1);
+    let mut placed = 0;
+    for g in 0..cliffords {
+        let a = (rng.next_u64() % n as u64) as usize;
+        let b = ((a + 1) + (rng.next_u64() % (n as u64 - 1)) as usize) % n;
+        match rng.next_u64() % 6 {
+            0 => c.h(a),
+            1 => c.s(a),
+            2 => c.x(a),
+            3 => c.z(a),
+            4 => c.cx(a, b),
+            _ => c.cz(a, b),
+        };
+        if placed < t && stride > 0 && (g + 1) % stride == 0 {
+            c.t((rng.next_u64() % n as u64) as usize);
+            placed += 1;
+        }
+    }
+    while placed < t {
+        c.t((rng.next_u64() % n as u64) as usize);
+        placed += 1;
+    }
+    c
+}
+
 /// Quantum Fourier transform on `n` qubits (little-endian):
 /// `|x⟩ → 2^{-n/2} Σ_y e^{2πi x y / 2^n} |y⟩`, including the final qubit
 /// reversal swaps. Invert with [`crate::circuit::BoundCircuit::inverse`].

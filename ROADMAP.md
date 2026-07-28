@@ -299,19 +299,44 @@ exponentially at once (random universal circuits: bases 1.7–2.0, all
 probes exact). The scan rediscovers GHZ/QFT/rainbow/Clifford as
 classical from bytes alone and is the standing detector for a
 sub-exponential simulation: any new registered representation that
-keeps a flat, exact axis on the candidate family has found one. Next
-rungs:
+keeps a flat, exact axis on the candidate family has found one.
 
-- **time-cost axes**: the scan classifies memory; wall-clock laws per
-  axis (with the guard's deadline as the measuring stick) would catch
-  representations that are memory-cheap but time-exponential.
-- **richer candidate families**: IQP-style commuting circuits,
-  shallow-depth 2D brickwork (where cluster/bond assumptions fail
-  slowly), and peaked-output sampling families, each swept for the
-  axis that *almost* holds.
-- **profile-guided backend selection**: `select_backend` chooses by
-  benchmark; the profile's measured laws could choose by extrapolated
-  scaling instead.
+Second wave — SHIPPED:
+
+- **time-cost axes**: every probe is timed (best-of-two under the
+  scoped deadline) and a family is certified classical by an axis only
+  when BOTH its memory and its wall-clock law stay sub-exponential.
+  The measured case for the rule arrived immediately: MPS on
+  long-range IQP is time-polynomial (`size^4.5`) but
+  memory-exponential (`2.14^n`). Time laws use a wider polynomial
+  band (base < 1.35) so microsecond jitter doesn't misread flat axes.
+- **assumption dials** (`library::iqp`, `library::doped_clifford`,
+  `library::brickwork_2d`): the same IQP core flips
+  candidate ↔ classical on the interaction-range knob; random
+  T-doping costs the frame NOTHING even at t = n/2 (measured — T's in
+  a random Clifford stream land where conjugation keeps them diagonal;
+  the 2^t escape needs deliberately scattered magic, so the frame's
+  boundary is about WHERE the magic sits, not how much); depth-3 2D
+  brickwork reads `size^2.0` — the boundary (2^√n) law failing slowly
+  at probe sizes, exactly as an almost-holding assumption should.
+- **selection by extrapolated scaling** (`select_by_scaling` /
+  `LawFit::predict`): fit each axis's measured law at probe sizes,
+  rank predictions at the target, holdout-verified (GHZ at width 40:
+  predicted 125 B from fits that never saw it, measured 125 B), and
+  explicit when no assumption holds (the candidate family's winner is
+  flagged least-bad, not good).
+
+Next rungs:
+
+- **sampling-task hardness**: the scan measures state representation;
+  a sampling-fidelity harness (cross-entropy-style scores against the
+  exact reference) would measure the task the advantage claims are
+  actually about.
+- **variance-aware time laws**: repetition budgets per probe so time
+  classifications carry error bars instead of a widened threshold.
+- **scan-driven register shapes**: feed the hierarchical/qudit splits
+  through the scan as first-class axes (site backend × algebra split
+  as a family parameter).
 
 ## Operational-model extensions
 

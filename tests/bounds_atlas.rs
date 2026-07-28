@@ -261,6 +261,213 @@ fn each_representation_is_exponential_exactly_in_its_own_resource() {
 }
 
 #[test]
+fn time_laws_join_the_verdict() {
+    // An axis certifies a family classical only when BOTH its memory
+    // and its wall-clock law stay sub-exponential — a memory-cheap but
+    // time-exponential representation no longer slips through.
+    let ghz = advantage_scan("ghz", library::ghz, &[8, 10, 12, 14]);
+    let sparse = axis(&ghz, "sparse");
+    assert!(sparse.time_law.as_ref().unwrap().is_subexponential());
+    assert!(sparse.certifies_classical());
+    let dense_time = base_of(axis(&ghz, "dense").time_law.as_ref().unwrap());
+    assert!(dense_time > 1.4, "dense pays time too: {dense_time}");
+
+    let random = advantage_scan(
+        "random",
+        |n| library::random_circuit(n, 3 * n * n, 7),
+        &[6, 8, 10, 12],
+    );
+    assert_eq!(random.verdict, Verdict::Candidate);
+    for name in ["dense", "sparse"] {
+        let t = base_of(axis(&random, name).time_law.as_ref().unwrap());
+        assert!(t > 1.3, "{name} time on the candidate family: {t}");
+    }
+    // The measured case FOR the rule: long-range IQP below has an axis
+    // (mps) whose time law is polynomial while its memory law is
+    // exponential — sub-exponential on one ledger only, certifying
+    // nothing.
+}
+
+#[test]
+fn interaction_range_flips_the_iqp_verdict() {
+    // Same commuting IQP core, one structural knob: nearest-neighbour
+    // couplings keep the linear-cut assumption alive; long-range
+    // couplings escape every representation at once.
+    let long = advantage_scan(
+        "iqp-long",
+        |n| library::iqp(n, 2 * n, true, 5),
+        &[6, 8, 10, 12],
+    );
+    assert_eq!(long.verdict, Verdict::Candidate);
+    let mps_long = axis(&long, "mps");
+    assert!(
+        !mps_long.law.as_ref().unwrap().is_subexponential(),
+        "long-range couplings defeat the cut assumption"
+    );
+
+    let nn = advantage_scan(
+        "iqp-nn",
+        |n| library::iqp(n, 2 * n, false, 5),
+        &[6, 8, 10, 12],
+    );
+    match &nn.verdict {
+        Verdict::Classical { via } => {
+            assert!(via.iter().any(|v| v == "mps" || v == "factored"), "{via:?}")
+        }
+        v => panic!("{v:?}"),
+    }
+    assert!(axis(&nn, "mps").certifies_classical());
+}
+
+#[test]
+fn magic_doping_meets_the_frames_measured_reach() {
+    // t = O(log n) doping: the stabilizer frame certifies, at constant
+    // measured cost, while clustering/cut axes read polynomial and
+    // sparse/dense escape.
+    let light = advantage_scan(
+        "doped-log",
+        |n| library::doped_clifford(n, 5 * n, n.ilog2() as usize, 9),
+        &[8, 10, 12, 14],
+    );
+    match &light.verdict {
+        Verdict::Classical { via } => {
+            assert!(via.iter().any(|v| v == "clifford-framed"), "{via:?}")
+        }
+        v => panic!("{v:?}"),
+    }
+    assert_eq!(axis(&light, "clifford-framed").law, Some(Law::Constant));
+
+    // t = n/2 doping, measured honestly: the frame STILL certifies —
+    // and at these sizes it is the ONLY axis that does — because T's
+    // dropped into a random Clifford stream mostly land where the
+    // frame's conjugation keeps them diagonal (zero scatter). The 2^t
+    // escape needs the deterministic h;t scatter pinned in
+    // each_representation_is_exponential_exactly_in_its_own_resource —
+    // the boundary of the frame's assumption is about WHERE the magic
+    // sits, not how much of it there is.
+    let heavy = advantage_scan(
+        "doped-heavy",
+        |n| library::doped_clifford(n, 5 * n, n / 2, 9),
+        &[8, 10, 12],
+    );
+    match &heavy.verdict {
+        Verdict::Classical { via } => {
+            assert!(
+                via.iter().any(|v| v == "clifford-framed"),
+                "the frame certifies heavy random doping: {via:?}"
+            );
+        }
+        v => panic!("{v:?}"),
+    }
+    assert_eq!(
+        axis(&heavy, "clifford-framed").law,
+        Some(Law::Constant),
+        "measured: random-stream T's cost the frame nothing"
+    );
+}
+
+#[test]
+fn shallow_2d_assumptions_fail_slowly() {
+    // Constant-depth 2D brickwork over growing area: entanglement
+    // across a cut grows with the region BOUNDARY, not its volume, so
+    // the cut-rank axes read as low-degree polynomial at probe sizes
+    // (the 2^√n regime — sub-exponential here, and visibly not flat)
+    // while dense and sparse pay the full 2^n.
+    let scan = advantage_scan(
+        "shallow-2d",
+        |n| library::brickwork_2d(n / 3, 3, 3, 4),
+        &[9, 12, 15, 18],
+    );
+    match &scan.verdict {
+        Verdict::Classical { via } => {
+            assert!(via.iter().any(|v| v == "mps" || v == "factored"), "{via:?}")
+        }
+        v => panic!("{v:?}"),
+    }
+    match axis(&scan, "mps").law.as_ref().unwrap() {
+        Law::Polynomial { degree } => {
+            assert!(*degree > 1.0, "the boundary law is not flat: {degree}")
+        }
+        Law::Exponential { base } => {
+            assert!(
+                *base < 1.5,
+                "if it reads exponential the base is small: {base}"
+            )
+        }
+        Law::Constant => panic!("depth-3 2D entanglement is not free"),
+    }
+    let dense_base = base_of(axis(&scan, "dense").law.as_ref().unwrap());
+    assert!((dense_base - 2.0).abs() < 0.1, "{dense_base}");
+}
+
+#[test]
+fn selection_extrapolates_measured_laws_and_verifies() {
+    // Selection by extrapolated scaling, checked against a holdout run
+    // the fit never saw.
+    let sel = select_by_scaling("ghz", library::ghz, &[8, 10, 12, 14], 40);
+    assert_eq!(sel.best().axis, "sparse");
+    assert!(sel.subexponential);
+    let reg = GateRegistry::<C64>::standard();
+    let mut holdout = SparseState::<C64>::new(40).unwrap();
+    library::ghz(40)
+        .bind(&reg)
+        .unwrap()
+        .run(&mut holdout)
+        .unwrap();
+    let measured = holdout.memory_bytes() as f64;
+    let predicted = sel.best().predicted_bytes;
+    assert!(
+        (predicted - measured).abs() / measured < 0.5,
+        "prediction {predicted:.0} vs holdout {measured}"
+    );
+
+    // QFT: some sub-exponential axis wins, and the first ranked choice
+    // that completes the holdout verifies within a small factor. (A
+    // choice can wall at the holdout size — mera's runtime cliff is
+    // nonlinear — and the ranked list absorbs that honestly.)
+    let sel = select_by_scaling("qft", library::qft, &[6, 8, 10, 12], 16);
+    assert!(sel.subexponential, "{:?}", sel.best());
+    let holdout_profile = resource_profile(&library::qft(16));
+    let verified = sel.choices.iter().find_map(|choice| {
+        holdout_profile
+            .axes
+            .iter()
+            .find(|a| a.axis == choice.axis)
+            .and_then(|a| a.cost)
+            .map(|measured| (choice, measured as f64))
+    });
+    let (choice, measured) = verified.expect("some ranked choice completes the holdout");
+    assert!(choice.law.is_subexponential(), "{:?}", choice);
+    let ratio = choice.predicted_bytes / measured;
+    assert!(
+        (0.2..=5.0).contains(&ratio),
+        "{}: predicted {:.0} vs measured {measured} (ratio {ratio:.2})",
+        choice.axis,
+        choice.predicted_bytes
+    );
+
+    // The candidate family: no assumption holds, and the selection
+    // says so — the winner is only least-bad, and its prediction still
+    // lands within a small factor of the dense truth.
+    let sel = select_by_scaling(
+        "random",
+        |n| library::random_circuit(n, 3 * n * n, 7),
+        &[6, 8, 10, 12],
+        16,
+    );
+    assert!(
+        !sel.subexponential,
+        "no assumption holds on random circuits"
+    );
+    let truth = ((1u64 << 16) * 16) as f64;
+    let ratio = sel.best().predicted_bytes / truth;
+    assert!(
+        (0.2..=5.0).contains(&ratio),
+        "least-bad prediction sanity: {ratio:.2}"
+    );
+}
+
+#[test]
 fn the_walls_are_measured_refusals() {
     // The dense wall: 2^34 amplitudes is 256 GiB — the guard refuses
     // with the measured request and the measured availability, not a

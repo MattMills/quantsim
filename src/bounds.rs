@@ -91,29 +91,78 @@ fn linear_fit(xs: &[f64], ys: &[f64]) -> (f64, f64, f64) {
     (slope, intercept, r2)
 }
 
-/// Classify the measured growth of `costs` over `sizes` (≥ 3 strictly
+/// A classified law together with its fitted coefficients, so measured
+/// growth can be *extrapolated*: [`LawFit::predict`] evaluates the fit
+/// at any size — the basis of [`select_by_scaling`].
+#[derive(Debug, Clone)]
+pub struct LawFit {
+    /// The classified law.
+    pub law: Law,
+    ln_intercept: f64,
+    slope: f64,
+}
+
+impl LawFit {
+    /// Predicted cost at `size` under the fitted law.
+    pub fn predict(&self, size: usize) -> f64 {
+        let x = size as f64;
+        match self.law {
+            Law::Constant => self.ln_intercept.exp(),
+            Law::Polynomial { .. } => (self.ln_intercept + self.slope * x.ln()).exp(),
+            Law::Exponential { .. } => (self.ln_intercept + self.slope * x).exp(),
+        }
+    }
+}
+
+/// Fit the measured growth of `costs` over `sizes` (≥ 3 strictly
 /// positive points at increasing sizes): flat within a generous noise
 /// band is [`Law::Constant`]; otherwise a semi-log (exponential) and a
 /// log–log (polynomial) fit compete on residuals, with a fitted
 /// exponential base below 1.25 per unit size read as polynomial.
-pub fn classify_law(sizes: &[usize], costs: &[usize]) -> Law {
+pub fn fit_law(sizes: &[usize], costs: &[usize]) -> LawFit {
+    fit_law_with(sizes, costs, 1.25)
+}
+
+/// [`fit_law`] with an explicit exponential floor — wall-clock laws use
+/// a wider polynomial band (1.35) because timing jitter at microsecond
+/// scales can lift a genuinely polynomial axis just past the default.
+fn fit_law_with(sizes: &[usize], costs: &[usize], exp_floor: f64) -> LawFit {
     assert!(sizes.len() >= 3 && sizes.len() == costs.len());
     let max = *costs.iter().max().unwrap() as f64;
     let min = *costs.iter().min().unwrap() as f64;
-    if max / min <= 2.0 {
-        return Law::Constant;
-    }
     let xs: Vec<f64> = sizes.iter().map(|&s| s as f64).collect();
     let lys: Vec<f64> = costs.iter().map(|&c| (c as f64).ln()).collect();
-    let (exp_slope, _, exp_r2) = linear_fit(&xs, &lys);
-    let lxs: Vec<f64> = xs.iter().map(|x| x.ln()).collect();
-    let (poly_slope, _, poly_r2) = linear_fit(&lxs, &lys);
-    let base = exp_slope.exp();
-    if base < 1.25 || poly_r2 > exp_r2 + 1e-9 {
-        Law::Polynomial { degree: poly_slope }
-    } else {
-        Law::Exponential { base }
+    if max / min <= 2.0 {
+        let mean = lys.iter().sum::<f64>() / lys.len() as f64;
+        return LawFit {
+            law: Law::Constant,
+            ln_intercept: mean,
+            slope: 0.0,
+        };
     }
+    let (exp_slope, exp_intercept, exp_r2) = linear_fit(&xs, &lys);
+    let lxs: Vec<f64> = xs.iter().map(|x| x.ln()).collect();
+    let (poly_slope, poly_intercept, poly_r2) = linear_fit(&lxs, &lys);
+    let base = exp_slope.exp();
+    if base < exp_floor || poly_r2 > exp_r2 + 1e-9 {
+        LawFit {
+            law: Law::Polynomial { degree: poly_slope },
+            ln_intercept: poly_intercept,
+            slope: poly_slope,
+        }
+    } else {
+        LawFit {
+            law: Law::Exponential { base },
+            ln_intercept: exp_intercept,
+            slope: exp_slope,
+        }
+    }
+}
+
+/// Classify the measured growth of `costs` over `sizes` — the law of
+/// [`fit_law`] without the coefficients.
+pub fn classify_law(sizes: &[usize], costs: &[usize]) -> Law {
+    fit_law(sizes, costs).law
 }
 
 /// One representation's measured probe on one circuit.
@@ -124,6 +173,9 @@ pub struct AxisProbe {
     /// Measured cost in bytes (`None` = the representation hit a wall
     /// — a measured refusal, timeout, or unsupported operation).
     pub cost: Option<usize>,
+    /// Measured wall-clock nanoseconds for the run (best of two, so a
+    /// cold first pass does not masquerade as scaling).
+    pub nanos: Option<usize>,
     /// The structural parameter that drove the cost, for display.
     pub parameter: String,
     /// Whether the run was exact (no truncation, no approximation).
@@ -155,25 +207,33 @@ fn probe<S, F, P>(
 ) -> AxisProbe
 where
     S: Backend<C64>,
-    F: FnOnce(usize) -> Result<S>,
+    F: Fn(usize) -> Result<S>,
     P: FnOnce(&S) -> (String, bool),
 {
     // Every probe runs under a scoped wall-clock budget: an axis whose
     // representation cannot finish in bounded time reports a measured
-    // timeout as its wall instead of stalling the whole profile.
-    let run = || -> Result<S> {
+    // timeout as its wall instead of stalling the whole profile. Time
+    // is measured best-of-two so allocation warm-up does not read as
+    // scaling.
+    let run = |make: &dyn Fn(usize) -> Result<S>| -> Result<(S, usize)> {
         crate::guard::with_time_budget(std::time::Duration::from_secs(10), || {
+            let t = std::time::Instant::now();
             let mut state = make(circuit.num_qubits())?;
             circuit.bind(reg)?.run(&mut state)?;
-            Ok(state)
+            Ok((state, t.elapsed().as_nanos() as usize))
         })
     };
-    match run() {
-        Ok(state) => {
+    match run(&make) {
+        Ok((state, first)) => {
+            let nanos = match run(&make) {
+                Ok((_, second)) => first.min(second),
+                Err(_) => first,
+            };
             let (parameter, exact) = param(&state);
             AxisProbe {
                 axis,
                 cost: Some(state.memory_bytes()),
+                nanos: Some(nanos.max(1)),
                 parameter,
                 exact,
                 note: None,
@@ -182,6 +242,7 @@ where
         Err(e) => AxisProbe {
             axis,
             cost: None,
+            nanos: None,
             parameter: "—".into(),
             exact: false,
             note: Some(e.to_string()),
@@ -307,19 +368,37 @@ pub enum Verdict {
     Candidate,
 }
 
-/// One axis of a family scan: name, measured costs per size (walls as
-/// `None`), the classified law over the measured points, and whether
-/// every run was exact.
+/// One axis of a family scan: name, measured costs and times per size
+/// (walls as `None`), the classified laws over the measured points,
+/// and whether every run was exact.
 #[derive(Debug, Clone)]
 pub struct AxisScan {
     /// Representation name.
     pub axis: &'static str,
-    /// Measured costs per family size.
+    /// Measured memory costs per family size.
     pub costs: Vec<Option<usize>>,
-    /// Classified law (`None` when any size walled — no clean fit).
+    /// Measured wall-clock nanoseconds per family size.
+    pub nanos: Vec<Option<usize>>,
+    /// Classified memory law (`None` when any size walled).
     pub law: Option<Law>,
+    /// Classified time law (`None` when any size walled). A
+    /// representation that is memory-cheap but time-exponential fails
+    /// its assumption here — both laws must stay sub-exponential for
+    /// the axis to certify a family classical.
+    pub time_law: Option<Law>,
     /// Every probe exact.
     pub exact: bool,
+}
+
+impl AxisScan {
+    /// Whether this axis certifies the family classical: every probe
+    /// finished, exactly, with BOTH the memory and the wall-clock law
+    /// sub-exponential.
+    pub fn certifies_classical(&self) -> bool {
+        self.exact
+            && self.law.as_ref().is_some_and(Law::is_subexponential)
+            && self.time_law.as_ref().is_some_and(Law::is_subexponential)
+    }
 }
 
 /// A circuit family scanned against every representation.
@@ -353,23 +432,30 @@ pub fn advantage_scan(
     let mut axes = Vec::with_capacity(axis_count);
     for a in 0..axis_count {
         let costs: Vec<Option<usize>> = profiles.iter().map(|p| p.axes[a].cost).collect();
+        let nanos: Vec<Option<usize>> = profiles.iter().map(|p| p.axes[a].nanos).collect();
         let exact = profiles.iter().all(|p| p.axes[a].exact);
-        let law = if costs.iter().all(|c| c.is_some()) {
-            let cs: Vec<usize> = costs.iter().map(|c| c.unwrap()).collect();
-            Some(classify_law(sizes, &cs))
-        } else {
-            None
+        let fit = |values: &[Option<usize>], floor: f64| -> Option<Law> {
+            if values.iter().all(|c| c.is_some()) {
+                let cs: Vec<usize> = values.iter().map(|c| c.unwrap()).collect();
+                Some(fit_law_with(sizes, &cs, floor).law)
+            } else {
+                None
+            }
         };
+        let law = fit(&costs, 1.25);
+        let time_law = fit(&nanos, 1.35);
         axes.push(AxisScan {
             axis: profiles[0].axes[a].axis,
             costs,
+            nanos,
             law,
+            time_law,
             exact,
         });
     }
     let via: Vec<String> = axes
         .iter()
-        .filter(|a| a.exact && a.law.as_ref().is_some_and(|l| l.is_subexponential()))
+        .filter(|a| a.certifies_classical())
         .map(|a| a.axis.to_string())
         .collect();
     let verdict = if via.is_empty() {
@@ -382,5 +468,91 @@ pub fn advantage_scan(
         sizes: sizes.to_vec(),
         axes,
         verdict,
+    }
+}
+
+/// One representation's extrapolated prediction at a target size.
+#[derive(Debug, Clone)]
+pub struct ScalingChoice {
+    /// Representation name.
+    pub axis: &'static str,
+    /// The fitted memory law behind the prediction.
+    pub law: Law,
+    /// Predicted bytes at the target size.
+    pub predicted_bytes: f64,
+    /// Every probe stayed exact.
+    pub exact: bool,
+}
+
+/// Backend selection by *extrapolated measured scaling* rather than a
+/// benchmark at one size: the family is probed at small sizes, every
+/// representation's memory law fitted, and the predictions ranked at
+/// the target size.
+#[derive(Debug, Clone)]
+pub struct ScalingSelection {
+    /// Family label.
+    pub name: String,
+    /// The size the selection is for.
+    pub target: usize,
+    /// Predictions, cheapest first (walled axes excluded).
+    pub choices: Vec<ScalingChoice>,
+    /// Whether the winning law is sub-exponential — when false, no
+    /// assumption holds and the choice is only least-bad.
+    pub subexponential: bool,
+}
+
+impl ScalingSelection {
+    /// The cheapest predicted representation.
+    pub fn best(&self) -> &ScalingChoice {
+        &self.choices[0]
+    }
+}
+
+/// Choose a representation for `family` at `target` by fitting each
+/// axis's measured memory growth over `probe_sizes` and extrapolating —
+/// the scaling-law counterpart of benchmark-based
+/// [`select_backend`](crate::harness::select_backend). Exact axes are
+/// preferred: an inexact axis is ranked only if no exact one exists.
+pub fn select_by_scaling(
+    name: impl Into<String>,
+    family: impl Fn(usize) -> Circuit,
+    probe_sizes: &[usize],
+    target: usize,
+) -> ScalingSelection {
+    assert!(probe_sizes.len() >= 3, "a fit needs at least three sizes");
+    let profiles: Vec<ResourceProfile> = probe_sizes
+        .iter()
+        .map(|&s| resource_profile(&family(s)))
+        .collect();
+    let mut choices = Vec::new();
+    for a in 0..profiles[0].axes.len() {
+        let costs: Vec<Option<usize>> = profiles.iter().map(|p| p.axes[a].cost).collect();
+        if costs.iter().any(|c| c.is_none()) {
+            continue;
+        }
+        let cs: Vec<usize> = costs.iter().map(|c| c.unwrap()).collect();
+        let fit = fit_law(probe_sizes, &cs);
+        choices.push(ScalingChoice {
+            axis: profiles[0].axes[a].axis,
+            predicted_bytes: fit.predict(target),
+            law: fit.law,
+            exact: profiles.iter().all(|p| p.axes[a].exact),
+        });
+    }
+    let any_exact = choices.iter().any(|c| c.exact);
+    choices.sort_by(|x, y| {
+        (any_exact && !x.exact)
+            .cmp(&(any_exact && !y.exact))
+            .then(x.predicted_bytes.partial_cmp(&y.predicted_bytes).unwrap())
+    });
+    let subexponential = choices
+        .first()
+        .map(|c| c.law.is_subexponential())
+        .unwrap_or(false);
+    ScalingSelection {
+        name: name.into(),
+        target,
+        choices,
+        subexponential,
     }
 }

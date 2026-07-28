@@ -30,6 +30,11 @@ fn show(scan: &FamilyScan) {
             .as_ref()
             .map(|l| l.to_string())
             .unwrap_or_else(|| "walled".into());
+        let time = a
+            .time_law
+            .as_ref()
+            .map(|l| l.to_string())
+            .unwrap_or_else(|| "walled".into());
         let last = a
             .costs
             .last()
@@ -37,8 +42,8 @@ fn show(scan: &FamilyScan) {
             .map(fmt_bytes)
             .unwrap_or_else(|| "—".into());
         println!(
-            "    {:<16} {:<12} (largest run {}, exact {})",
-            a.axis, law, last, a.exact
+            "    {:<16} mem {:<12} time {:<12} (largest {}, exact {})",
+            a.axis, law, time, last, a.exact
         );
     }
     match &scan.verdict {
@@ -90,7 +95,44 @@ fn main() -> Result<()> {
     println!("  clustering (while the fixed tree pays ~2^n at its root and sparse pays");
     println!("  exactly √2^n), Clifford circuits via the frame (Gottesman–Knill at");
     println!("  size^2), and random universal circuits escape EVERY assumption at");
-    println!("  once — the candidate. Advantage lives only where all axes blow up.\n");
+    println!("  once — the candidate. An axis certifies only when BOTH its memory and");
+    println!("  its wall-clock law stay sub-exponential while exact.\n");
+
+    // ── 1b. The assumption dials: families that ALMOST hold ──────────
+    println!("── assumption dials: one structural knob flips the verdict");
+    show(&advantage_scan(
+        "iqp, long-range couplings",
+        |n| library::iqp(n, 2 * n, true, 5),
+        &[6, 8, 10, 12],
+    ));
+    show(&advantage_scan(
+        "iqp, nearest-neighbour",
+        |n| library::iqp(n, 2 * n, false, 5),
+        &[6, 8, 10, 12],
+    ));
+    show(&advantage_scan(
+        "clifford doped t = log n",
+        |n| library::doped_clifford(n, 5 * n, n.ilog2() as usize, 9),
+        &[8, 10, 12, 14],
+    ));
+    show(&advantage_scan(
+        "clifford doped t = n/2",
+        |n| library::doped_clifford(n, 5 * n, n / 2, 9),
+        &[8, 10, 12],
+    ));
+    show(&advantage_scan(
+        "shallow 2D brickwork (depth 3)",
+        |n| library::brickwork_2d(n / 3, 3, 3, 4),
+        &[9, 12, 15, 18],
+    ));
+    println!("  measured dial findings: the SAME IQP core is a candidate with long-range");
+    println!("  couplings and classical with nearest-neighbour ones (note mps on the");
+    println!("  long-range family: time polynomial, memory exponential — one ledger is");
+    println!("  not enough, which is why both laws must certify). Random T-doping costs");
+    println!("  the frame NOTHING even at t = n/2 (the T's land where conjugation keeps");
+    println!("  them diagonal — the 2^t escape needs deliberately scattered magic), and");
+    println!("  depth-3 2D entanglement reads as size^2: the boundary law, failing");
+    println!("  slowly, exactly as the almost-holding assumption should.\n");
 
     // ── 2. The precision axis ────────────────────────────────────────
     println!("── the precision bound (Ball): certified radius vs depth");
@@ -175,6 +217,44 @@ fn main() -> Result<()> {
         "  geometry tax ×{:.2} — an advantage claim must survive its coupling map.\n",
         hex.elapsed() as f64 / ion.elapsed() as f64
     );
+
+    // ── 4b. Selection by extrapolated scaling ────────────────────────
+    println!("── backend selection by extrapolated measured laws (not one benchmark)");
+    for (label, sel) in [
+        (
+            "ghz @ 40",
+            select_by_scaling("ghz", library::ghz, &[8, 10, 12, 14], 40),
+        ),
+        (
+            "qft @ 16",
+            select_by_scaling("qft", library::qft, &[6, 8, 10, 12], 16),
+        ),
+        (
+            "random @ 16",
+            select_by_scaling(
+                "random",
+                |n| library::random_circuit(n, 3 * n * n, 7),
+                &[6, 8, 10, 12],
+                16,
+            ),
+        ),
+    ] {
+        let best = sel.best();
+        println!(
+            "  {label:<12} → {:<16} law {:<12} predicted {}{}",
+            best.axis,
+            best.law.to_string(),
+            fmt_bytes(best.predicted_bytes as usize),
+            if sel.subexponential {
+                ""
+            } else {
+                "   (NO assumption holds — least-bad only)"
+            }
+        );
+    }
+    println!("  the ghz prediction is verified against a holdout run at width 40 in the");
+    println!("  test suite (125 B measured, fit never saw that size); on the candidate");
+    println!("  family the selector says plainly that nothing sub-exponential exists.\n");
 
     // ── 5. What would DISCOVER a sub-exponential advantage ───────────
     println!("── the discovery instrument");

@@ -119,7 +119,19 @@ parts are swappable:
   universal circuits escape everything at bases 1.7–2.0) and doubles as
   the *discovery instrument*: a new registered representation whose
   axis stays flat — while exact — on the candidate family is a found
-  sub-exponential simulation.
+  sub-exponential simulation. An axis certifies only when **both** its
+  memory and its wall-clock law stay sub-exponential (measured case:
+  MPS on long-range IQP is time-polynomial but memory-exponential).
+  The **assumption dials** are measured families where one structural
+  knob flips the verdict: the same IQP core is a candidate with
+  long-range couplings and classical nearest-neighbour; random
+  T-doping costs the frame *nothing* even at `t = n/2` (the 2^t escape
+  needs deliberately scattered magic); depth-3 2D brickwork reads
+  `size^2` — the boundary law failing slowly. `select_by_scaling`
+  chooses a backend by *extrapolating* the fitted laws to a target
+  size (holdout-verified: GHZ at width 40 predicted 125 B, measured
+  125 B), and says plainly when no assumption holds and the choice is
+  only least-bad.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -327,7 +339,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 278 tests (43 unit + 231 across twenty-five
+`cargo test` runs 283 tests (43 unit + 236 across twenty-five
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -401,7 +413,12 @@ entirely trivial accessors and defensive guards:
   double-layer bond, `2^t` T-scatter saturated exactly, `√2`-per-H
   certified radius); and the walls as measured refusals (dense OOM
   with requested/available bytes, the 63-qubit indexing wall, profile
-  axes reporting walls instead of failing).
+  axes reporting walls instead of failing); time laws joining the
+  verdict (dense pays `>1.4^n` in time too, and the IQP
+  memory-vs-time split is the measured case for requiring both); the
+  IQP interaction-range and magic-doping verdict flips; the shallow-2D
+  boundary law; and selection by extrapolated scaling verified against
+  holdout runs the fits never saw.
 - **algebraic_qudits** — the hierarchical register: qudit coordinates
   roundtrip with the documented bit order; the dual-algebra operator
   space measured per doubling level (full rank pinned at ℍ/𝕆/𝕊, the
@@ -602,7 +619,8 @@ src/
   harness.rs     workload benchmarking with in-run correctness checks
   discovery.rs   point stabilizers, signal threads, transparency reports
   library.rs     bell, ghz, qft, iqft, grover, phase_flip, random_circuit,
-                 brickwork, ranged_pairs, rainbow (causal workload family)
+                 brickwork, ranged_pairs, rainbow (causal workload family),
+                 iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
 tests/           twenty-four integration suites (see Testing)
