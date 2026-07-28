@@ -463,6 +463,178 @@ pub mod rep {
         });
         low.len().min(high.len())
     }
+
+    /// Inverse of [`sector_of`]: the basis bits of an E8×E8 point.
+    /// Copy 0 is the even sector directly; copy 1 pairs back through
+    /// qubit 0. `None` if the root is not a spinor root.
+    pub fn bits_of_sector(copy: usize, root: &Root) -> Option<u8> {
+        let bits = bits_of_spinor(root)?;
+        match copy {
+            0 => (bits.count_ones() % 2 == 0).then_some(bits),
+            1 => (bits.count_ones() % 2 == 0).then_some(bits ^ 1),
+            _ => None,
+        }
+    }
+
+    /// The E8×E8 representation as a first-class qubit
+    /// [`Backend`], named `"e8-rep"`:
+    /// amplitudes are stored keyed by **(E8 copy, spinor root)** — the
+    /// paired-point coordinates themselves, not bit strings — so the
+    /// state's support literally *is* a set of points on the two E8
+    /// copies, and [`support_geometry`] reads off its stored keys.
+    ///
+    /// The representation is 8-qubit-native (its 256 points are the
+    /// full 8-qubit basis); narrower registers embed by fixing the
+    /// unused qubits to 0, and widths past 8 are refused with the
+    /// structural reason. Gate application converts through the
+    /// measured bijection [`sector_of`] — its cost relative to the
+    /// other representations is exactly what the benchmark harness
+    /// prices.
+    pub struct E8RepState {
+        num_qubits: usize,
+        amps: std::collections::HashMap<(usize, Root), C64>,
+    }
+
+    impl E8RepState {
+        /// A fresh register on the E8×E8 point set (`n ≤ 8`).
+        pub fn new(num_qubits: usize) -> crate::error::Result<Self> {
+            if num_qubits > 8 {
+                return Err(crate::error::Error::TooManyQubits {
+                    requested: num_qubits,
+                    max: 8,
+                });
+            }
+            let mut amps = std::collections::HashMap::new();
+            amps.insert(sector_of(0), C64::new(1.0, 0.0));
+            Ok(E8RepState { num_qubits, amps })
+        }
+
+        /// The stored support as (copy, spinor root) points — the
+        /// representation's native coordinates, exposed so tests can
+        /// verify the storage really is root-keyed.
+        pub fn stored_points(&self) -> Vec<(usize, Root)> {
+            let mut points: Vec<(usize, Root)> = self.amps.keys().copied().collect();
+            points.sort_unstable();
+            points
+        }
+    }
+
+    impl Backend<C64> for E8RepState {
+        fn name(&self) -> &str {
+            "e8-rep"
+        }
+
+        fn num_qubits(&self) -> usize {
+            self.num_qubits
+        }
+
+        fn apply(
+            &mut self,
+            matrix: &crate::math::GateMatrix<C64>,
+            qubits: &[usize],
+        ) -> crate::error::Result<()> {
+            crate::backend::validate_apply(self.num_qubits, matrix, qubits)?;
+            let d = 1usize << qubits.len();
+            let mask: u64 = qubits.iter().map(|&q| 1u64 << q).sum();
+            let scatter = crate::backend::scatter_table(qubits);
+            let mut grouped: std::collections::HashMap<u64, Vec<C64>> =
+                std::collections::HashMap::new();
+            for (&(copy, root), &amp) in &self.amps {
+                let bits = u64::from(bits_of_sector(copy, &root).expect("stored keys are points"));
+                let sub = crate::backend::sub_index(bits, qubits);
+                grouped
+                    .entry(bits & !mask)
+                    .or_insert_with(|| vec![C64::new(0.0, 0.0); d])[sub] = amp;
+            }
+            let mdata = matrix.data();
+            let mut amps = std::collections::HashMap::new();
+            for (rest, vec_in) in grouped {
+                for r in 0..d {
+                    let mut acc = C64::new(0.0, 0.0);
+                    for (c, amp) in vec_in.iter().enumerate() {
+                        acc += mdata[r * d + c] * amp;
+                    }
+                    if acc.norm_sqr() > crate::backend::PRUNE_TOL {
+                        // sector_of is injective, so distinct output
+                        // bits are distinct points — no collisions.
+                        amps.insert(sector_of((rest | scatter[r]) as u8), acc);
+                    }
+                }
+            }
+            self.amps = amps;
+            Ok(())
+        }
+
+        fn amplitude(&self, index: u64) -> C64 {
+            if index >> self.num_qubits != 0 {
+                return C64::new(0.0, 0.0);
+            }
+            self.amps
+                .get(&sector_of(index as u8))
+                .copied()
+                .unwrap_or(C64::new(0.0, 0.0))
+        }
+
+        fn for_each_nonzero(&self, f: &mut dyn FnMut(u64, C64)) {
+            for (&(copy, root), &amp) in &self.amps {
+                let bits = bits_of_sector(copy, &root).expect("stored keys are points");
+                f(u64::from(bits), amp);
+            }
+        }
+
+        fn nonzero_count(&self) -> usize {
+            self.amps.len()
+        }
+
+        fn project(&mut self, qubit: usize, outcome: bool, renorm: f64) {
+            if qubit >= self.num_qubits {
+                return;
+            }
+            let scale = C64::new(renorm, 0.0);
+            let amps = std::mem::take(&mut self.amps);
+            self.amps = amps
+                .into_iter()
+                .filter(|&((copy, root), _)| {
+                    let bits = bits_of_sector(copy, &root).expect("stored keys are points");
+                    ((bits >> qubit) & 1 == 1) == outcome
+                })
+                .map(|(key, a)| (key, a * scale))
+                .collect();
+        }
+
+        fn reset(&mut self) {
+            self.amps.clear();
+            self.amps.insert(sector_of(0), C64::new(1.0, 0.0));
+        }
+
+        fn load(&mut self, entries: &[(u64, C64)]) -> crate::error::Result<()> {
+            for &(i, _) in entries {
+                if i >> self.num_qubits != 0 {
+                    return Err(crate::error::Error::QubitOutOfRange {
+                        qubit: 64 - i.leading_zeros() as usize,
+                        num_qubits: self.num_qubits,
+                    });
+                }
+            }
+            self.amps.clear();
+            for &(i, a) in entries {
+                if a.norm_sqr() > 0.0 {
+                    self.amps.insert(sector_of(i as u8), a);
+                }
+            }
+            Ok(())
+        }
+
+        fn memory_bytes(&self) -> usize {
+            // Key = (copy, 8 × i32 root) + C64 value.
+            self.amps.len() * (std::mem::size_of::<(usize, Root)>() + 16)
+                + std::mem::size_of::<Self>()
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
 }
 
 /// An embedding of the four arity chains (`A₁ … A₄`, i.e. the su(2),

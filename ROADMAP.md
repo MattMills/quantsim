@@ -377,15 +377,36 @@ orthogonal, and the rank obstruction MEASURED (after A1⊥A2⊥A3 the
 orthogonal-A4 search exhausts; 1+2+3+4 = 10 > 8) — so the four arity
 frames must share directions, and the canonical embedding's measured
 Gram overlap (quaternary–quintary, 44) becomes the compound qudit's
-coupling fabric. Next rungs:
+coupling fabric.
+
+Second wave — SHIPPED: **both E8×E8 systems in the standard
+frameworks**. `CompoundRegister` grew a general k-site `apply_k`
+(mixed-radix, one logged interaction per call; `apply_1`/`apply_2` are
+now thin delegations) and exact `project_digit` collapse; the
+all-binary case is `CompoundBackend` (`"compound-binary"`), a full
+`Backend<C64>` with product-support enumeration over horizontal
+volumes and the 63/64-qubit packed-index wall measured. The E8×E8
+representation is `e8::rep::E8RepState` (`"e8-rep"`): amplitudes keyed
+by (copy, spinor root), 8-qubit-native with a structural refusal past
+8, GHZ downcast-verified to be stored as an antipodal root pair. Both
+pass `verify_backend` over the full registry (e8-rep also at native
+width 8 across the whole 256-point set) and run through
+`compare_backends` beside dense/sparse/adaptive/factored/mps/mera,
+with the d = 16 co-boundary protocol as a workload: every completed
+run amplitude-verified against dense, MPS refusing the 8-qubit pairing
+gate at its measured window wall, and the native two-site 16-level
+protocol equal amplitude-by-amplitude to its qubit encoding.
+
+Next rungs:
 
 - **auto-split on disentanglement**: volumes currently merge and stay
   merged; detecting product structure (Schmidt-1 across a site) would
   restore horizontality after uncomputation, like factored's split.
-- **mixed-arity circuits/registry**: a `Circuit`-level description with
-  named qudit gates and bind-time validation, so the conformance and
-  harness machinery sweep mixed registers the way they sweep qubit
-  backends.
+- **mixed-arity circuits/registry**: the conformance/harness machinery
+  now sweeps the compound register through its all-binary backend;
+  still open is the genuinely mixed-arity `Circuit`-level description
+  (named qudit gates over non-binary sites with bind-time validation)
+  so mixed-dim registers get registry-drawn random sweeps too.
 - **richer E8 embeddings**: search for minimal-total-overlap
   placements of all four chains (the canonical one is greedy), and
   weight the compound fabric by the Gram magnitudes rather than a

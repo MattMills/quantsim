@@ -133,8 +133,8 @@ pub mod prelude {
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};
     pub use crate::mixed::{
-        clock_d, cshift, fabric, fourier_d, shift_d, swap_dd, CompoundRegister, FabricReport,
-        Interaction,
+        clock_d, cshift, fabric, fourier_d, shift_d, swap_dd, CompoundBackend, CompoundRegister,
+        FabricReport, Interaction,
     };
     pub use crate::qudit::{
         algebra_capacity, dual_algebra_report, synthesize_sandwich, AlgebraicRegister,

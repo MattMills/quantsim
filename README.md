@@ -194,7 +194,15 @@ parts are swappable:
   (no 2-local root connects its ends), products sit at affine
   dimension 0, random states flood the root graph (3584 edges), and
   Schmidt rank obeys the geometric projected-support bound on every
-  state and cut tested.
+  state and cut tested. **Both systems are first-class backends**: the
+  compound substrate as `CompoundBackend` (`"compound-binary"`, with a
+  general k-site `apply_k` and digit collapse) and the root-keyed
+  store as `e8::rep::E8RepState` (`"e8-rep"`, amplitudes keyed by
+  (copy, spinor root), 8-qubit-native, refusing wider widths with the
+  structural reason) — both swept through `verify_backend` over the
+  full registry and priced in `compare_backends` next to
+  dense/sparse/mps/mera, with the d = 16 co-boundary protocol itself
+  as a workload every representation must reproduce.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -402,7 +410,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 307 tests (43 unit + 260 across twenty-nine
+`cargo test` runs 312 tests (43 unit + 265 across thirty
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -524,8 +532,11 @@ entirely trivial accessors and defensive guards:
   `su(5)×su(5)` pair exhibited and the rank obstruction measured by
   exhausted search; order-respecting interaction cones; guard-admitted
   merges (a 10¹⁰-entry merge refuses with measured bytes and leaves
-  the register intact); sampling matching stated probabilities; and
-  arity-priced scaling (5³ = 125 entries vs 2·3·4 = 24).
+  the register intact); sampling matching stated probabilities;
+  arity-priced scaling (5³ = 125 entries vs 2·3·4 = 24); and k-site
+  gates across mixed arities (a 24-dim three-arity gate equal to its
+  site-wise factors, one logged interaction) with exact digit
+  collapse.
 - **e8_coboundary** — the E8×E8 co-boundary system: the root complex's
   measured counts ((1,56,126,56,0) at every point, 6720 edges, 2240
   zero-sum triangles verified as additive relations, b₁ = 4241 by
@@ -545,6 +556,18 @@ entirely trivial accessors and defensive guards:
   exact per-cut entropies, random flooding the graph); and the
   projected-support bound on Schmidt rank holding on every family and
   cut, tight where the geometry is exact.
+- **e8_backends** — both E8×E8 systems in the standard frameworks:
+  `compound-binary` conformant over the full registry (per-gate
+  sweeps, registry-drawn circuits, sampling equality, collapse) with
+  its 63/64-qubit packed-index wall measured; `e8-rep` conformant
+  including a width-8 sweep over the complete 256-point set, refusing
+  9 qubits structurally, and GHZ downcast-verified to be *stored* as
+  an antipodal spinor-root pair; the benchmark harness pricing both
+  against dense/sparse/adaptive/factored/mps/mera on ghz/qft/rainbow
+  plus the d = 16 co-boundary protocol (MPS refusing its 8-qubit
+  pairing gate at the measured window wall); and the native
+  mixed-arity protocol equal amplitude-by-amplitude to its
+  qubit-encoded run on dense, both equal to the independent DFT.
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally
@@ -710,8 +733,8 @@ src/
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
   bounds.rs      boundary atlas: measured growth laws, advantage scan
   sampling.rs    sampling-task hardness: XEB, spoof curves, exact refs
-  mixed.rs       mixed-arity compound qudits: volumes, fabric, flow
-  e8.rs          E8 roots built+verified; arity chains, rank obstruction
+  mixed.rs       mixed-arity compound qudits: volumes, fabric, flow, backend
+  e8.rs          E8 roots built+verified; chains, rep backend, obstruction
   causal.rs      backward cones, causal diamonds, dual-time resolution
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
@@ -749,7 +772,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  advantage_bounds (the boundary atlas + advantage scan),
                  sampling_hardness (XEB, spoofing economics, exact refs),
                  e8_compound (mixed-arity qudits over the E8 fabric),
-                 e8_coboundary (E8×E8 projective co-boundary storage)
+                 e8_coboundary (E8×E8 storage, representation, both
+                 systems as backends in conformance + benchmark)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

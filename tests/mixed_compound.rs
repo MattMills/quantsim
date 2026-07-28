@@ -353,3 +353,60 @@ fn mixed_arity_scaling_is_priced_by_level_count_not_sites() {
     mixed.apply_2(1, 2, &cshift(3, 4)).unwrap();
     assert_eq!(mixed.stored_entries(), 24, "2·3·4 states");
 }
+
+#[test]
+fn k_site_gates_and_digit_collapse_work_across_mixed_arities() {
+    // apply_k on three sites of DIFFERENT arities equals the site-wise
+    // factor product: M₂ ⊗ M₁ ⊗ M₀ applied in one call (sites[0] low)
+    // must match applying the three factors separately.
+    let dims = [2usize, 3, 4];
+    let factors = [fourier_d(2), fourier_d(3), fourier_d(4)];
+    let dim = 24usize;
+    let mut kron = vec![c64(0.0, 0.0); dim * dim];
+    for r in 0..dim {
+        for c in 0..dim {
+            let (r0, r1, r2) = (r % 2, (r / 2) % 3, r / 6);
+            let (c0, c1, c2) = (c % 2, (c / 2) % 3, c / 6);
+            kron[r * dim + c] =
+                factors[0][r0 * 2 + c0] * factors[1][r1 * 3 + c1] * factors[2][r2 * 4 + c2];
+        }
+    }
+    let mut joint = CompoundRegister::new(&dims).unwrap();
+    // Correlate first so the k-site gate acts inside one genuine
+    // volume, then apply the joint matrix.
+    joint.apply_2(0, 1, &cshift(2, 3)).unwrap();
+    joint.apply_2(1, 2, &cshift(3, 4)).unwrap();
+    joint.apply_k(&[0, 1, 2], &kron).unwrap();
+    let mut site_wise = CompoundRegister::new(&dims).unwrap();
+    site_wise.apply_2(0, 1, &cshift(2, 3)).unwrap();
+    site_wise.apply_2(1, 2, &cshift(3, 4)).unwrap();
+    for (s, f) in factors.iter().enumerate() {
+        site_wise.apply_1(s, f).unwrap();
+    }
+    for a in 0..2 {
+        for b in 0..3 {
+            for c in 0..4 {
+                let x = joint.amplitude(&[a, b, c]).unwrap();
+                let y = site_wise.amplitude(&[a, b, c]).unwrap();
+                assert!((x - y).norm() < 1e-12, "({a},{b},{c}): {x} vs {y}");
+            }
+        }
+    }
+    // One call = one recorded interaction, whatever the width.
+    let k_gate = joint.merge_timeline().last().unwrap();
+    assert_eq!(k_gate.sites, vec![0, 1, 2]);
+    assert!(!k_gate.merged, "sites were already correlated");
+
+    // Digit collapse on a ternary site: F₃|0⟩ has weight 1/3 per
+    // digit; projecting digit 1 with renorm √3 renormalizes exactly,
+    // drops the other digits, and is logged as a single-site event.
+    let mut reg = CompoundRegister::new(&[3]).unwrap();
+    reg.apply_1(0, &fourier_d(3)).unwrap();
+    reg.project_digit(0, 1, 3.0_f64.sqrt()).unwrap();
+    assert_close(reg.born_weight(), 1.0, 1e-12);
+    assert_close(reg.probability(&[1]).unwrap(), 1.0, 1e-12);
+    assert_close(reg.probability(&[0]).unwrap(), 0.0, 1e-12);
+    assert_eq!(reg.merge_timeline().last().unwrap().sites, vec![0]);
+    // Out-of-range digits refuse.
+    assert!(reg.project_digit(0, 3, 1.0).is_err());
+}

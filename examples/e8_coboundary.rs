@@ -142,6 +142,101 @@ fn main() -> Result<()> {
     println!("  root connects its ends); products sit at affine dimension 0; random");
     println!("  states flood the root graph. Schmidt rank obeys the geometric");
     println!("  projected-support bound on every state and cut tested — entanglement");
-    println!("  investigated as measured geometry, adjacency included.");
+    println!("  investigated as measured geometry, adjacency included.\n");
+
+    // ── 5. Both systems in the standard frameworks ───────────────────
+    println!("── both E8×E8 systems as first-class backends (conformance + benchmark)");
+    let mut sim: Simulator = Simulator::new();
+    sim.backends_mut().register("compound-binary", |n| {
+        Ok(Box::new(CompoundBackend::new(n)?))
+    })?;
+    sim.backends_mut()
+        .register("e8-rep", |n| Ok(Box::new(rep::E8RepState::new(n)?)))?;
+
+    let cfg = ConformanceConfig {
+        random_circuits: 8,
+        orderings: 2,
+        ..ConformanceConfig::default()
+    };
+    for backend in ["compound-binary", "e8-rep"] {
+        let report = verify_backend(&sim, backend, &cfg)?;
+        let cases: usize = report.gate_checks.iter().map(|g| g.cases).sum();
+        println!(
+            "  conformance '{backend}': {} over {} gates ({cases} cases), max deviation {:.1e}",
+            if report.passed() { "PASSED" } else { "FAILED" },
+            report.gate_checks.len(),
+            report.max_amplitude_deviation
+        );
+    }
+    let wide = ConformanceConfig {
+        extra_widths: vec![0, 7],
+        random_circuits: 8,
+        orderings: 2,
+        ..cfg
+    };
+    let report = verify_backend(&sim, "e8-rep", &wide)?;
+    println!(
+        "  conformance 'e8-rep' at native width 8 (full 256-point set): {}\n",
+        if report.passed() { "PASSED" } else { "FAILED" }
+    );
+
+    // The benchmark table: the co-boundary protocol itself (at d = 16,
+    // qubit-encodable) as a workload, next to the standard families.
+    let g16: Vec<C64> = (0..16usize)
+        .map(|a| cis(std::f64::consts::TAU * ((a * a + 3 * a) % 17) as f64 / 17.0))
+        .collect();
+    let workloads = [
+        Workload::from_circuit("ghz-8", library::ghz(8)),
+        Workload::from_circuit("coboundary-16", coboundary16_circuit(&g16)),
+    ];
+    let backends = [
+        "dense",
+        "sparse",
+        "mps",
+        "mera",
+        "compound-binary",
+        "e8-rep",
+    ];
+    let bench = compare_backends(&sim, &workloads, &backends, &BenchConfig::default())?;
+    print!("{bench}");
+    println!("  (mps refuses the 8-qubit pairing gate at its measured window wall;");
+    println!("  every completed run is amplitude-verified against dense in-table.");
+    println!("  The native 240-level protocol has no qubit encoding at all — two");
+    println!("  240-level sites span 57,600 joint states, which no 2^n register");
+    println!("  matches; its numbers live in sections 2–3 above.)");
     Ok(())
+}
+
+/// The d = 16 co-boundary protocol as an 8-qubit circuit (site A =
+/// qubits 0–3, site B = qubits 4–7): prepare, pair, store, unpair,
+/// interfere — the readout state is the DFT of the field on site A.
+fn coboundary16_circuit(field: &[C64]) -> Circuit {
+    let d = 16usize;
+    let dim = d * d;
+    let f = fourier_d(d);
+    let fdag: Vec<C64> = (0..d * d).map(|i| f[(i % d) * d + i / d].conj()).collect();
+    let mut diag = vec![c64(0.0, 0.0); d * d];
+    for (j, &g) in field.iter().enumerate() {
+        diag[j * d + j] = g;
+    }
+    let mut unpair = vec![c64(0.0, 0.0); dim * dim];
+    for a in 0..d {
+        for b in 0..d {
+            unpair[(a + d * ((b + d - a) % d)) * dim + (a + d * b)] = c64(1.0, 0.0);
+        }
+    }
+    let site_a: Vec<usize> = (0..4).collect();
+    let site_b: Vec<usize> = (4..8).collect();
+    let both: Vec<usize> = (0..8).collect();
+    let mut c: Circuit = Circuit::new(8);
+    c.raw("f16", GateMatrix::from_vec(d, f).unwrap(), site_a.clone());
+    c.raw(
+        "pair16",
+        GateMatrix::from_vec(dim, cshift(d, d)).unwrap(),
+        both.clone(),
+    );
+    c.raw("field16", GateMatrix::from_vec(d, diag).unwrap(), site_b);
+    c.raw("unpair16", GateMatrix::from_vec(dim, unpair).unwrap(), both);
+    c.raw("f16dag", GateMatrix::from_vec(d, fdag).unwrap(), site_a);
+    c
 }

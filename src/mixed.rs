@@ -324,70 +324,90 @@ impl CompoundRegister {
 
     /// Apply a `d × d` unitary to one site.
     pub fn apply_1(&mut self, site: usize, matrix: &[C64]) -> Result<()> {
-        self.check_site(site)?;
-        let d = self.dims[site];
-        check_unitary(d, matrix)?;
-        let v = self.site_volume[site];
-        let (stride, _) = self.volumes[v].stride_of(&self.dims, site);
-        let mut grouped: HashMap<u64, Vec<C64>> = HashMap::new();
-        for (&idx, &amp) in &self.volumes[v].amps {
-            let digit = (idx / stride) % d as u64;
-            let rest = idx - digit * stride;
-            grouped
-                .entry(rest)
-                .or_insert_with(|| vec![C64::new(0.0, 0.0); d])[digit as usize] = amp;
-        }
-        let mut amps = HashMap::new();
-        for (rest, vec_in) in grouped {
-            for r in 0..d {
-                let mut acc = C64::new(0.0, 0.0);
-                for (c, amp) in vec_in.iter().enumerate() {
-                    acc += matrix[r * d + c] * amp;
-                }
-                if acc.norm_sqr() > 0.0 {
-                    amps.insert(rest + r as u64 * stride, acc);
-                }
-            }
-        }
-        self.volumes[v].amps = amps;
-        self.log.push(Interaction {
-            step: self.steps,
-            sites: vec![site],
-            merged: false,
-        });
-        self.steps += 1;
-        Ok(())
+        self.apply_k(&[site], matrix)
     }
 
     /// Apply a `(d_a·d_b) × (d_a·d_b)` unitary to a site pair (site
     /// `a` is the LOW sub-digit). Merges the two volumes when they are
     /// still independent — the recorded correlation event.
     pub fn apply_2(&mut self, a: usize, b: usize, matrix: &[C64]) -> Result<()> {
-        self.check_site(a)?;
-        self.check_site(b)?;
-        if a == b {
-            return Err(Error::DuplicateQubits { qubits: vec![a, b] });
+        self.apply_k(&[a, b], matrix)
+    }
+
+    /// Apply a general unitary over any number of distinct sites. The
+    /// matrix is row-major over the mixed-radix sub-index with
+    /// `sites[0]` as the LOW digit (weight 1), `sites[1]` at weight
+    /// `d_0`, and so on — the same convention [`Self::apply_2`] uses for a
+    /// pair. Every volume the gate touches is merged (guard-admitted)
+    /// before the matrix is applied, so one call is one recorded
+    /// interaction whatever its width.
+    pub fn apply_k(&mut self, sites: &[usize], matrix: &[C64]) -> Result<()> {
+        self.apply_k_inner(sites, matrix, true)
+    }
+
+    /// [`apply_k`](Self::apply_k) minus the O(dim³) unitarity check,
+    /// for matrices that already carry the circuit layer's trust
+    /// (dimension is still validated). This is what keeps the
+    /// [`CompoundBackend`] benchmark comparable: no other backend
+    /// re-verifies a [`GateMatrix`](crate::math::GateMatrix) per
+    /// application, so the wrapped register must not either.
+    pub(crate) fn apply_k_trusted(&mut self, sites: &[usize], matrix: &[C64]) -> Result<()> {
+        self.apply_k_inner(sites, matrix, false)
+    }
+
+    fn apply_k_inner(&mut self, sites: &[usize], matrix: &[C64], verify: bool) -> Result<()> {
+        for &s in sites {
+            self.check_site(s)?;
         }
-        let (da, db) = (self.dims[a], self.dims[b]);
-        check_unitary(da * db, matrix)?;
-        let merged = self.site_volume[a] != self.site_volume[b];
-        if merged {
-            self.merge(self.site_volume[a], self.site_volume[b])?;
+        let mut sorted = sites.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        if sorted.len() != sites.len() {
+            return Err(Error::DuplicateQubits {
+                qubits: sites.to_vec(),
+            });
         }
-        let v = self.site_volume[a];
-        let (stride_a, _) = self.volumes[v].stride_of(&self.dims, a);
-        let (stride_b, _) = self.volumes[v].stride_of(&self.dims, b);
+        let dim: usize = sites.iter().map(|&s| self.dims[s]).product();
+        if verify {
+            check_unitary(dim, matrix)?;
+        } else if matrix.len() != dim * dim {
+            return Err(Error::BadDimension {
+                expected: dim * dim,
+                got: matrix.len(),
+            });
+        }
+        let mut merged = false;
+        for &s in &sites[1..] {
+            let (va, vb) = (self.site_volume[sites[0]], self.site_volume[s]);
+            if va != vb {
+                self.merge(va, vb)?;
+                merged = true;
+            }
+        }
+        let v = self.site_volume[sites[0]];
+        // Per-site (volume stride, arity), in gate order.
+        let info: Vec<(u64, u64)> = sites
+            .iter()
+            .map(|&s| {
+                let (stride, d) = self.volumes[v].stride_of(&self.dims, s);
+                (stride, d as u64)
+            })
+            .collect();
         let mut grouped: HashMap<u64, Vec<C64>> = HashMap::new();
         for (&idx, &amp) in &self.volumes[v].amps {
-            let xa = (idx / stride_a) % da as u64;
-            let xb = (idx / stride_b) % db as u64;
-            let rest = idx - xa * stride_a - xb * stride_b;
-            let sub = xa as usize + da * xb as usize;
+            let mut sub = 0usize;
+            let mut weight = 1usize;
+            let mut rest = idx;
+            for &(stride, d) in &info {
+                let digit = (idx / stride) % d;
+                sub += digit as usize * weight;
+                weight *= d as usize;
+                rest -= digit * stride;
+            }
             grouped
                 .entry(rest)
-                .or_insert_with(|| vec![C64::new(0.0, 0.0); da * db])[sub] = amp;
+                .or_insert_with(|| vec![C64::new(0.0, 0.0); dim])[sub] = amp;
         }
-        let dim = da * db;
         let mut amps = HashMap::new();
         for (rest, vec_in) in grouped {
             for r in 0..dim {
@@ -396,17 +416,52 @@ impl CompoundRegister {
                     acc += matrix[r * dim + c] * amp;
                 }
                 if acc.norm_sqr() > 0.0 {
-                    let ra = (r % da) as u64;
-                    let rb = (r / da) as u64;
-                    amps.insert(rest + ra * stride_a + rb * stride_b, acc);
+                    let mut out = rest;
+                    let mut rr = r as u64;
+                    for &(stride, d) in &info {
+                        out += (rr % d) * stride;
+                        rr /= d;
+                    }
+                    amps.insert(out, acc);
                 }
             }
         }
         self.volumes[v].amps = amps;
         self.log.push(Interaction {
             step: self.steps,
-            sites: vec![a, b],
+            sites: sites.to_vec(),
             merged,
+        });
+        self.steps += 1;
+        Ok(())
+    }
+
+    /// Collapse one site onto `digit`: amplitudes whose site digit
+    /// differs are dropped, survivors are scaled by the real factor
+    /// `renorm`. Only the site's own volume is touched (independence
+    /// of the other volumes is exactly why), and the collapse is
+    /// logged as a single-site interaction in the flow record.
+    pub fn project_digit(&mut self, site: usize, digit: usize, renorm: f64) -> Result<()> {
+        self.check_site(site)?;
+        let d = self.dims[site];
+        if digit >= d {
+            return Err(Error::InvalidState(format!(
+                "digit {digit} out of range for the {d}-level site {site}"
+            )));
+        }
+        let v = self.site_volume[site];
+        let (stride, _) = self.volumes[v].stride_of(&self.dims, site);
+        let scale = C64::new(renorm, 0.0);
+        let amps = std::mem::take(&mut self.volumes[v].amps);
+        self.volumes[v].amps = amps
+            .into_iter()
+            .filter(|&(idx, _)| (idx / stride) % d as u64 == digit as u64)
+            .map(|(idx, a)| (idx, a * scale))
+            .collect();
+        self.log.push(Interaction {
+            step: self.steps,
+            sites: vec![site],
+            merged: false,
         });
         self.steps += 1;
         Ok(())
@@ -606,6 +661,180 @@ impl CompoundRegister {
             *counts.entry(outcome).or_insert(0) += 1;
         }
         Ok(counts)
+    }
+}
+
+/// The all-binary [`CompoundRegister`] as a standard qubit
+/// [`Backend`](crate::backend::Backend) — the same volume machinery
+/// that carries the 240-level E8×E8 co-boundary state, entering the
+/// conformance sweeps and benchmark tables as `"compound-binary"`.
+///
+/// Qubit `q` is site `q` (both little-endian), so a basis index is the
+/// register's digit string read as bits. Independent qubits stay in
+/// separate horizontal volumes; [`crate::backend::Backend::for_each_nonzero`] visits
+/// the product support, and over-scale merges refuse through the
+/// resource guard exactly as they do for mixed arities.
+pub struct CompoundBackend {
+    reg: CompoundRegister,
+}
+
+impl CompoundBackend {
+    /// A fresh `n`-qubit register (n ≤ 63 — the packed-index width).
+    pub fn new(num_qubits: usize) -> Result<Self> {
+        if num_qubits > 63 {
+            return Err(Error::TooManyQubits {
+                requested: num_qubits,
+                max: 63,
+            });
+        }
+        Ok(CompoundBackend {
+            reg: CompoundRegister::new(&vec![2; num_qubits])?,
+        })
+    }
+
+    /// The underlying compound register — volumes, merge timeline and
+    /// interaction cones included.
+    pub fn inner(&self) -> &CompoundRegister {
+        &self.reg
+    }
+
+    /// Global basis bits of one volume entry: digit of site `s` (rank
+    /// `r` in the volume's ascending site list) becomes bit `s`.
+    fn global_bits(v: &Volume, idx: u64) -> u64 {
+        let mut bits = 0u64;
+        for (rank, &s) in v.sites.iter().enumerate() {
+            bits |= ((idx >> rank) & 1) << s;
+        }
+        bits
+    }
+}
+
+impl crate::backend::Backend<C64> for CompoundBackend {
+    fn name(&self) -> &str {
+        "compound-binary"
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.reg.dims.len()
+    }
+
+    fn apply(&mut self, matrix: &crate::math::GateMatrix<C64>, qubits: &[usize]) -> Result<()> {
+        crate::backend::validate_apply(self.num_qubits(), matrix, qubits)?;
+        // Backend contract: qubits[b] ↔ sub-index bit b; apply_k puts
+        // sites[j] at digit weight 2^j — the identical convention. The
+        // matrix carries the circuit layer's trust, so the register's
+        // per-application unitarity re-check is skipped for parity
+        // with every other backend.
+        self.reg.apply_k_trusted(qubits, matrix.data())
+    }
+
+    fn amplitude(&self, index: u64) -> C64 {
+        let n = self.num_qubits();
+        if n < 64 && index >> n != 0 {
+            return C64::new(0.0, 0.0);
+        }
+        let basis: Vec<usize> = (0..n).map(|s| ((index >> s) & 1) as usize).collect();
+        self.reg
+            .amplitude(&basis)
+            .expect("in-range bits form a valid basis string")
+    }
+
+    fn for_each_nonzero(&self, f: &mut dyn FnMut(u64, C64)) {
+        // The state is the product over volumes; enumerate it with an
+        // odometer over per-volume supports.
+        let per: Vec<Vec<(u64, C64)>> = self
+            .reg
+            .volumes
+            .iter()
+            .map(|v| {
+                v.amps
+                    .iter()
+                    .map(|(&idx, &a)| (Self::global_bits(v, idx), a))
+                    .collect()
+            })
+            .collect();
+        if per.iter().any(|entries| entries.is_empty()) {
+            return; // A zero-weight volume annihilates the product.
+        }
+        let mut counters = vec![0usize; per.len()];
+        loop {
+            let mut bits = 0u64;
+            let mut amp = C64::new(1.0, 0.0);
+            for (vi, &c) in counters.iter().enumerate() {
+                let (g, a) = per[vi][c];
+                bits |= g;
+                amp *= a;
+            }
+            f(bits, amp);
+            let mut k = 0;
+            loop {
+                if k == counters.len() {
+                    return;
+                }
+                counters[k] += 1;
+                if counters[k] < per[k].len() {
+                    break;
+                }
+                counters[k] = 0;
+                k += 1;
+            }
+        }
+    }
+
+    fn nonzero_count(&self) -> usize {
+        self.reg
+            .volumes
+            .iter()
+            .map(|v| v.amps.len())
+            .fold(1usize, |acc, len| acc.saturating_mul(len))
+    }
+
+    fn project(&mut self, qubit: usize, outcome: bool, renorm: f64) {
+        if qubit >= self.num_qubits() {
+            return;
+        }
+        self.reg
+            .project_digit(qubit, outcome as usize, renorm)
+            .expect("binary digit on a valid site");
+    }
+
+    fn reset(&mut self) {
+        self.reg = CompoundRegister::new(&self.reg.dims).expect("dims were already accepted");
+    }
+
+    fn load(&mut self, entries: &[(u64, C64)]) -> Result<()> {
+        let n = self.num_qubits();
+        for &(i, _) in entries {
+            if n < 64 && i >> n != 0 {
+                return Err(Error::QubitOutOfRange {
+                    qubit: 64 - i.leading_zeros() as usize,
+                    num_qubits: n,
+                });
+            }
+        }
+        // A loaded state is fully general: one volume over all sites,
+        // whose packed index IS the basis index (all-binary, sites
+        // ascending).
+        let mut amps = HashMap::new();
+        for &(i, a) in entries {
+            if a.norm_sqr() > 0.0 {
+                amps.insert(i, a);
+            }
+        }
+        self.reg.volumes = vec![Volume {
+            sites: (0..n).collect(),
+            amps,
+        }];
+        self.reg.site_volume = vec![0; n];
+        Ok(())
+    }
+
+    fn memory_bytes(&self) -> usize {
+        self.reg.memory_bytes() + std::mem::size_of::<Self>()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
