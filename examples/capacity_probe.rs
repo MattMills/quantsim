@@ -387,7 +387,7 @@ fn main() {
         ),
         (
             "factored-bridge",
-            vec![36, 40, 44, 48],
+            vec![26, 28, 30, 32, 36],
             "two n/2 chains bridged into one n-qubit factor",
         ),
         (

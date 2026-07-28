@@ -444,7 +444,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 325 tests (43 unit + 278 across thirty-two
+`cargo test` runs 326 tests (43 unit + 279 across thirty-two
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -507,7 +507,13 @@ entirely trivial accessors and defensive guards:
   refused under a 1 MiB budget with the representation named — while
   the same budget admits what stays small (an H-layer across
   independent horizontal volumes at 2n entries, a 20-qubit GHZ as two
-  lattice points); armed time budgets abort a single dense gate
+  lattice points); an explicit `usize::MAX` limit is representable
+  (regression: it used to collide with the auto-measure sentinel and
+  silently re-enable admission), so with admission disabled an
+  over-scale request reaches the ALLOCATOR and fails there, reported
+  distinctly with the availability measured at failure time, while
+  restoring auto-measurement re-arms up-front admission; armed time
+  budgets abort a single dense gate
   mid-sweep, the mera SVD path and scheduled runs — promptly, with
   measured elapsed times — and the identical runs complete once the
   budget lifts.

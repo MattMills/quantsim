@@ -343,3 +343,49 @@ fn constellation_growth_is_admitted_against_the_budget() {
     let state = sim.run_on("e8-constellation", &library::ghz(n)).unwrap();
     assert_eq!(state.nonzero_count(), 2);
 }
+
+#[test]
+fn an_explicit_unlimited_limit_disables_admission_but_not_the_allocator() {
+    let _lock = lock();
+    // Regression: Some(usize::MAX) used to collide with the internal
+    // "auto-measure" sentinel and silently read back as None — which
+    // meant the capacity probe's raw mode never actually disabled
+    // admission and its "real wall" rows were admission refusals in
+    // disguise. The explicit unlimited budget must be representable…
+    guard::set_memory_limit(Some(usize::MAX));
+    assert_eq!(guard::memory_limit(), Some(usize::MAX));
+
+    // …and with admission out of the way, an over-scale allocation now
+    // reaches the ALLOCATOR and fails there: a 4 PiB dense register is
+    // refused by the reservation itself, reported with the measured
+    // availability at failure time.
+    match DenseState::<C64>::new(48).err() {
+        Some(Error::OutOfMemory {
+            requested,
+            available,
+            what,
+        }) => {
+            assert_eq!(requested, (1usize << 48) * 16);
+            assert!(what.contains("allocator refused the reservation"), "{what}");
+            assert!(
+                available < usize::MAX,
+                "availability is measured, not the unlimited budget"
+            );
+        }
+        other => panic!("expected an allocator refusal, got {other:?}"),
+    }
+
+    // Restoring auto-measurement re-arms admission: the same request
+    // is refused up front with the measured numbers.
+    guard::set_memory_limit(None);
+    assert_eq!(guard::memory_limit(), None);
+    match DenseState::<C64>::new(48).err() {
+        Some(Error::OutOfMemory { what, .. }) => {
+            assert!(
+                !what.contains("allocator"),
+                "admission refused first: {what}"
+            );
+        }
+        other => panic!("expected an admission refusal, got {other:?}"),
+    }
+}

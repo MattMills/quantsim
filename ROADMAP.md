@@ -550,7 +550,12 @@ Next rungs:
   kills and deadline aborts, now across all twelve axes: the
   algebraic/compound/constellation fills and the structural ceilings —
   compound/constellation at 63, e8-rep at its native 8 — beside the
-  original dense/exact/sparse/factored/mera walls). Next rungs: cooperative *degradation*
+  original dense/exact/sparse/factored/mera walls). The probe's raw
+  mode is honest again: `Some(usize::MAX)` used to collide with the
+  auto-measure sentinel (so "raw" rows were admission refusals in
+  disguise); the limit is now flag+value, admission-disabled requests
+  reach the allocator and fail there with the at-failure measured
+  availability, distinctly labeled — pinned by a regression test. Next rungs: cooperative *degradation*
   instead of abort (a backend that receives OutOfMemory could spill —
   factored → mps handoff), per-scope (non-global) budgets once a
   session/context type exists, allocation accounting of the crate's own
