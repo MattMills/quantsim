@@ -268,3 +268,124 @@ fn a_timed_out_state_is_reported_torn() {
     bound.run(&mut fresh).unwrap();
     assert_close(fresh.probability(0), 0.5, 1e-12);
 }
+
+#[test]
+fn compound_growth_is_admitted_against_the_budget() {
+    let _lock = lock();
+    // A 1 MiB budget: the H-layer + CX-chain fill that would draw all
+    // horizontal volumes into one 2^20-entry volume is refused with
+    // measured numbers — by the merge admission or the per-gate growth
+    // admission, whichever wall arrives first.
+    guard::set_memory_limit(Some(1 << 20));
+    let n = 20;
+    let mut c: Circuit = Circuit::new(n);
+    for q in 0..n {
+        c.h(q);
+    }
+    for q in 0..n - 1 {
+        c.cx(q, q + 1);
+    }
+    let mut sim: Simulator = Simulator::new();
+    sim.backends_mut()
+        .register("compound-binary", |n| {
+            Ok(Box::new(CompoundBackend::new(n)?))
+        })
+        .unwrap();
+    match sim.run_on("compound-binary", &c).err() {
+        Some(Error::OutOfMemory { what, .. }) => {
+            assert!(what.contains("compound"), "{what}");
+        }
+        other => panic!("expected compound growth refusal, got {other:?}"),
+    }
+    // Independent volumes alone never trip the wall: the H-layer with
+    // no interaction stays at 2 entries per site under the same budget.
+    let mut layer: Circuit = Circuit::new(n);
+    for q in 0..n {
+        layer.h(q);
+    }
+    let state = sim.run_on("compound-binary", &layer).unwrap();
+    assert_eq!(state.nonzero_count(), 1 << n, "product support");
+    let compound = state.as_any().downcast_ref::<CompoundBackend>().unwrap();
+    assert_eq!(
+        compound.inner().stored_entries(),
+        2 * n,
+        "2n stored entries"
+    );
+}
+
+#[test]
+fn constellation_growth_is_admitted_against_the_budget() {
+    let _lock = lock();
+    // The same 1 MiB budget refuses the 2^20 lattice-point fill before
+    // any oversized map is built, with the representation named.
+    guard::set_memory_limit(Some(1 << 20));
+    let n = 20;
+    let mut c: Circuit = Circuit::new(n);
+    for q in 0..n {
+        c.h(q);
+    }
+    let mut sim: Simulator = Simulator::new();
+    sim.backends_mut()
+        .register("e8-constellation", |n| {
+            Ok(Box::new(
+                quantsim::e8::constellation::E8ConstellationState::new(n)?,
+            ))
+        })
+        .unwrap();
+    match sim.run_on("e8-constellation", &c).err() {
+        Some(Error::OutOfMemory { what, .. }) => {
+            assert!(what.contains("e8-constellation"), "{what}");
+        }
+        other => panic!("expected constellation growth refusal, got {other:?}"),
+    }
+    // Under the same budget the concentrated state sails through: a
+    // 20-qubit GHZ is two lattice points.
+    let state = sim.run_on("e8-constellation", &library::ghz(n)).unwrap();
+    assert_eq!(state.nonzero_count(), 2);
+}
+
+#[test]
+fn an_explicit_unlimited_limit_disables_admission_but_not_the_allocator() {
+    let _lock = lock();
+    // Regression: Some(usize::MAX) used to collide with the internal
+    // "auto-measure" sentinel and silently read back as None — which
+    // meant the capacity probe's raw mode never actually disabled
+    // admission and its "real wall" rows were admission refusals in
+    // disguise. The explicit unlimited budget must be representable…
+    guard::set_memory_limit(Some(usize::MAX));
+    assert_eq!(guard::memory_limit(), Some(usize::MAX));
+
+    // …and with admission out of the way, an over-scale allocation now
+    // reaches the ALLOCATOR and fails there: a 4 PiB dense register is
+    // refused by the reservation itself, reported with the measured
+    // availability at failure time.
+    match DenseState::<C64>::new(48).err() {
+        Some(Error::OutOfMemory {
+            requested,
+            available,
+            what,
+        }) => {
+            assert_eq!(requested, (1usize << 48) * 16);
+            assert!(what.contains("allocator refused the reservation"), "{what}");
+            assert!(
+                available < usize::MAX,
+                "availability is measured, not the unlimited budget"
+            );
+        }
+        other => panic!("expected an allocator refusal, got {other:?}"),
+    }
+
+    // Restoring auto-measurement re-arms admission: the same request
+    // is refused up front with the measured numbers.
+    guard::set_memory_limit(None);
+    assert_eq!(guard::memory_limit(), None);
+    match DenseState::<C64>::new(48).err() {
+        Some(Error::OutOfMemory { what, .. }) => {
+            assert!(
+                !what.contains("allocator"),
+                "admission refused first: {what}"
+            );
+        }
+        other => panic!("expected an admission refusal, got {other:?}"),
+    }
+}

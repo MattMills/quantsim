@@ -1,5 +1,9 @@
 # Roadmap
 
+(Machinery lives here; the staged catalog of target *computations* — with
+honest advantage labels and their alternate-landscape axes — lives in
+[LANDSCAPES.md](LANDSCAPES.md).)
+
 The crate is organized around two swappable axes — the **amplitude algebra**
 (`Scalar`) and the **state representation** (`Backend<S>`) — so most planned
 work is "fill in another cell of the matrix":
@@ -289,6 +293,207 @@ Remaining rungs:
 - mixed direct sums of unequal blocks (ℍ⊕𝕆 has 6 complex components —
   a non-power-of-two qudit; the register currently requires 2^k).
 
+## The boundary atlas — SHIPPED (core)
+
+`bounds::advantage_scan` makes the crate's central question operational:
+each representation is an assumption about structure, measured to be
+exponential exactly in its own resource, and a circuit family is an
+advantage candidate precisely when every measured axis grows
+exponentially at once (random universal circuits: bases 1.7–2.0, all
+probes exact). The scan rediscovers GHZ/QFT/rainbow/Clifford as
+classical from bytes alone and is the standing detector for a
+sub-exponential simulation: any new registered representation that
+keeps a flat, exact axis on the candidate family has found one.
+
+Second wave — SHIPPED:
+
+- **time-cost axes**: every probe is timed (best-of-two under the
+  scoped deadline) and a family is certified classical by an axis only
+  when BOTH its memory and its wall-clock law stay sub-exponential.
+  The measured case for the rule arrived immediately: MPS on
+  long-range IQP is time-polynomial (`size^4.5`) but
+  memory-exponential (`2.14^n`). Time laws use a wider polynomial
+  band (base < 1.35) so microsecond jitter doesn't misread flat axes.
+- **assumption dials** (`library::iqp`, `library::doped_clifford`,
+  `library::brickwork_2d`): the same IQP core flips
+  candidate ↔ classical on the interaction-range knob; random
+  T-doping costs the frame NOTHING even at t = n/2 (measured — T's in
+  a random Clifford stream land where conjugation keeps them diagonal;
+  the 2^t escape needs deliberately scattered magic, so the frame's
+  boundary is about WHERE the magic sits, not how much); depth-3 2D
+  brickwork reads `size^2.0` — the boundary (2^√n) law failing slowly
+  at probe sizes, exactly as an almost-holding assumption should.
+- **selection by extrapolated scaling** (`select_by_scaling` /
+  `LawFit::predict`): fit each axis's measured law at probe sizes,
+  rank predictions at the target, holdout-verified (GHZ at width 40:
+  predicted 125 B from fits that never saw it, measured 125 B), and
+  explicit when no assumption holds (the candidate family's winner is
+  flagged least-bad, not good).
+
+Third wave — SHIPPED:
+
+- **sampling-task hardness** (`sampling`): linear XEB against the
+  dense or exact D[ω] reference (agreement 1e-15 on shared samples),
+  normalized by the measured ceiling `2^n Σp² − 1` (uniform outputs
+  have no signal and score `None`, never a fake fidelity). Verdicts
+  carry to the task: GHZ sampled at the ceiling from 125 B,
+  `clifford_sample` doing per-shot tableau measurement (width 20, 256
+  shots, ~23 ms). Spoofing economics measured: truncated-MPS caps
+  collapse below 0.3 normalized with only full rank scoring — a cliff,
+  not a slope — and a fixed-χ budget decays to noise as the family
+  grows. The sampling task inherits the state bounds, reproducibly.
+- **variance-aware time laws**: three timing repetitions per probe,
+  median-classified with min/max envelope laws
+  (`AxisScan::time_law_bounds`, `time_law_is_variance_robust`) — a
+  time classification whose envelopes disagree is jitter-limited and
+  says so.
+- **register shapes as scan axes**: the hierarchical splits
+  (`algebraic-h`, `algebraic-o` over sparse sites) join every profile,
+  scan and selection — constant on GHZ, escaping with everything else
+  on the candidate family, and measurably beating plain sparse on
+  mixed-sector states (axis against axis).
+
+Next rungs:
+
+- **spoof-cost frontier**: for each family size, the *cheapest* χ that
+  reaches a target normalized XEB — the measured classical cost of the
+  task at fixed fidelity, the quantity advantage experiments actually
+  argue about.
+- **noisy-sampler models**: depolarizing/readout noise channels on the
+  sampler side, so measured XEB decay can be compared against the
+  noise budget the way hardware claims are.
+- **per-shot cost laws**: `clifford_sample` and `sample_mps` costs
+  classified by the same law machinery as state costs (per-shot time
+  vs width per family).
+
+## Mixed-arity compound qudits — SHIPPED (core)
+
+`mixed::CompoundRegister` + `e8`: the representation/interaction/flow
+separation for non-binary registers. Sites of any arity held as
+horizontal volumes (independent until interaction, guard-admitted
+merges), generalized gates with tested relations, conformance to the
+qubit reference where dims coincide, the fabric's measured swap-class
+decomposition (swap exists only between equal arities — cross-arity
+bonds are forced native), and order-respecting interaction cones. The
+E8 anchor is constructed and verified programmatically: 240 roots, the
+su(2)…su(5) arity chains found by search, `su(5)×su(5)` exhibited
+orthogonal, and the rank obstruction MEASURED (after A1⊥A2⊥A3 the
+orthogonal-A4 search exhausts; 1+2+3+4 = 10 > 8) — so the four arity
+frames must share directions, and the canonical embedding's measured
+Gram overlap (quaternary–quintary, 44) becomes the compound qudit's
+coupling fabric.
+
+Second wave — SHIPPED: **both E8×E8 systems in the standard
+frameworks**. `CompoundRegister` grew a general k-site `apply_k`
+(mixed-radix, one logged interaction per call; `apply_1`/`apply_2` are
+now thin delegations) and exact `project_digit` collapse; the
+all-binary case is `CompoundBackend` (`"compound-binary"`), a full
+`Backend<C64>` with product-support enumeration over horizontal
+volumes and the 63/64-qubit packed-index wall measured. The E8×E8
+representation is `e8::rep::E8RepState` (`"e8-rep"`): amplitudes keyed
+by (copy, spinor root), 8-qubit-native with a structural refusal past
+8, GHZ downcast-verified to be stored as an antipodal root pair. Both
+pass `verify_backend` over the full registry (e8-rep also at native
+width 8 across the whole 256-point set) and run through
+`compare_backends` beside dense/sparse/adaptive/factored/mps/mera,
+with the d = 16 co-boundary protocol as a workload: every completed
+run amplitude-verified against dense, MPS refusing the 8-qubit pairing
+gate at its measured window wall, and the native two-site 16-level
+protocol equal amplitude-by-amplitude to its qubit encoding.
+
+Third wave — SHIPPED: **the infinite E8 constellation**
+(`e8::constellation`). The measured coset theorem E8/2E8 ≅ F₂⁸ (the
+origin + 240 roots + 2160 norm-2 vectors bucket into exactly 256
+classes: 1 + 120 antipodal pairs + 135 sixteen-frames, on shells of
+radius 0/√2/2 — verified by exact integer arithmetic over a
+triangular doubled basis with |det| = 2⁸ and its verified adjugate)
+makes one byte the identity position of an E8 on its parent's
+spheres. `compose`/`decompose` realize the scale tower
+Σ 2ᵏ·rep(digitₖ) as a measured bijection onto E8/2^m E8, self-similar
+under doubling; `E8ConstellationState` (`"e8-constellation"`) keys
+amplitudes by lattice points at any width to the u64 wall, passes
+full-registry conformance at default/widened/multi-block widths, and
+is priced in the harness beside the standard backends (GHZ-63 = two
+80-byte points where dense refuses to construct; saturated QFT-12
+honestly costs more than dense).
+
+Fourth wave — SHIPPED: **multi-scale dual time**
+(`e8::constellation` scale methods + `tests/e8_dual_scale.rs`). The
+distilled scale operad: `scale_embed`/`decimate` isometries with exact
+composition (`V_a∘V_b = V_{a+b}`, `R∘V = id`), covariant Weyl
+transport (`T_{2v}∘V = V∘T_v`, `M_q∘V = V∘M_q`), and the honest
+divisibility subtlety pinned (componentwise evenness is NOT lattice
+divisibility — decimation demands digit-zero levels and refuses live
+fine data with the level named). Cross-scale comb codes: coarse
+translation checks + fine modulation checks, all commuting past the
+horizon; logical operators at the middle scales; the m×m syndrome
+matrix tiling EXACTLY the Weyl commutation inequality (detection
+window = bidirectional horizon — one measured matrix unifies QEC and
+the Heisenberg ladder); end-to-end correction with exact binary
+phase-readout decoding and honest past-window blindness; code
+self-similarity (decimated (m=4,a=2) code = (m=3,a=1) code, state
+identity). Folding theorems: the interleaved ascending-T/descending-M
+sequence reorders through beyond-horizon commutations only into one
+two-gate layer (below-horizon control measurably refuses); deep
+periodic time folds to the measured period (P = 8 at m = 3) with the
+exact quadratic Weyl phase `χ^{t(t−1)/2}` pinned at small t — 2⁴⁰+5
+blocks evaluated as 5 in ~100 µs. Noise trajectories — SHIPPED
+(`CombCode` + `tests/e8_comb_noise.rs`): the codes as first-class
+objects with min-norm decoding, window-sized displacements measured as
+the code distance (silent logical operations), the mod-2 tie's
+fail-half pinned, and seeded displacement-noise trajectories yielding
+the logical-vs-physical error curves (degenerate window saturating,
+a=4 at 0% where a=3 fails 61% at p=0.05, threshold-shaped suppression
+across five rates). Remaining rungs: syndrome extraction as physical
+ancilla interferometry (the eigenphase read is simulator-direct), and
+the mod-2^m tableau that would make all of it polynomial.
+
+Next rungs:
+
+- **auto-split on disentanglement**: volumes currently merge and stay
+  merged; detecting product structure (Schmidt-1 across a site) would
+  restore horizontality after uncomputation, like factored's split.
+- **mixed-arity circuits/registry**: the conformance/harness machinery
+  now sweeps the compound register through its all-binary backend;
+  still open is the genuinely mixed-arity `Circuit`-level description
+  (named qudit gates over non-binary sites with bind-time validation)
+  so mixed-dim registers get registry-drawn random sweeps too.
+- **richer E8 embeddings**: search for minimal-total-overlap
+  placements of all four chains (the canonical one is greedy), and
+  weight the compound fabric by the Gram magnitudes rather than a
+  boolean coupling.
+- **arity-mixed device model**: `Topology`/latency over mixed sites
+  with the swap-class constraint enforced by the router (equal-dim
+  corridors, native cross-arity bonds).
+- **constellation-native gates — SHIPPED as the cross-scale Weyl
+  pair**: `translate`/`modulate`/`reflect`/`coordinate_fourier` act
+  directly on lattice keys (no bit-domain conversion), with measured
+  self-duality (det Gram = 1, dual basis in-lattice, coordinates =
+  dual inner products), the Heisenberg law and its 2-adic scale ladder
+  (interaction below the resolution horizon, exact commutation past
+  it), W(E8) reflections as measured Cliffords, `F⁴ = 1` with
+  `F T_B F⁻¹ = M_{−b*}`, exact support uncertainty
+  (`|pos|·|mom| = 2^{8m}` on coset states), depth-1 reduction to
+  X-strings/sign diagonals against the standard framework, and
+  structured interaction at 40 qubits under 32-point support where
+  dense measurably refuses. Still open on top: a generator-based
+  stabilizer TABLEAU over ℤ/2^m (the coset family is closed under the
+  native set at 2^{km} points — an 8th-root-of-dense compression;
+  tableaux would make it polynomial), full W(E8) generator sets beyond
+  single reflections, and deeper digit alphabets from the next shells
+  (norm-6/8 vectors give E8/3E8 and beyond) for non-binary
+  constellation levels that would meet the mixed-arity register.
+- **edge-level co-boundary storage**: the E8×E8 system stores rays at
+  paired POINTS (ℂP²³⁹, measured invisible/recoverable); the measured
+  b₁ = 4241 says the complex carries that much invariant EDGE data
+  beyond points — encode qudit fields on the 6720 edges modulo the
+  2240 triangle relations and build the readout interferometry for
+  the cocycle classes.
+- **Weyl-symmetric storage bases**: decompose stored fields over the
+  root graph's spectrum (the −1 adjacency is highly symmetric) so the
+  co-boundary payload is addressed by symmetry sector rather than raw
+  point index.
+
 ## Operational-model extensions
 
 - **Device realism — geometry + latency maps SHIPPED**: `Topology` now
@@ -370,11 +575,22 @@ Remaining rungs:
 - **Resource guard — SHIPPED** (`guard`): memory admission against
   *measured* capacity (cgroup/`MemAvailable` at allocation time,
   fallible reservation as backstop) for every large allocation in every
-  backend; wall-clock budgets checkpointed inside the long kernels;
-  capacity-aware adaptive promotion; the former width-constant caps
-  demoted to structural index bounds. Verified against reality by
+  backend — the mixed-arity compound register (merge AND per-gate
+  growth) and the E8 constellation's lattice-key growth included, so
+  the new representations refuse over-scale work with the same measured
+  numbers as sparse; wall-clock budgets checkpointed inside the long
+  kernels; capacity-aware adaptive promotion; the former width-constant
+  caps demoted to structural index bounds. Verified against reality by
   `examples/capacity_probe.rs` (subprocess-isolated walks to real OOM
-  kills and deadline aborts). Next rungs: cooperative *degradation*
+  kills and deadline aborts, now across all twelve axes: the
+  algebraic/compound/constellation fills and the structural ceilings —
+  compound/constellation at 63, e8-rep at its native 8 — beside the
+  original dense/exact/sparse/factored/mera walls). The probe's raw
+  mode is honest again: `Some(usize::MAX)` used to collide with the
+  auto-measure sentinel (so "raw" rows were admission refusals in
+  disguise); the limit is now flag+value, admission-disabled requests
+  reach the allocator and fail there with the at-failure measured
+  availability, distinctly labeled — pinned by a regression test. Next rungs: cooperative *degradation*
   instead of abort (a backend that receives OutOfMemory could spill —
   factored → mps handoff), per-scope (non-global) budgets once a
   session/context type exists, allocation accounting of the crate's own

@@ -42,16 +42,21 @@
 //! (basis indices fit `u64`); scale inhibition comes from here.
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
 
-/// Sentinel for "no explicit limit: measure the machine".
-const AUTO: u64 = u64::MAX;
+/// Whether an explicit memory limit is set (else: measure the machine).
+/// A separate flag — NOT a sentinel value — so that every byte count is
+/// a representable limit, `usize::MAX` included: an explicit unlimited
+/// budget is how the capacity probe disables admission to walk into the
+/// real allocator/OOM wall, and a sentinel encoding would silently turn
+/// that back into auto-measurement.
+static MEMORY_LIMIT_SET: AtomicBool = AtomicBool::new(false);
 
-/// Explicit memory limit in bytes; [`AUTO`] means measure.
-static MEMORY_LIMIT: AtomicU64 = AtomicU64::new(AUTO);
+/// Explicit memory limit in bytes (meaningful when the flag is set).
+static MEMORY_LIMIT: AtomicU64 = AtomicU64::new(0);
 
 /// Time budget in nanoseconds; 0 means none.
 static TIME_BUDGET_NANOS: AtomicU64 = AtomicU64::new(0);
@@ -69,15 +74,22 @@ const ADMIT_DEN: u128 = 16;
 /// Override the memory budget with an explicit byte limit, or restore
 /// auto-measurement with `None`. Process-global.
 pub fn set_memory_limit(limit: Option<usize>) {
-    MEMORY_LIMIT.store(limit.map_or(AUTO, |v| v as u64), Ordering::SeqCst);
+    match limit {
+        Some(v) => {
+            // Value first, then the flag, so a concurrent reader never
+            // observes the flag with a stale limit.
+            MEMORY_LIMIT.store(v as u64, Ordering::SeqCst);
+            MEMORY_LIMIT_SET.store(true, Ordering::SeqCst);
+        }
+        None => MEMORY_LIMIT_SET.store(false, Ordering::SeqCst),
+    }
 }
 
 /// The explicit memory limit, if one is set (`None` = auto-measured).
 pub fn memory_limit() -> Option<usize> {
-    match MEMORY_LIMIT.load(Ordering::SeqCst) {
-        AUTO => None,
-        v => Some(v as usize),
-    }
+    MEMORY_LIMIT_SET
+        .load(Ordering::SeqCst)
+        .then(|| MEMORY_LIMIT.load(Ordering::SeqCst) as usize)
 }
 
 /// Arm (or clear) the wall-clock budget applied to each subsequently
@@ -181,10 +193,14 @@ pub(crate) fn try_vec<T: Clone>(len: usize, fill: T, what: &str) -> Result<Vec<T
         })?;
     admit(bytes, what)?;
     let mut v: Vec<T> = Vec::new();
+    // Past admission the reservation itself can still fail (or the
+    // admission was explicitly unlimited, as in raw capacity probes):
+    // that is the ALLOCATOR's wall, reported with the availability
+    // measured at the moment of failure.
     v.try_reserve_exact(len).map_err(|_| Error::OutOfMemory {
         requested: bytes,
-        available: admission_budget(),
-        what: what.to_string(),
+        available: measured_available(),
+        what: format!("{what}; the allocator refused the reservation"),
     })?;
     v.resize(len, fill);
     Ok(v)
@@ -226,6 +242,26 @@ impl Drop for DeadlineScope {
             DEADLINE.with(|d| d.set(None));
         }
     }
+}
+
+/// Run `f` under a wall-clock budget armed directly on THIS thread —
+/// independent of (and composing with) the process-wide
+/// [`set_time_budget`]: the outermost scope owns the deadline, nothing
+/// global is touched, and concurrent threads are unaffected. The
+/// deadline clears when the scope drops, unwinding included.
+pub fn with_time_budget<T>(budget: Duration, f: impl FnOnce() -> T) -> T {
+    let _scope = DeadlineScope {
+        armed_here: DEADLINE.with(|d| {
+            if d.get().is_some() {
+                false
+            } else {
+                let now = Instant::now();
+                d.set(Some((now, now + budget)));
+                true
+            }
+        }),
+    };
+    f()
 }
 
 /// Check the active deadline, failing with the measured elapsed time

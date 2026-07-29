@@ -63,10 +63,12 @@
 #![warn(missing_docs)]
 
 pub mod backend;
+pub mod bounds;
 pub mod causal;
 pub mod circuit;
 pub mod conformance;
 pub mod discovery;
+pub mod e8;
 pub mod error;
 pub mod exact;
 pub mod gates;
@@ -75,9 +77,11 @@ pub mod harness;
 pub mod library;
 pub mod lift;
 pub mod math;
+pub mod mixed;
 pub mod qudit;
 pub mod registry;
 pub mod rng;
+pub mod sampling;
 pub mod scalar;
 pub mod schedule;
 pub mod sim;
@@ -100,6 +104,11 @@ pub mod prelude {
         InterferenceState, LatencyMap, MeraConfig, MeraState, MpsConfig, MpsState, PauliString,
         PhysicalOp, SparseState, Topology,
     };
+    pub use crate::bounds::{
+        advantage_scan, classify_law, fit_law, resource_profile, select_by_scaling, AxisProbe,
+        AxisScan, FamilyScan, Law, LawFit, ResourceProfile, ScalingChoice, ScalingSelection,
+        Verdict,
+    };
     pub use crate::causal::{
         backward_cone, causal_diamond, dual_time_amplitude, DiamondReport, DualTimeResolution,
     };
@@ -111,6 +120,7 @@ pub mod prelude {
         discover_stabilizers, stabilizes_state, state_deviation_up_to_phase, verify_transparent,
         Insertion, StabilizerCheck, TransparencyReport,
     };
+    pub use crate::e8::{self, ChainEmbedding};
     pub use crate::error::{Error, Result};
     pub use crate::exact::{DOmega, ExactReal, ExactState};
     pub use crate::gates::{FixedGate, GateDef, ParamGate, Pauli};
@@ -122,12 +132,20 @@ pub mod prelude {
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};
+    pub use crate::mixed::{
+        clock_d, cshift, fabric, fourier_d, shift_d, swap_dd, CompoundBackend, CompoundRegister,
+        FabricReport, Interaction,
+    };
     pub use crate::qudit::{
         algebra_capacity, dual_algebra_report, synthesize_sandwich, AlgebraicRegister,
         DualAlgebraReport, QuditStats, SandwichOp, SandwichTerm,
     };
     pub use crate::registry::GateRegistry;
     pub use crate::rng::Prng;
+    pub use crate::sampling::{
+        clifford_sample, ideal_xeb, linear_xeb, linear_xeb_exact, mps_spoof_curve, score_samples,
+        spoof_decay, DecayPoint, SpoofPoint, XebScore,
+    };
     pub use crate::scalar::{
         Ball, CComplex, DirectSum, Octonion, Quaternion, Scalar, Sedenion, SplitComplex,
         Trigintaduonion, C64, CD,
