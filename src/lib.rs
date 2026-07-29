@@ -67,6 +67,7 @@ pub mod bounds;
 pub mod bundle;
 pub mod causal;
 pub mod circuit;
+pub mod closure;
 pub mod conformance;
 pub mod discovery;
 pub mod e8;

@@ -322,6 +322,39 @@ parts are swappable:
   (`dual_algebra_report` measures the sandwich span full at 16/16,
   embedded action component-linear) and benchmarks next to every other
   backend.
+- **Geometric closure, retrodictively** ([`closure`](src/closure.rs)) —
+  a journalled state representation whose history carries its
+  entanglement, and whose errors are found by loops failing to close.
+  The log *is* the state: every legitimate change is an entry, the twist
+  links are part of the record, any past configuration replays. What
+  makes it work is a **closure stamp** — two bits per independent loop,
+  nothing more. A geometry's loops are **checks nobody declared**:
+  exactly `|E| − |V| + components` of them, measured
+  (grid 6×6 → rank 25), and a tree has none, so a tree sees nothing and
+  says so. Each loop reports two channels: **spin closure** (the parity
+  of the fiber signs it passes through) and **chirality closure** (the
+  parity of the descents it makes against the current ordering).
+  Breaking is *geometric*, not statistical — a perturbed site breaks
+  **exactly** the loops through it and no others, asserted site by site
+  across a 5×5 grid. Intersecting the broken against the intact names
+  the site (grid 6×6: 24 of 36 named exactly, the rest reported
+  *ambiguous* with the true site always among the candidates, and
+  correction refusing rather than guessing). An ordering break names a
+  **link** instead — measured as `(5,6)` after one unrecorded swap —
+  and correction declines there too: the link is determined, the
+  transposition is not. **Retrodiction** reads the history backwards:
+  an unrepaired break persists, so the stamps are monotone and the
+  first broken one is found by bisection — measured **5 comparisons
+  against 22**, bracketing an injection at step 41 between "last held
+  at 40" and "already broken by 45", naming site 14 uniquely in the
+  same act. No state is replayed and nothing was ever recorded as an
+  error. Correction then restores closure (8 broken loops → 0) *and*
+  the denoted state, at deviation **0.00e0** against a directly
+  simulated clean bundle. The cost of being able to retrodict a
+  120×120 geometry is 28 322 bits — about 3.5 kB — a stamp; the honest
+  counterweight, printed rather than omitted, is that *evaluating*
+  closure costs the total loop length (1.7M at 14 400 sites), which a
+  spanning-forest basis does not keep small.
 - **The polarity co-bundle** ([`bundle`](src/bundle.rs)) —
   entanglement as an explicit, inspectable, budgeted resource instead of
   an implicit consequence of amplitude storage, and **the correction to
@@ -680,8 +713,8 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 434 tests (64 unit + 364 across thirty-nine
-integration suites + 6 doctests; one more — the 17 s measurement that
+`cargo test` runs 453 tests (67 unit + 379 across forty
+integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
@@ -920,6 +953,22 @@ entirely trivial accessors and defensive guards:
   ratio; plus the algebra-sector qudit and harness rows. The algebra
   also joins the existing `reproductions`, `property_tests` and
   `gate_matrices` sweeps.
+- **closure** — cycle rank equal to `|E| − |V| + 1` on rings and grids
+  with every loop verified to be a real closed walk; a tree measured to
+  have no reach at all; thirty intended changes each leaving closure
+  intact; a perturbation breaking **exactly** the loops through its site,
+  asserted for all 25 sites of a grid; localization classified into
+  named / ambiguous / invisible with the true site always among the
+  candidates; retrodiction bracketing an unrecorded injection and
+  naming its site, in no more than `log2(stamps) + 2` comparisons; an
+  unbroken history retrodicting to nothing; stamp cost pinned at two
+  bits per loop; correction restoring closure and the denoted state at
+  deviation exactly 0.0; correction refusing both ambiguity and
+  link-only breaks by message; the chirality channel localizing an
+  ordering break to `(5,6)` while deliberate re-orderings keep closure;
+  past entanglement reconstructed by rewind with the cycle rank changing
+  with it; and a 14 400-site geometry stamped, perturbed and retrodicted
+  inside 32 000 bits.
 - **bundle** — the GHZ sign measured into a fiber (identical base
   signature, orthogonal denoted states, marginals blind at 0.0,
   tomography reading the flipped fiber at ~1e-16) across n = 3…8;
@@ -1164,6 +1213,8 @@ src/
   causal.rs      backward cones, causal diamonds, dual-time resolution
   bundle.rs      fibered re-orderable journalled polarity co-bundle:
                  entanglement as a budgeted, auditable resource
+  closure.rs     journalled history + geometric closure: loops as
+                 undeclared checks, retrodiction by bisecting stamps
   polarity.rs    twisted polarity systems: twist rank, local sector,
                  the pairwise-locality obstruction measured
   recursive.rs   point-or-lattice sites, block-spin RG, phonon
@@ -1189,7 +1240,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           thirty-nine integration suites (see Testing)
+tests/           forty integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -1207,6 +1258,7 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  e8_cube (E8 as a 2x2x2 volume, inward/outward ladder),
                  polarity_systems (twist dial, the locality obstruction),
                  polarity_bundle (fibers, chirality, budgets, 10^6 sites),
+                 geometric_closure (undeclared checks, retrodiction),
                  sampling_hardness (XEB, spoofing economics, exact refs),
                  e8_compound (mixed-arity qudits over the E8 fabric),
                  e8_coboundary (E8×E8 storage, representation, both

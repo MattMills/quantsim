@@ -517,6 +517,40 @@ Next rungs:
   co-boundary payload is addressed by symmetry sector rather than raw
   point index.
 
+## Geometric closure and retrodiction — SHIPPED (core)
+
+`closure::ClosureHistory` is a journalled representation whose past
+configurations (entanglement included) replay exactly, with closure
+stamps of two bits per independent loop, geometric localization from
+which loops broke, and retrodiction by bisecting the stamps. Remaining
+work:
+
+- **A short-cycle basis.** Evaluating closure costs the *total loop
+  length*, and a spanning-forest basis produces long loops: 1.7M total
+  length at 14 400 sites against a rank of 14 161. A minimum-length
+  cycle basis (or, on a lattice, the plaquettes) would make evaluation
+  linear in the link count. This is the single biggest cost item and
+  the number is printed in the example rather than omitted.
+- **Multiple simultaneous breaks.** Localization currently assumes one
+  perturbation: it intersects the broken loops and subtracts the intact
+  ones. Two perturbations produce a broken set no single site explains,
+  and the report correctly says *ambiguous* — but it could instead
+  solve for a minimal set of sites consistent with the pattern. That is
+  the honest generalization, and it is not yet done.
+- **Correcting the chirality channel.** An ordering break localizes to a
+  link exactly, and correction refuses because the link does not
+  determine which transposition moved. Journalling position changes
+  finely enough to invert them would close that gap.
+- **Closure over link changes.** A twist link appearing or vanishing
+  changes the basis itself rather than the stamps, so it is currently
+  detected only as a rank change. Treating the basis as a stamped
+  quantity in its own right would put link errors on the same footing
+  as fiber and ordering errors.
+- **Stamp scheduling.** Temporal resolution is exactly the stamp
+  interval. Adaptive stamping — dense where closure is fragile, sparse
+  where it is not — would buy resolution without buying bits, and the
+  fragility is already measurable from the loop structure.
+
 ## The polarity co-bundle — SHIPPED (core)
 
 `bundle::PolarityBundle` holds polarity as a fibered, re-orderable,
