@@ -251,7 +251,15 @@ parts are swappable:
   below-horizon control measurably refuses), and deep periodic time
   folds to its measured period — 2⁴⁰+5 blocks evaluated as 5 in
   ~100 µs, certified by the exact small-t Weyl closed form
-  `U^t = χ^{t(t−1)/2}·T_{tV}M_{tQ}` plus modular arithmetic.
+  `U^t = χ^{t(t−1)/2}·T_{tV}M_{tQ}` plus modular arithmetic. The codes
+  are a first-class object (`CombCode`: codeword, checks, logicals,
+  binary-readout syndrome decoding, min-norm correction) with the
+  **measured logical-vs-physical error curves**: under seeded
+  displacement noise with per-round correction, the degenerate mod-2
+  window saturates at any rate while each added comb level widens the
+  correctable cell — a=4 at 0% logical failure where a=3 fails 61%
+  (p=0.05), the threshold-shaped suppression measured across five
+  rates with every trajectory priced at 256 lattice points.
 - **Causal geometry** ([`causal`](src/causal.rs)) — the causality between
   register elements as an operational object: backward light cones and
   **causal diamonds** (prune a circuit to the cone of an observation
@@ -463,7 +471,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 332 tests (43 unit + 285 across thirty-three
+`cargo test` runs 335 tests (43 unit + 288 across thirty-four
 integration suites + 4 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -676,6 +684,16 @@ entirely trivial accessors and defensive guards:
   fold to one two-gate layer with its below-horizon refusal control;
   and deep periodic time folded to the measured period P = 8 with the
   exact quadratic Weyl phase pinned at small t.
+- **e8_comb_noise** — the codes as objects under noise: `CombCode`
+  reproducing the dual-scale wave's pinned facts with parameter
+  validation; min-norm decoding correcting every in-window mixed-sign
+  displacement exactly (the +4 tie included) while window-sized
+  displacements are measured as silent logical operations (the code
+  distance) and the mod-2 tie-break's fail-half honestly pinned on
+  both signs; and 9 600 seeded noise trajectories yielding the
+  logical-vs-physical curves — the degenerate window saturating ≥ 90%
+  at every nonzero rate, a=4 strictly rising in p and suppressed by
+  wide measured margins below a=3 and a=2.
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally
@@ -884,7 +902,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  systems as backends in conformance + benchmark),
                  e8_constellation (the coset tower + n-qubit backend),
                  e8_weyl (the dual cross-scale Weyl pair, W(E8) Clifford),
-                 e8_dual_scale (scale operad, cross-scale QEC, folding)
+                 e8_dual_scale (scale operad, cross-scale QEC, folding),
+                 e8_comb_noise (logical-vs-physical error curves)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

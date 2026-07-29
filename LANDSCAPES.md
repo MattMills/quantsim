@@ -226,9 +226,15 @@ phase readout, and code self-similarity under decimation (the RG flow of the
 code is the code). Also shipped beside it: the folding theorems (interleaved
 bidirectional sequences collapsing to a single two-gate layer; deep periodic
 time folded to its measured period with the exact quadratic Weyl phase).
-Remaining research: physical-ancilla syndrome extraction, noise trajectories
-over the codes, the mod-2^m stabilizer tableau, and distance-vs-cost against
-qubit codes of equal length.
+**Second rung shipped (`e8_comb_noise`): the logical-vs-physical error
+curves** — the first fault-tolerance architecture experiment: seeded
+displacement noise with per-round syndrome-decode-correct cycles, logical
+failure measurably suppressed as the comb scale grows (threshold-shaped
+curves across five physical rates), window-sized displacements measured as
+the code distance, every trajectory priced at constant 256-point support.
+Remaining research: physical-ancilla syndrome extraction, the mod-2^m
+stabilizer tableau, and distance-vs-cost against qubit codes of equal
+length.
 
 ### F. Protocols: communication, nonlocality, verification
 

@@ -849,8 +849,13 @@ pub mod constellation {
     /// The dual basis `b*ᵢ` (`⟨b*ᵢ, bⱼ⟩ = δᵢⱼ`) in doubled
     /// coordinates. Every dual vector is an INTEGER combination of the
     /// basis — i.e. an E8 point — because det(Gram) = 1: measured
-    /// self-duality, `E8* = E8`.
+    /// self-duality, `E8* = E8`. Computed once and cached.
     pub fn dual_basis() -> [Point; 8] {
+        static DUALS: OnceLock<[Point; 8]> = OnceLock::new();
+        *DUALS.get_or_init(dual_basis_uncached)
+    }
+
+    fn dual_basis_uncached() -> [Point; 8] {
         // G⁻¹ = adj(G) since det(G) = 1 (asserted); b*ᵢ = Σⱼ G⁻¹ᵢⱼ bⱼ.
         let g = gram();
         let g128: Vec<Vec<i128>> = g
@@ -989,6 +994,11 @@ pub mod constellation {
     /// constellation digit points at.
     pub fn shell_of(class: u8) -> Shell {
         ctx().shells[class as usize]
+    }
+
+    /// The j-th verified basis vector, in doubled coordinates.
+    pub fn basis(j: usize) -> Point {
+        BASIS[j]
     }
 
     /// Position of a digit string in the constellation: the lattice
@@ -1466,6 +1476,149 @@ pub mod constellation {
 
         fn as_any(&self) -> &dyn std::any::Any {
             self
+        }
+    }
+
+    /// A cross-scale comb code on the constellation, as a first-class
+    /// object: stabilizers `⟨T_{2^a B_d}, M_{2^{m−a+w} b*_d}⟩` (coarse
+    /// translations against fine modulations, all commuting past the
+    /// horizon — measured in `tests/e8_dual_scale.rs`), logical
+    /// operators at the middle scales, and the decoder: displacement
+    /// syndromes read by exact binary phase readout, corrected by the
+    /// minimum-norm representative. The correctable window per
+    /// direction is the min-norm cell of `ℤ/2^{a−w}` — displacements
+    /// past it become logical operations, which is the honest limit
+    /// the noise study measures.
+    pub struct CombCode {
+        levels: usize,
+        comb_scale: usize,
+        logical_levels: usize,
+    }
+
+    impl CombCode {
+        /// A code with `m` scale levels, comb at scale `a`, and `w`
+        /// logical levels per direction (`w ≤ a < m`, register `8m ≤ 63`).
+        pub fn new(
+            levels: usize,
+            comb_scale: usize,
+            logical_levels: usize,
+        ) -> crate::error::Result<Self> {
+            if !(logical_levels <= comb_scale && comb_scale < levels) {
+                return Err(crate::error::Error::InvalidState(format!(
+                    "comb code needs w ≤ a < m, got (m, a, w) = \
+                     ({levels}, {comb_scale}, {logical_levels})"
+                )));
+            }
+            if 8 * levels > 63 {
+                return Err(crate::error::Error::TooManyQubits {
+                    requested: 8 * levels,
+                    max: 63,
+                });
+            }
+            Ok(CombCode {
+                levels,
+                comb_scale,
+                logical_levels,
+            })
+        }
+
+        /// Register width (8 qubits per scale level).
+        pub fn num_qubits(&self) -> usize {
+            8 * self.levels
+        }
+
+        /// The logical-zero codeword: the uniform coarse state carried
+        /// down by the scale embedding — the encoder IS the isometry.
+        pub fn codeword(&self) -> crate::error::Result<E8ConstellationState> {
+            let mut coarse = E8ConstellationState::new(8 * (self.levels - self.comb_scale))?;
+            for dir in 0..8 {
+                coarse.coordinate_fourier(dir)?;
+            }
+            coarse.scale_embed(self.comb_scale)
+        }
+
+        /// Coarse-side stabilizer label: `T_{2^a B_d}`.
+        pub fn translation_check(&self, d: usize) -> Point {
+            basis(d).map(|x| x << self.comb_scale)
+        }
+
+        /// Fine-side stabilizer label: `M_{2^{m−a+w} b*_d}`.
+        pub fn modulation_check(&self, d: usize) -> Point {
+            dual_basis()[d].map(|x| x << (self.levels - self.comb_scale + self.logical_levels))
+        }
+
+        /// Logical X̄_d = `T_{2^{a−w} B_d}` (middle scale).
+        pub fn logical_x(&self, d: usize) -> Point {
+            basis(d).map(|x| x << (self.comb_scale - self.logical_levels))
+        }
+
+        /// Logical Z̄_d = `M_{2^{m−a} b*_d}` (middle scale).
+        pub fn logical_z(&self, d: usize) -> Point {
+            dual_basis()[d].map(|x| x << (self.levels - self.comb_scale))
+        }
+
+        /// The direction-`d` displacement syndrome, mod `2^{a−w}`,
+        /// recovered from the check eigenphases alone by binary phase
+        /// readout (finest check first, one exact bit per scale).
+        pub fn read_displacement(
+            &self,
+            state: &E8ConstellationState,
+            d: usize,
+        ) -> crate::error::Result<i64> {
+            let duals = dual_basis();
+            let bits = self.comb_scale - self.logical_levels;
+            let mut c = 0i64;
+            for bit in 0..bits {
+                let i = self.levels - 1 - bit;
+                let phase = state.modulation_eigenphase(&duals[d].map(|x| x << i))?;
+                let modulus = 1i64 << (bit + 1);
+                let angle = phase.im.atan2(phase.re).rem_euclid(std::f64::consts::TAU);
+                let steps =
+                    (angle * modulus as f64 / std::f64::consts::TAU).round() as i64 % modulus;
+                let b = (steps - (c % (1 << bit))).rem_euclid(modulus) >> bit;
+                c += b << bit;
+            }
+            Ok(c)
+        }
+
+        /// One correction round: read every direction's syndrome,
+        /// choose the minimum-norm representative (ties break to the
+        /// positive side — the honest degeneracy of the smallest
+        /// window, measured in the noise study), translate back.
+        /// Returns the signed corrections applied.
+        pub fn correct(&self, state: &mut E8ConstellationState) -> crate::error::Result<[i64; 8]> {
+            let modulus = 1i64 << (self.comb_scale - self.logical_levels);
+            let mut signed = [0i64; 8];
+            for (d, slot) in signed.iter_mut().enumerate() {
+                let s = self.read_displacement(state, d)?;
+                *slot = if 2 * s > modulus { s - modulus } else { s };
+            }
+            let correction: Point =
+                std::array::from_fn(|k| -(0..8).map(|d| signed[d] * basis(d)[k]).sum::<i64>());
+            state.translate(&correction)?;
+            Ok(signed)
+        }
+
+        /// The logical value in direction `d`: `k ∈ [0, 2^w)` read from
+        /// the Z̄_d eigenphase. Refuses when the state is off the code
+        /// space (phase not an exact 2^w-th root of unity) — a logical
+        /// can never be fabricated from an uncorrected state.
+        pub fn logical_readout(
+            &self,
+            state: &E8ConstellationState,
+            d: usize,
+        ) -> crate::error::Result<i64> {
+            let phase = state.modulation_eigenphase(&self.logical_z(d))?;
+            let modulus = 1i64 << self.logical_levels;
+            let angle = phase.im.atan2(phase.re).rem_euclid(std::f64::consts::TAU);
+            let steps = angle * modulus as f64 / std::f64::consts::TAU;
+            let k = steps.round() as i64 % modulus;
+            if (steps - steps.round()).abs() > 1e-6 {
+                return Err(crate::error::Error::InvalidState(format!(
+                    "state is off the code space: Z̄ phase {steps:.4} of 2^w"
+                )));
+            }
+            Ok(k)
         }
     }
 }

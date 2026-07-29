@@ -437,10 +437,16 @@ sequence reorders through beyond-horizon commutations only into one
 two-gate layer (below-horizon control measurably refuses); deep
 periodic time folds to the measured period (P = 8 at m = 3) with the
 exact quadratic Weyl phase `χ^{t(t−1)/2}` pinned at small t — 2⁴⁰+5
-blocks evaluated as 5 in ~100 µs. Next rung on top: syndrome
-extraction as physical ancilla interferometry (the eigenphase read is
-currently simulator-direct), noise-model trajectories over the comb
-codes, and the mod-2^m tableau that would make all of it polynomial.
+blocks evaluated as 5 in ~100 µs. Noise trajectories — SHIPPED
+(`CombCode` + `tests/e8_comb_noise.rs`): the codes as first-class
+objects with min-norm decoding, window-sized displacements measured as
+the code distance (silent logical operations), the mod-2 tie's
+fail-half pinned, and seeded displacement-noise trajectories yielding
+the logical-vs-physical error curves (degenerate window saturating,
+a=4 at 0% where a=3 fails 61% at p=0.05, threshold-shaped suppression
+across five rates). Remaining rungs: syndrome extraction as physical
+ancilla interferometry (the eigenphase read is simulator-direct), and
+the mod-2^m tableau that would make all of it polynomial.
 
 Next rungs:
 
