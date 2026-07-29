@@ -322,6 +322,43 @@ parts are swappable:
   (`dual_algebra_report` measures the sandwich span full at 16/16,
   embedded action component-linear) and benchmarks next to every other
   backend.
+- **The polarity co-bundle** ([`bundle`](src/bundle.rs)) —
+  entanglement as an explicit, inspectable, budgeted resource instead of
+  an implicit consequence of amplitude storage, and **the correction to
+  the measurement below**. The polarity module measures that two-body
+  *marginals* cannot distinguish `(|0…0⟩ ± |1…1⟩)/√2`. That stands, and
+  it says nothing about a fibered representation, because a bundle does
+  not store marginals. It stores a **base** — which sites are
+  twist-linked — and a **fiber** over each site carrying that site's own
+  polarity data, and **the GHZ sign lives in a fiber**: `ghz_bundle(n,
+  ±)` produces bit-identical link signatures whose denoted states are
+  *orthogonal* (measured overlap 0), with two-body marginals blind at
+  deviation 0.0 exactly as before while `verify_against` reads the sign
+  straight back off the state at deviation ~1e-16. The obstruction was
+  an obstruction to marginals; it was never one to fibers.
+  Structurally: sparse links (`O(n + |E|)`, never `2ⁿ`), a maintained
+  **re-orderable** generator sequence where swapping two *linked* sites
+  flips the bundle's **chirality** — the sign a product of anticommuting
+  generators picks up, cross-checked against
+  `PolaritySystem::product` rather than asserted — and an append-only
+  **journal** where `rewind(k)` reconstructs any earlier configuration
+  exactly. Entanglement is then a quantity with an owner: `profile`
+  reports degree, independent clusters and bytes; `coarse_grain` merges
+  fibers and reports every link removed on one of two lines (**absorbed**
+  into a super-fiber, or **collapsed** parallel links);
+  `coarse_grain_to_budget` drives the total under a cap and prices it
+  (measured: 60 000 links → 29 601 → 9 918 → 1 518 → 0, with the
+  surviving fibers still accounting for all 20 000 original sites).
+  `commonality`/`interact` confine interaction to shared sites with
+  *compatible* frames and leave everything else untouched. It runs where
+  the amplitude picture does not exist: **100 000 sites in 30 ms and
+  7 MB of structure**, a million in 320 ms — with the journal measured
+  separately as the dominant term and `checkpoint()` the explicit way to
+  decline paying for it. Scope, stated first: a bundle denotes a graph
+  state dressed by local frames — a known classically-tractable sector,
+  and nothing here moves that boundary. States that leave it are
+  *reported* (`verify_against` deviation jumps from 1e-16 to >0.1 on a
+  T-rotation) rather than silently approximated.
 - **Polarity systems** ([`polarity`](src/polarity.rs),
   [`Polarity<N>`](src/scalar/polarity.rs)) — `n` inclusion/exclusion
   axes with a **twist**: generators `j₀ … j_{n−1}` and, for each pair, a
@@ -643,8 +680,8 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 414 tests (61 unit + 348 across thirty-eight
-integration suites + 5 doctests; one more — the 17 s measurement that
+`cargo test` runs 434 tests (64 unit + 364 across thirty-nine
+integration suites + 6 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
@@ -883,6 +920,21 @@ entirely trivial accessors and defensive guards:
   ratio; plus the algebra-sector qudit and harness rows. The algebra
   also joins the existing `reproductions`, `property_tests` and
   `gate_matrices` sweeps.
+- **bundle** — the GHZ sign measured into a fiber (identical base
+  signature, orthogonal denoted states, marginals blind at 0.0,
+  tomography reading the flipped fiber at ~1e-16) across n = 3…8;
+  mixed-frame tomography round-tripping through a real state; a
+  T-rotated state reported as out-of-sector rather than smoothed over;
+  chirality checked against `PolaritySystem::product` on four orderings
+  and adjacent swaps agreeing with a wholesale reorder; coarse-graining
+  accounting for every removed link on the absorbed/collapsed split with
+  surviving weights still covering every original site; budgets met and
+  priced; interaction confined to frame-compatible commonality with the
+  incompatible fiber measurably untouched; journal replay exact at the
+  end and at every prefix; a coarse-grained bundle refusing to pretend
+  it still denotes a state; and 100 000 sites built, profiled, reordered
+  and inspected with the structural footprint held under 128 B/site and
+  `checkpoint()` measured to halve the total.
 - **polarity** — the structure theorem brute-force verified (centre
   counted monomial by monomial, maximal commuting sets built by
   exhaustive search and checked closed under XOR, `isotropic × matrix =
@@ -1110,6 +1162,8 @@ src/
   e8.rs          E8 roots built+verified; chains, rep, constellation,
                  cube (the 2x2x2 volume, inward/outward interaction)
   causal.rs      backward cones, causal diamonds, dual-time resolution
+  bundle.rs      fibered re-orderable journalled polarity co-bundle:
+                 entanglement as a budgeted, auditable resource
   polarity.rs    twisted polarity systems: twist rank, local sector,
                  the pairwise-locality obstruction measured
   recursive.rs   point-or-lattice sites, block-spin RG, phonon
@@ -1135,7 +1189,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           thirty-eight integration suites (see Testing)
+tests/           thirty-nine integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -1152,6 +1206,7 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  RG, phonon substitution, self-participation),
                  e8_cube (E8 as a 2x2x2 volume, inward/outward ladder),
                  polarity_systems (twist dial, the locality obstruction),
+                 polarity_bundle (fibers, chirality, budgets, 10^6 sites),
                  sampling_hardness (XEB, spoofing economics, exact refs),
                  e8_compound (mixed-arity qudits over the E8 fabric),
                  e8_coboundary (E8×E8 storage, representation, both

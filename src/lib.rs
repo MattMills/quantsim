@@ -64,6 +64,7 @@
 
 pub mod backend;
 pub mod bounds;
+pub mod bundle;
 pub mod causal;
 pub mod circuit;
 pub mod conformance;

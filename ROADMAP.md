@@ -517,6 +517,42 @@ Next rungs:
   co-boundary payload is addressed by symmetry sector rather than raw
   point index.
 
+## The polarity co-bundle — SHIPPED (core)
+
+`bundle::PolarityBundle` holds polarity as a fibered, re-orderable,
+journalled structure: sparse twist links as the base, per-site fibers
+carrying frame and sign, chirality from reordering, coarse-graining with
+a measured cost, commonality-confined interaction, and journal replay —
+running at 10^6 sites. It denotes a graph state dressed by local frames.
+Remaining work:
+
+- **Make it a `Backend`.** The bundle currently *denotes* a state and
+  can verify itself against one; it does not evolve under a circuit.
+  Implementing Clifford gate action directly on the base (local
+  complementation for `h`, edge toggling for `cz`) would make it a real
+  representation rather than a description, and put it in `bounds.rs`
+  next to support, clusters, bonds and T-count.
+- **Non-Clifford escape as a measured budget.** A `t` gate leaves the
+  sector; the bundle detects that after the fact
+  (`verify_against` deviation). Carrying a small superposition of
+  bundles with a magic-state budget would let it degrade gracefully and
+  *report* the cost, which is the shape the rest of this crate uses.
+- **Local complementation as the re-ordering group.** Chirality
+  currently tracks generator order. The physically meaningful
+  re-ordering on graph states is local complementation — the operation
+  that preserves the entanglement class while changing the base. Adding
+  it, with the journal recording each move, would make "re-orderable"
+  mean something stronger than sequence order.
+- **Blind link tomography.** `verify_against` recovers fiber signs given
+  the base. Recovering the *base* from measurements alone — discovering
+  the link set rather than confirming it — is the harder and more useful
+  direction, and the one that would make "tomographically understood"
+  true without qualification.
+- **Compact adjacency.** `Vec<Vec<u32>>` costs 24 bytes of header per
+  site. A CSR-style store with an overflow area would cut the structural
+  footprint several-fold at 10^6 sites, where it is already the second
+  cost after the journal.
+
 ## Polarity systems — SHIPPED (core)
 
 `polarity::PolaritySystem` is the twisted group algebra `ℝ^τ[F₂ⁿ]` with
