@@ -149,7 +149,7 @@ pub mod prelude {
     };
     pub use crate::scalar::{
         Ball, CComplex, DirectSum, Octonion, Quaternion, Scalar, Sedenion, SplitComplex,
-        Trigintaduonion, C64, CD,
+        SplitQuaternion, Trigintaduonion, C64, CD,
     };
     pub use crate::schedule::{
         FeedbackOp, GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace,

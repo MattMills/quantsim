@@ -263,6 +263,7 @@ proptest! {
         laws::<Octonion>(&coeffs, k);
         laws::<Sedenion>(&coeffs, k);
         laws::<SplitComplex>(&coeffs, k);
+        laws::<SplitQuaternion>(&coeffs, k);
     }
 
     /// Quaternion simulation with a genuinely quaternionic gate still

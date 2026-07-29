@@ -114,6 +114,7 @@ fn main() {
     algebra_row::<C64>();
     algebra_row::<Ball>();
     algebra_row::<SplitComplex>();
+    algebra_row::<SplitQuaternion>();
     algebra_row::<Quaternion>();
     algebra_row::<Octonion>();
     algebra_row::<Sedenion>();

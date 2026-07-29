@@ -7,12 +7,15 @@ parts are swappable:
   generic over a [`Scalar`](src/scalar/mod.rs) trait. Shipped: ℝ, ℂ
   (default), a generic **Cayley–Dickson doubling** `CD<T>` giving
   quaternions ℍ, octonions 𝕆 and sedenions 𝕊, **split-complex** as a
-  first non-Cayley–Dickson algebra, and **[`Ball`](src/scalar/ball.rs)** —
+  first non-Cayley–Dickson algebra,
+  **[`SplitQuaternion`](src/scalar/split_quaternion.rs)** — the
+  coquaternions held as an *inclusion/exclusion pair* (below) — and
+  **[`Ball`](src/scalar/ball.rs)** —
   coarse-grained certified arithmetic (complex midpoint ± certified
   radius; midpoints track `C64` bit-for-bit, radii propagate soundly, and
   `quantize` is a deliberate resolution dial). Planned (see
   [ROADMAP](ROADMAP.md)): truncated p-adics, dual numbers,
-  split-quaternions, Clifford scalars.
+  Clifford scalars.
 - **State representation** — a [`Backend<S>`](src/backend/mod.rs) trait with
   six shipped implementations: **dense** state vector (the BQP reference),
   **sparse** hash-map state, an **adaptive** backend that promotes sparse →
@@ -274,6 +277,49 @@ parts are swappable:
   (logarithmic horizons), and `diameter`/`ball_sizes`/
   `pair_availability` measure any fabric's causal metric, curvature
   signature and interaction availability.
+- **The inclusion/exclusion pair**
+  ([`SplitQuaternion`](src/scalar/split_quaternion.rs)) — an amplitude
+  that carries a **constructive and a destructive complex component**,
+  tracked independently, with measurement reading their difference. The
+  split quaternions `q = z₊ + z₋·j` (`i² = −1`, `j² = +1`) are graded by
+  `j`, and the product *is* the inclusion–exclusion rule: two exclusions
+  make an inclusion, one of each makes an exclusion. The crate's two
+  magnitudes finally separate usefully — `born_weight = |z₊|² − |z₋|²`
+  is the **net**, `abs_sqr = |z₊|² + |z₋|²` is the **path weight**.
+  Because ℂ embeds, this is the first non-division algebra here to carry
+  the **full 39-name standard registry** (split-complex, lacking `i`,
+  gets the real subset only), so the conformance suite applies
+  unmodified: sparse and adaptive pass at deviation **0.0e0**, factored
+  at 1.4e-16, while mps/mera/clifford-frame refuse by named structural
+  reason. The first measured consequence is that an embedded-ℂ matrix
+  entry acts as `m·(z₊, z₋) = (m z₊, m z₋)`: **a standard circuit drives
+  both channels with the same matrix and never mixes them**, so one
+  split-quaternion run carrying ψ in inclusion and φ in exclusion is
+  *bit-for-bit* two ordinary complex runs — measured exactly equal, with
+  the per-state net equal to `p_ψ − p_φ` and the totals to
+  `A−B` and `A+B`. Unitary gates conserve the net exactly even when it
+  is negative (measured drift 2.2e-16 across every registry gate on a
+  net −0.28 state). Weight crosses between the ledgers through the
+  non-compact part of the group: the unit-norm elements are `SL(2,ℝ)`
+  (split quaternions are `M₂(ℝ)`, the norm is the determinant), so
+  `SplitQuaternion::boost(t) = cosh t + sinh t·j` is a genuinely unitary
+  gate (deviation ~1e-16) that **pumps path weight as `cosh 2t` while
+  conserving the net exactly** — constructive and destructive amplitude
+  created in matched pairs at zero net cost, interference as a gate
+  rather than a ledger. The exchange `j` itself has `N(j) = −1`: it
+  swaps the ledgers and negates the net, measures a unitarity deviation
+  of exactly **2**, and the registry refuses it — turning inclusion into
+  exclusion outright is precisely a non-unitary act. On the null cone
+  `|z₊| = |z₋|` the net is exactly 0 with the path weight positive, so
+  **"everything cancelled" is decidable and distinct from "nothing was
+  there"**, which a complex amplitude cannot express; measurement
+  refuses such a state by the existing rule rather than inventing a
+  distribution. The honest bound: the grading means *no* gate can evolve
+  the two channels differently — the pair is a pair, not two independent
+  registers. It also works as an algebra-sector qudit
+  (`dual_algebra_report` measures the sandwich span full at 16/16,
+  embedded action component-linear) and benchmarks next to every other
+  backend.
 - **Recursive systems** ([`recursive`](src/recursive.rs), [`e8::cube`](src/e8.rs))
   — a site that is either a **point or an entire lattice of the same
   kind**, and a computation that participates in itself. Four qubits
@@ -545,7 +591,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 371 tests (46 unit + 320 across thirty-six
+`cargo test` runs 391 tests (53 unit + 333 across thirty-seven
 integration suites + 5 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -768,6 +814,23 @@ entirely trivial accessors and defensive guards:
   logical-vs-physical curves — the degenerate window saturating ≥ 90%
   at every nonzero rate, a=4 strictly rising in p and suppressed by
   wide measured margins below a=3 and a=2.
+- **split_quaternion** — the coquaternion table (`i²=−1`, `j²=k²=+1`,
+  `ij=k`, `ji=−k`) and the norm measured multiplicative; the grading as
+  the inclusion–exclusion rule; the full registry equal to ℂ's against
+  split-complex's strict subset; conformance on sparse/adaptive/factored
+  with mps/mera/clifford-frame refusing by named reason; framed, device
+  and interference agreeing with dense (and `H·H` destroying exactly
+  1.0 over the new algebra); the channel decomposition asserted
+  **exactly equal** to two separate complex runs, per amplitude and in
+  both totals; net-weight conservation across every registry gate on a
+  net-negative state; the boost unitary with path weight pinned to
+  `cosh 2t` and a basis-mixing boost unitary too; the exchange's
+  deviation of exactly 2 with the registry refusal and the measured sign
+  flip; the null cone decidable with measurement and sampling refusing,
+  and a net-positive mixed state sampling at the predicted `0.64 : 1.0`
+  ratio; plus the algebra-sector qudit and harness rows. The algebra
+  also joins the existing `reproductions`, `property_tests` and
+  `gate_matrices` sweeps.
 - **recursive_lattice** — the structure (square = 4 bonds; square of
   squares = 16 qubits, 20 bonds, the four lateral bonds pinned by index
   and each verified to leave its block; depth 3 = 64 qubits, 84 bonds
@@ -969,6 +1032,7 @@ report must localize the corruption to the exact gates it breaks
 ```
 src/
   scalar/        Scalar trait; f64, C64, CD<T> (ℍ/𝕆/𝕊), split-complex,
+                 split-quaternion (inclusion/exclusion pair),
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
   bounds.rs      boundary atlas: measured growth laws, advantage scan
@@ -1000,7 +1064,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           thirty-six integration suites (see Testing)
+tests/           thirty-seven integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,

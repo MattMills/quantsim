@@ -15,6 +15,7 @@
 //! | [`Octonion`]        | 𝕆                      | 8   | non-associative; still a division algebra |
 //! | [`Sedenion`]        | 𝕊                      | 16  | zero divisors; Born weights need not be conserved |
 //! | [`SplitComplex`]    | ℝ⊕ℝj, j² = +1          | 2   | non-Cayley–Dickson; indefinite Born form |
+//! | [`SplitQuaternion`] | coquaternions, `M₂(ℝ)` | 4   | ℂ embeds (full gate set); amplitudes are an inclusion/exclusion pair, net weight `\|z₊\|²−\|z₋\|²` |
 //! | [`Ball`]            | ℂ, midpoint ± radius   | 2   | coarse-grained certified arithmetic; midpoints track `C64` exactly |
 //!
 //! Two magnitude notions are deliberately separate:
@@ -37,11 +38,13 @@ mod complex;
 mod direct_sum;
 mod real;
 mod split_complex;
+mod split_quaternion;
 
 pub use ball::Ball;
 pub use cayley_dickson::{CComplex, Octonion, Quaternion, Sedenion, Trigintaduonion, CD};
 pub use direct_sum::DirectSum;
 pub use split_complex::SplitComplex;
+pub use split_quaternion::SplitQuaternion;
 
 /// The default amplitude type: `num_complex::Complex<f64>`.
 pub type C64 = num_complex::Complex<f64>;

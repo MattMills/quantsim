@@ -228,8 +228,31 @@ entries, each a small self-contained `Scalar` impl plus tests:
 
 - **Dual numbers** (`ε² = 0`): nilpotents; automatic-differentiation-flavored
   simulation (state and its parameter-derivative propagate together).
-- **Split-quaternions** (`CD<SplitComplex>` — already constructible today;
-  needs tests and a written-up example).
+- **Split-quaternions — SHIPPED** as `SplitQuaternion`, and deliberately
+  *not* as `CD<SplitComplex>`: the doubling would bury the structure that
+  makes them worth having. Held as an explicit **inclusion/exclusion
+  pair** `q = inc + exc·j`, the algebra's own ℤ₂ grading, with
+  `born_weight = |inc|² − |exc|²` (net) against
+  `abs_sqr = |inc|² + |exc|²` (path). ℂ embeds, so it is the first
+  non-division algebra here to carry the full standard gate set, and the
+  conformance suite applies unmodified. Remaining work:
+  - **A destruction-tracking backend.** The pair currently holds what a
+    caller puts in it. A backend that *routes* cancelled weight into the
+    exclusion channel automatically would make the algebra do at
+    amplitude level what `InterferenceState` does with a side ledger —
+    and the two are then cross-checkable against each other, which is
+    the measurement that would justify the representation on its own.
+  - **The boost as a registered gate family.** `SplitQuaternion::boost`
+    is unitary and net-preserving; parameterizing it as a research gate
+    (`boost(t)` on chosen qubits) would let circuits pump path weight
+    deliberately, and the atlas could then measure whether path weight
+    is a resource the growth-law machinery can classify.
+  - **Signed-measure sampling.** `Backend::sample` drops non-positive
+    branches, so a net-negative state reports a surviving total of 0
+    rather than its own −1. A sampler that handles signed weights
+    honestly (importance sampling against `abs_sqr` with sign carried
+    through) would make inclusion–exclusion states samplable rather
+    than merely refusable.
 - **Bicomplex / tessarines**: commutative with zero divisors.
 - **Clifford-algebra scalars** Cl(p, q): connects to stabilizer-adjacent
   research.

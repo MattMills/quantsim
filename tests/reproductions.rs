@@ -39,6 +39,7 @@ fn ghz_state_on_every_algebra() {
     check::<Octonion>();
     check::<Sedenion>();
     check::<SplitComplex>();
+    check::<SplitQuaternion>();
 }
 
 #[test]
