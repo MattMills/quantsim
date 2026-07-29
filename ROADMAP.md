@@ -560,12 +560,24 @@ a measured cost, commonality-confined interaction, and journal replay —
 running at 10^6 sites. It denotes a graph state dressed by local frames.
 Remaining work:
 
-- **Make it a `Backend`.** The bundle currently *denotes* a state and
-  can verify itself against one; it does not evolve under a circuit.
-  Implementing Clifford gate action directly on the base (local
-  complementation for `h`, edge toggling for `cz`) would make it a real
-  representation rather than a description, and put it in `bounds.rs`
-  next to support, clusters, bonds and T-count.
+- **Make it a `Backend` — DONE.** `PolarityBundle` implements
+  `Backend<S>`, is registered as `"bundle"` in
+  `BackendRegistry::standard()`, and evolves under Clifford circuits by
+  vertex-operator composition, local complementation and edge toggling.
+  Measured exact against dense (deviation 0.0) on the circuits it runs.
+  What is left of it:
+  - **Complete the vertex-operator reduction.** One configuration in
+    forty random 30-gate Clifford circuits still refuses: reducing both
+    `cz` endpoints into the diagonal subgroup does not converge when
+    they are each other's only handle. The refusal is by name and never
+    wrong, but it is incompleteness, not a design limit.
+  - **Measurement.** `project` is a deliberate no-op, so `measure` and
+    `sample` fail rather than collapsing wrongly. Graph-state
+    measurement is a known algorithm and a separate one from gate
+    action.
+  - **An axis in `bounds.rs`.** Now that it is a backend, link count and
+    cycle rank can join support, clusters, bonds and T-count in
+    `resource_profile`/`advantage_scan`.
 - **Non-Clifford escape as a measured budget.** A `t` gate leaves the
   sector; the bundle detects that after the fact
   (`verify_against` deviation). Carrying a small superposition of

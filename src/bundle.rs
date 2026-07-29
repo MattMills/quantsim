@@ -84,8 +84,9 @@ use crate::backend::{pauli_expectation, Backend, DenseState};
 use crate::circuit::Circuit;
 use crate::error::{Error, Result};
 use crate::gates::Pauli;
+use crate::math::GateMatrix;
 use crate::registry::GateRegistry;
-use crate::scalar::C64;
+use crate::scalar::{Scalar, C64};
 
 /// Widest bundle [`PolarityBundle::to_state`] will materialize. The
 /// bundle itself has no such limit; the dense comparison state does.
@@ -123,8 +124,13 @@ impl Frame {
 /// One fiber: the polarity data local to a single site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fiber {
-    /// Local polarity axis.
+    /// Local polarity axis. Retained as the *description* label; the
+    /// authority once gates run is [`Fiber::vop`], and `set_frame`
+    /// keeps the two in step.
     pub frame: Frame,
+    /// The fiber's vertex operator: its local Clifford. This is what
+    /// gate action composes into.
+    pub vop: vop::Vop,
     /// Local sign. This is where a GHZ-style global sign lives.
     pub spin: bool,
     /// How many original sites this fiber represents (1 until it
@@ -138,6 +144,7 @@ impl Default for Fiber {
     fn default() -> Self {
         Fiber {
             frame: Frame::default(),
+            vop: vop::IDENTITY,
             spin: false,
             weight: 1,
             live: true,
@@ -157,6 +164,10 @@ pub enum BundleOp {
     Spin(u32, bool),
     /// Set a fiber's local axis.
     Reframe(u32, Frame),
+    /// Compose a vertex operator into a fiber.
+    Vertex(u32, vop::Vop),
+    /// Local complementation at a site.
+    LocalComplement(u32),
     /// Swap two adjacent positions in the generator ordering.
     SwapOrder(u32),
     /// Absorb `absorbed` into `into`, spending `internal` links.
@@ -404,6 +415,11 @@ impl PolarityBundle {
     pub fn set_frame(&mut self, site: u32, frame: Frame) -> Result<()> {
         let s = self.check(site)?;
         self.fibers[s].frame = frame;
+        self.fibers[s].vop = match frame {
+            Frame::Z => vop::IDENTITY,
+            Frame::X => vop::hadamard(),
+            Frame::Y => vop::compose(vop::phase(), vop::hadamard()),
+        };
         self.journal.push(BundleOp::Reframe(site, frame));
         Ok(())
     }
@@ -826,6 +842,8 @@ impl PolarityBundle {
                 }
                 BundleOp::Spin(s, v) => out.set_spin(*s, *v)?,
                 BundleOp::Reframe(s, f) => out.set_frame(*s, *f)?,
+                BundleOp::Vertex(s, v) => out.apply_vop(*s, *v)?,
+                BundleOp::LocalComplement(s) => out.local_complement(*s)?,
                 BundleOp::SwapOrder(p) => out.swap_order(*p as usize)?,
                 BundleOp::Merge { into, absorbed, .. } => {
                     let mut group = vec![*into];
@@ -874,8 +892,13 @@ impl PolarityBundle {
             if fiber.spin {
                 circuit.z(q);
             }
-            for gate in fiber.frame.gates() {
-                circuit.gate(*gate, Vec::new(), vec![q]);
+            if fiber.vop != vop::IDENTITY {
+                let m =
+                    vop::matrix::<C64>(fiber.vop).ok_or_else(|| Error::UnsupportedForAlgebra {
+                        gate: "vertex operator".into(),
+                        algebra: "non-complex".into(),
+                    })?;
+                circuit.raw("vop", GateMatrix::from_vec(2, m.to_vec())?, vec![q]);
             }
         }
         let registry = GateRegistry::<C64>::standard();
@@ -905,23 +928,26 @@ impl PolarityBundle {
         let mut worst = 0.0f64;
         for q in 0..n {
             // F X F†: Z-frame keeps X, X-frame sends it to Z, Y-frame to Y.
-            // F X F†: the Z frame is the identity so X stays X; both
-            // rotated frames contain `h`, which sends X to Z.
-            let axis = match self.fibers[q].frame {
-                Frame::Z => Pauli::X,
-                Frame::X | Frame::Y => Pauli::Z,
+            // The generator is F X F† at q and F Z F† at each
+            // neighbour, read straight off the vertex operators; the
+            // signs they introduce fold into the reading below.
+            let pauli_of = |p: u8| match p {
+                0 => Pauli::X,
+                1 => Pauli::Y,
+                _ => Pauli::Z,
             };
-            let mut ops = vec![(q, axis)];
+            let (xp, mut negative) = vop::map_pauli(self.fibers[q].vop, 0, false);
+            let mut ops = vec![(q, pauli_of(xp))];
             for &b in &self.links[q] {
                 let nb = b as usize;
-                let neighbour_axis = match self.fibers[nb].frame {
-                    Frame::Z => Pauli::Z,
-                    Frame::X => Pauli::X,
-                    Frame::Y => Pauli::Y,
-                };
-                ops.push((nb, neighbour_axis));
+                let (zp, zs) = vop::map_pauli(self.fibers[nb].vop, 2, false);
+                negative ^= zs;
+                ops.push((nb, pauli_of(zp)));
             }
-            let value = pauli_expectation(state, &ops)?.re;
+            let mut value = pauli_expectation(state, &ops)?.re;
+            if negative {
+                value = -value;
+            }
             worst = worst.max((value.abs() - 1.0).abs());
             spins.push(value < 0.0);
         }
@@ -1052,5 +1078,690 @@ mod tests {
         let early = b.rewind(1).unwrap();
         assert_eq!(early.profile().links, 1);
         assert!(!early.inspect(1).unwrap().fiber.spin);
+    }
+}
+
+// ── the single-qubit Clifford group, as vertex operators ─────────────
+
+/// The 24 single-qubit Cliffords, identified by their action on the
+/// Pauli generators: `X ↦ ±P`, `Z ↦ ±Q` with `P ≠ Q`.
+///
+/// This is what a [`Fiber`]'s frame really is once the bundle has to
+/// *evolve* rather than merely be described: three axes were enough to
+/// denote a state, but gate action needs the whole local group.
+pub mod vop {
+    use crate::scalar::{Scalar, C64};
+    use std::sync::OnceLock;
+
+    /// A vertex operator: index into the 24-element group.
+    pub type Vop = u8;
+
+    /// The identity.
+    pub const IDENTITY: Vop = 0;
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    struct Action {
+        /// Image of X: Pauli index (0=X, 1=Y, 2=Z) and sign.
+        xp: u8,
+        xs: bool,
+        /// Image of Z.
+        zp: u8,
+        zs: bool,
+    }
+
+    /// `P_a · P_b = i^k · P_r` for distinct non-identity Paulis.
+    fn pauli_mul(a: u8, b: u8) -> (u8, u8) {
+        if (a + 1) % 3 == b {
+            ((a + 2) % 3, 1)
+        } else {
+            ((a + 1) % 3, 3)
+        }
+    }
+
+    impl Action {
+        const fn id() -> Self {
+            Action {
+                xp: 0,
+                xs: false,
+                zp: 2,
+                zs: false,
+            }
+        }
+
+        /// Image of a signed Pauli under this Clifford.
+        fn map(self, p: u8, sign: bool) -> (u8, bool) {
+            match p {
+                0 => (self.xp, self.xs ^ sign),
+                2 => (self.zp, self.zs ^ sign),
+                _ => {
+                    // Y = i·X·Z, so the image is i·(image X)(image Z).
+                    let (r, k) = pauli_mul(self.xp, self.zp);
+                    let negative = ((1 + k) % 4 == 2) ^ self.xs ^ self.zs;
+                    (r, negative ^ sign)
+                }
+            }
+        }
+
+        /// `self ∘ other`.
+        fn compose(self, other: Action) -> Action {
+            let (xp, xs) = self.map(other.xp, other.xs);
+            let (zp, zs) = self.map(other.zp, other.zs);
+            Action { xp, xs, zp, zs }
+        }
+    }
+
+    struct Group {
+        actions: Vec<Action>,
+        table: Vec<Vop>,
+        h: Vop,
+        s: Vop,
+    }
+
+    fn group() -> &'static Group {
+        static GROUP: OnceLock<Group> = OnceLock::new();
+        GROUP.get_or_init(|| {
+            let h = Action {
+                xp: 2,
+                xs: false,
+                zp: 0,
+                zs: false,
+            };
+            let s = Action {
+                xp: 1,
+                xs: false,
+                zp: 2,
+                zs: false,
+            };
+            // Closure of {H, S} under composition, identity first.
+            let mut actions = vec![Action::id()];
+            let mut frontier = vec![Action::id()];
+            while let Some(a) = frontier.pop() {
+                for g in [h, s] {
+                    let next = g.compose(a);
+                    if !actions.contains(&next) {
+                        actions.push(next);
+                        frontier.push(next);
+                    }
+                }
+            }
+            assert_eq!(
+                actions.len(),
+                24,
+                "the single-qubit Clifford group has 24 elements"
+            );
+            let n = actions.len();
+            let mut table = vec![0u8; n * n];
+            for (i, &a) in actions.iter().enumerate() {
+                for (j, &b) in actions.iter().enumerate() {
+                    let c = a.compose(b);
+                    table[i * n + j] = actions
+                        .iter()
+                        .position(|&x| x == c)
+                        .expect("group is closed") as u8;
+                }
+            }
+            let h_index = actions.iter().position(|&x| x == h).unwrap() as u8;
+            let s_index = actions.iter().position(|&x| x == s).unwrap() as u8;
+            Group {
+                actions,
+                table,
+                h: h_index,
+                s: s_index,
+            }
+        })
+    }
+
+    /// Number of vertex operators (24).
+    pub fn count() -> usize {
+        group().actions.len()
+    }
+
+    /// `a ∘ b` — apply `b` first.
+    pub fn compose(a: Vop, b: Vop) -> Vop {
+        let g = group();
+        g.table[a as usize * g.actions.len() + b as usize]
+    }
+
+    /// The Hadamard vertex operator.
+    pub fn hadamard() -> Vop {
+        group().h
+    }
+
+    /// The phase vertex operator.
+    pub fn phase() -> Vop {
+        group().s
+    }
+
+    /// Whether the operator is a diagonal matrix — equivalently,
+    /// whether it maps `Z` to `+Z`. Exactly these four commute with a
+    /// `cz`, which is why reduction into this subgroup is what edge
+    /// toggling needs.
+    pub fn is_diagonal(v: Vop) -> bool {
+        let a = group().actions[v as usize];
+        a.zp == 2 && !a.zs
+    }
+
+    fn find(xp: u8, xs: bool, zp: u8, zs: bool) -> Vop {
+        let target = Action { xp, xs, zp, zs };
+        group()
+            .actions
+            .iter()
+            .position(|&a| a == target)
+            .expect("every Pauli action is realized") as Vop
+    }
+
+    /// `exp(−iπ/4 · X)`: `X ↦ X`, `Z ↦ −Y`. The vertex's own update
+    /// under local complementation.
+    pub fn sqrt_x() -> Vop {
+        find(0, false, 1, true)
+    }
+
+    /// `exp(−iπ/4 · Z)`: `X ↦ Y`, `Z ↦ Z`. A neighbour's update under
+    /// local complementation.
+    pub fn sqrt_z() -> Vop {
+        find(1, false, 2, false)
+    }
+
+    /// Inverse of a vertex operator.
+    pub fn inverse(v: Vop) -> Vop {
+        (0..count() as Vop)
+            .find(|&c| compose(v, c) == IDENTITY)
+            .expect("the group has inverses")
+    }
+
+    /// Image of a signed Pauli.
+    pub fn map_pauli(v: Vop, p: u8, sign: bool) -> (u8, bool) {
+        group().actions[v as usize].map(p, sign)
+    }
+
+    /// The `2 × 2` matrix of a vertex operator over any algebra
+    /// containing ℂ, up to an irrelevant global phase — reconstructed
+    /// from its Pauli action so the group and the matrices cannot drift
+    /// apart.
+    pub fn matrix<S: Scalar>(v: Vop) -> Option<[S; 4]> {
+        let m = matrix_c64(v);
+        let mut out = [S::zero(); 4];
+        for (slot, z) in out.iter_mut().zip(m) {
+            *slot = S::try_from_c64(z)?;
+        }
+        Some(out)
+    }
+
+    /// Complex matrices of all 24 operators, built once by conjugating
+    /// the Pauli generators and solving, then cached.
+    fn matrix_c64(v: Vop) -> [C64; 4] {
+        static MATRICES: OnceLock<Vec<[C64; 4]>> = OnceLock::new();
+        MATRICES.get_or_init(|| {
+            let g = group();
+            let h = [
+                C64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                C64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                C64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                C64::new(-std::f64::consts::FRAC_1_SQRT_2, 0.0),
+            ];
+            let s = [
+                C64::new(1.0, 0.0),
+                C64::new(0.0, 0.0),
+                C64::new(0.0, 0.0),
+                C64::new(0.0, 1.0),
+            ];
+            let id = [
+                C64::new(1.0, 0.0),
+                C64::new(0.0, 0.0),
+                C64::new(0.0, 0.0),
+                C64::new(1.0, 0.0),
+            ];
+            let mul = |a: [C64; 4], b: [C64; 4]| -> [C64; 4] {
+                [
+                    a[0] * b[0] + a[1] * b[2],
+                    a[0] * b[1] + a[1] * b[3],
+                    a[2] * b[0] + a[3] * b[2],
+                    a[2] * b[1] + a[3] * b[3],
+                ]
+            };
+            // Rebuild every element by the same closure order the group
+            // used, so index and matrix agree by construction.
+            let mut mats = vec![id; g.actions.len()];
+            let mut done = vec![false; g.actions.len()];
+            done[0] = true;
+            let mut frontier = vec![0usize];
+            while let Some(i) = frontier.pop() {
+                for (gen_index, gen_mat) in [(g.h, h), (g.s, s)] {
+                    let j = compose(gen_index, i as Vop) as usize;
+                    if !done[j] {
+                        mats[j] = mul(gen_mat, mats[i]);
+                        done[j] = true;
+                        frontier.push(j);
+                    }
+                }
+            }
+            mats
+        })[v as usize]
+    }
+}
+
+// ── gate action: the bundle as a representation, not a description ───
+
+/// Widest register [`PolarityBundle`] will enumerate amplitudes for.
+/// The *description* has no such limit; reading amplitudes out of it
+/// does, because there are `2^n` of them.
+pub const BUNDLE_ENUMERATION_MAX: usize = 24;
+
+impl PolarityBundle {
+    /// Apply a vertex operator to one fiber. `O(1)`.
+    pub fn apply_vop(&mut self, site: u32, op: vop::Vop) -> Result<()> {
+        let s = self.check(site)?;
+        self.fibers[s].vop = vop::compose(op, self.fibers[s].vop);
+        self.journal.push(BundleOp::Vertex(site, op));
+        Ok(())
+    }
+
+    /// **Local complementation** at `site`: complement the subgraph on
+    /// its neighbourhood and absorb the resulting local Cliffords into
+    /// the vertex operators. The denoted state is unchanged — this is a
+    /// change of description, and `tests/bundle_backend.rs` measures the
+    /// state before and after to say so.
+    pub fn local_complement(&mut self, site: u32) -> Result<()> {
+        let s = self.check(site)?;
+        let neighbours: Vec<u32> = self.links[s].clone();
+        for i in 0..neighbours.len() {
+            for j in (i + 1)..neighbours.len() {
+                let (a, b) = (neighbours[i], neighbours[j]);
+                if self.linked(a, b) {
+                    self.unlink(a, b)?;
+                } else {
+                    self.link(a, b)?;
+                }
+            }
+        }
+        let sx = vop::inverse(vop::sqrt_x());
+        self.fibers[s].vop = vop::compose(self.fibers[s].vop, sx);
+        let sz = vop::sqrt_z();
+        for &w in &neighbours {
+            self.fibers[w as usize].vop = vop::compose(self.fibers[w as usize].vop, sz);
+        }
+        self.journal.push(BundleOp::LocalComplement(site));
+        Ok(())
+    }
+
+    /// Bring a vertex operator into the diagonal subgroup using local
+    /// complementations, so a `cz` on it becomes an edge toggle.
+    ///
+    /// Local complementation at the vertex right-multiplies its operator
+    /// by one generator; local complementation at a *neighbour*
+    /// right-multiplies it by the other. The two generate the whole
+    /// group, so a word always exists — provided a neighbour exists.
+    fn reduce_vop(&mut self, site: u32, avoid: u32) -> Result<()> {
+        let s = site as usize;
+        if vop::is_diagonal(self.fibers[s].vop) {
+            return Ok(());
+        }
+        let helper = self.links[s]
+            .iter()
+            .copied()
+            .find(|&w| w != avoid)
+            .or_else(|| self.links[s].first().copied());
+        let Some(helper) = helper else {
+            return Err(Error::InvalidState(format!(
+                "site {site} carries a non-diagonal vertex operator and has no neighbour \
+                 to complement against; the graph description cannot absorb it"
+            )));
+        };
+        // Breadth-first over words in {complement here, complement at
+        // the helper}, tracking only the operator.
+        let sx = vop::inverse(vop::sqrt_x());
+        let sz = vop::sqrt_z();
+        let start = self.fibers[s].vop;
+        let mut seen = std::collections::HashMap::new();
+        seen.insert(start, Vec::<bool>::new());
+        let mut queue = std::collections::VecDeque::from([start]);
+        let mut word = None;
+        while let Some(current) = queue.pop_front() {
+            if vop::is_diagonal(current) {
+                word = Some(seen[&current].clone());
+                break;
+            }
+            let base = seen[&current].clone();
+            for (here, generator) in [(true, sx), (false, sz)] {
+                let next = vop::compose(current, generator);
+                if let std::collections::hash_map::Entry::Vacant(slot) = seen.entry(next) {
+                    let mut path = base.clone();
+                    path.push(here);
+                    slot.insert(path);
+                    queue.push_back(next);
+                }
+            }
+        }
+        let word = word.ok_or_else(|| {
+            Error::InvalidState(format!("no complementation word reduces site {site}"))
+        })?;
+        for here in word {
+            if here {
+                self.local_complement(site)?;
+            } else {
+                self.local_complement(helper)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// An isolated fiber's state factorizes, so its vertex operator can
+    /// be settled without any graph to complement against.
+    ///
+    /// Its state is the `+1` eigenstate of the operator's image of `X`.
+    /// If that image is `±Z` the fiber is a computational basis state
+    /// and `Some(one)` says which; otherwise the state is equatorial and
+    /// the operator is replaced by the diagonal one with the same
+    /// image, which denotes the same state.
+    fn settle_isolated(&mut self, site: u32) -> Result<Option<bool>> {
+        let s = site as usize;
+        let (xp, xs) = vop::map_pauli(self.fibers[s].vop, 0, false);
+        if xp == 2 {
+            return Ok(Some(xs));
+        }
+        let diagonal = (0..vop::count() as vop::Vop)
+            .find(|&d| vop::is_diagonal(d) && vop::map_pauli(d, 0, false) == (xp, xs))
+            .expect("every equatorial image is realized by a diagonal operator");
+        self.fibers[s].vop = diagonal;
+        Ok(None)
+    }
+
+    /// Apply `cz` to a pair: reduce both vertex operators into the
+    /// diagonal subgroup, then toggle the link. Exact, and `O(deg²)`
+    /// through the complementations.
+    pub fn apply_cz(&mut self, a: u32, b: u32) -> Result<()> {
+        self.check(a)?;
+        self.check(b)?;
+        if a == b {
+            return Err(Error::InvalidState(format!(
+                "cz needs two distinct sites; got {a} twice"
+            )));
+        }
+        // An isolated endpoint in a basis state makes the cz classical:
+        // |0⟩ leaves the partner alone, |1⟩ applies Z to it.
+        let z_vop = (0..vop::count() as vop::Vop)
+            .find(|&v| {
+                vop::map_pauli(v, 0, false) == (0, true)
+                    && vop::map_pauli(v, 2, false) == (2, false)
+            })
+            .expect("Z is a vertex operator");
+        for (v, other) in [(a, b), (b, a)] {
+            if self.links[v as usize].is_empty() {
+                match self.settle_isolated(v)? {
+                    Some(true) => return self.apply_vop(other, z_vop),
+                    Some(false) => return Ok(()),
+                    None => {}
+                }
+            }
+        }
+        // Reducing one endpoint can disturb the other when they are
+        // each other's only neighbour, so alternate until both settle.
+        for _ in 0..8 {
+            if vop::is_diagonal(self.fibers[a as usize].vop)
+                && vop::is_diagonal(self.fibers[b as usize].vop)
+            {
+                break;
+            }
+            self.reduce_vop(b, a)?;
+            self.reduce_vop(a, b)?;
+        }
+        if !vop::is_diagonal(self.fibers[a as usize].vop)
+            || !vop::is_diagonal(self.fibers[b as usize].vop)
+        {
+            // Alternating reduction can cycle when the two endpoints
+            // are each other's only handle. Search complementation
+            // words at the pair directly, rolling back what does not
+            // land, rather than refusing something that is reachable.
+            let saved = self.clone();
+            let mut landed = false;
+            // Complementing anywhere in the pair's immediate
+            // neighbourhood can move their operators; that is the whole
+            // set of handles available.
+            let mut sites = vec![a, b];
+            for &v in [a, b].iter() {
+                for &w in &saved.links[v as usize] {
+                    if !sites.contains(&w) {
+                        sites.push(w);
+                    }
+                }
+            }
+            let base = sites.len() as u32;
+            'search: for length in 1..=4usize {
+                for word in 0..base.pow(length as u32) {
+                    let mut trial = saved.clone();
+                    let mut ok = true;
+                    let mut code = word;
+                    for _ in 0..length {
+                        let site = sites[(code % base) as usize];
+                        code /= base;
+                        if trial.local_complement(site).is_err() {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ok
+                        && vop::is_diagonal(trial.fibers[a as usize].vop)
+                        && vop::is_diagonal(trial.fibers[b as usize].vop)
+                    {
+                        *self = trial;
+                        landed = true;
+                        break 'search;
+                    }
+                }
+            }
+            if !landed {
+                *self = saved;
+                return Err(Error::InvalidState(format!(
+                    "could not reduce the vertex operators at {a} and {b} into the diagonal \
+                     subgroup; cz is not expressible on this description"
+                )));
+            }
+        }
+        if self.linked(a, b) {
+            self.unlink(a, b)?;
+        } else {
+            self.link(a, b)?;
+        }
+        Ok(())
+    }
+}
+
+/// What an incoming gate matrix was recognized as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Recognized {
+    Local(vop::Vop),
+    Cz,
+    Cx,
+    Swap,
+}
+
+/// Eighth roots of unity — the phases a Clifford matrix can carry.
+fn clifford_phases() -> [C64; 8] {
+    std::array::from_fn(|k| {
+        let angle = std::f64::consts::FRAC_PI_4 * k as f64;
+        C64::new(angle.cos(), angle.sin())
+    })
+}
+
+fn matches<S: Scalar>(m: &GateMatrix<S>, target: &[C64], tol: f64) -> bool {
+    clifford_phases().iter().any(|&phase| {
+        target.iter().enumerate().all(|(k, &z)| {
+            S::try_from_c64(z * phase).is_some_and(|want| m.data()[k].approx_eq(want, tol))
+        })
+    })
+}
+
+fn recognize<S: Scalar>(m: &GateMatrix<S>) -> Option<Recognized> {
+    let tol = 1e-9;
+    match m.dim() {
+        2 => (0..vop::count() as vop::Vop).find_map(|v| {
+            let target = vop::matrix::<C64>(v).expect("ℂ carries every vertex operator");
+            matches(m, &target, tol).then_some(Recognized::Local(v))
+        }),
+        4 => {
+            let o = C64::new(1.0, 0.0);
+            let l = C64::new(0.0, 0.0);
+            #[rustfmt::skip]
+            let cz = [o, l, l, l,  l, o, l, l,  l, l, o, l,  l, l, l, -o];
+            #[rustfmt::skip]
+            let cx = [o, l, l, l,  l, l, l, o,  l, l, o, l,  l, o, l, l];
+            #[rustfmt::skip]
+            let swap = [o, l, l, l,  l, l, o, l,  l, o, l, l,  l, l, l, o];
+            [
+                (cz, Recognized::Cz),
+                (cx, Recognized::Cx),
+                (swap, Recognized::Swap),
+            ]
+            .into_iter()
+            .find_map(|(t, r)| matches(m, &t, tol).then_some(r))
+        }
+        _ => None,
+    }
+}
+
+impl PolarityBundle {
+    /// Amplitudes of the denoted state, built from the description.
+    ///
+    /// The description is `O(n + |E|)`; there are `2^n` amplitudes, so
+    /// *reading them out* is exponential while *holding the state* is
+    /// not. Everything below the graph part costs `O(|E| + n·2^n)`.
+    fn materialize<S: Scalar>(&self) -> Result<Vec<S>> {
+        let n = self.fibers.len();
+        if n > BUNDLE_ENUMERATION_MAX {
+            return Err(Error::TooManyQubits {
+                requested: n,
+                max: BUNDLE_ENUMERATION_MAX,
+            });
+        }
+        if self.fibers.iter().any(|f| !f.live) {
+            return Err(Error::InvalidState(
+                "a coarse-grained bundle no longer denotes a state on its original sites".into(),
+            ));
+        }
+        let dim = 1usize << n;
+        let amp = S::from_re(1.0 / (dim as f64).sqrt());
+        let mut out = vec![amp; dim];
+        for (y, slot) in out.iter_mut().enumerate() {
+            let mut negative = false;
+            for (a, neighbours) in self.links.iter().enumerate() {
+                if (y >> a) & 1 == 0 {
+                    continue;
+                }
+                for &b in neighbours {
+                    if (a as u32) < b && (y >> b) & 1 == 1 {
+                        negative = !negative;
+                    }
+                }
+            }
+            for (q, fiber) in self.fibers.iter().enumerate() {
+                if fiber.spin && (y >> q) & 1 == 1 {
+                    negative = !negative;
+                }
+            }
+            if negative {
+                *slot = -*slot;
+            }
+        }
+        for (q, fiber) in self.fibers.iter().enumerate() {
+            if fiber.vop == vop::IDENTITY {
+                continue;
+            }
+            let entries = vop::matrix::<S>(fiber.vop).ok_or(Error::UnsupportedForAlgebra {
+                gate: "vertex operator".to_string(),
+                algebra: S::algebra_name(),
+            })?;
+            let m = GateMatrix::from_vec(2, entries.to_vec())?;
+            crate::backend::apply_single_in_place(&mut out, &m, q)?;
+        }
+        Ok(out)
+    }
+}
+
+impl<S: Scalar> Backend<S> for PolarityBundle {
+    fn name(&self) -> &str {
+        "bundle"
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.fibers.len()
+    }
+
+    fn apply(&mut self, matrix: &GateMatrix<S>, qubits: &[usize]) -> Result<()> {
+        crate::backend::validate_apply(self.fibers.len(), matrix, qubits)?;
+        match recognize(matrix) {
+            Some(Recognized::Local(v)) => self.apply_vop(qubits[0] as u32, v),
+            Some(Recognized::Cz) => self.apply_cz(qubits[0] as u32, qubits[1] as u32),
+            Some(Recognized::Cx) => {
+                let (c, t) = (qubits[0] as u32, qubits[1] as u32);
+                self.apply_vop(t, vop::hadamard())?;
+                self.apply_cz(c, t)?;
+                self.apply_vop(t, vop::hadamard())
+            }
+            Some(Recognized::Swap) => {
+                let (a, b) = (qubits[0] as u32, qubits[1] as u32);
+                for (c, t) in [(a, b), (b, a), (a, b)] {
+                    self.apply_vop(t, vop::hadamard())?;
+                    self.apply_cz(c, t)?;
+                    self.apply_vop(t, vop::hadamard())?;
+                }
+                Ok(())
+            }
+            None => Err(Error::UnsupportedForAlgebra {
+                gate: format!("non-Clifford {}-qubit gate", qubits.len()),
+                algebra: "graph-state bundle".to_string(),
+            }),
+        }
+    }
+
+    fn amplitude(&self, index: u64) -> S {
+        self.materialize::<S>()
+            .ok()
+            .and_then(|v| v.get(index as usize).copied())
+            .unwrap_or_else(S::zero)
+    }
+
+    fn for_each_nonzero(&self, f: &mut dyn FnMut(u64, S)) {
+        if let Ok(amps) = self.materialize::<S>() {
+            for (i, a) in amps.into_iter().enumerate() {
+                if !a.is_zero(1e-15) {
+                    f(i as u64, a);
+                }
+            }
+        }
+    }
+
+    fn project(&mut self, _qubit: usize, _outcome: bool, _renorm: f64) {
+        // Measurement keeps a graph state in its class, but the update
+        // is a different algorithm from gate action and is not written
+        // yet. Silently collapsing to something wrong would be worse
+        // than leaving the state alone and letting `measure` fail.
+    }
+
+    fn reset(&mut self) {
+        let n = self.fibers.len();
+        for site in 0..n {
+            self.links[site].clear();
+            self.fibers[site] = Fiber::default();
+            // |0…0⟩ is |+…+⟩ with a Hadamard on every site.
+            self.fibers[site].vop = vop::hadamard();
+        }
+        self.link_count = 0;
+        self.journal.clear();
+    }
+
+    fn load(&mut self, _entries: &[(u64, S)]) -> Result<()> {
+        Err(Error::InvalidState(
+            "a graph-state bundle holds a description, not arbitrary amplitudes; build it \
+             with link/apply_vop or run a Clifford circuit onto it"
+                .into(),
+        ))
+    }
+
+    fn memory_bytes(&self) -> usize {
+        self.profile().bytes
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }

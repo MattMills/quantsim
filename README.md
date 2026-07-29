@@ -355,6 +355,26 @@ parts are swappable:
   counterweight, printed rather than omitted, is that *evaluating*
   closure costs the total loop length (1.7M at 14 400 sites), which a
   spanning-forest basis does not keep small.
+- **The bundle is a backend** — `PolarityBundle` implements
+  `Backend<S>` and is registered as **`"bundle"`** in
+  `BackendRegistry::standard()`, so `sim.run_on("bundle", &circuit)`
+  works like any other representation. Gate action is on the graph
+  itself: a single-qubit Clifford composes into the fiber's **vertex
+  operator** (the full 24-element group, generated and verified — `H²=I`,
+  `S⁴=I`, matrices consistent with the Pauli action at 4.4e-16), `cz`
+  reduces both endpoints' operators into the diagonal subgroup by
+  **local complementation** and toggles the link, `cx` and `swap`
+  decompose into those. Local complementation is verified to change the
+  *description* and not the state (link signature moves, state deviation
+  **0.0** up to global phase). Measured against dense over 40 random
+  30-gate Clifford circuits: **exact where it runs (deviation 0.0),
+  39 of 40 ran**, and the one that did not **refused by name** rather
+  than returning a wrong state — the vertex-operator reduction does not
+  yet converge on every configuration, and that is a pinned test rather
+  than a footnote. Non-Clifford gates refuse by name (`t` → "non-Clifford
+  1-qubit gate ... graph-state bundle"), and `load` refuses because a
+  description cannot hold arbitrary amplitudes. GHZ-20 runs at under 1%
+  of dense's footprint.
 - **The polarity co-bundle** ([`bundle`](src/bundle.rs)) —
   entanglement as an explicit, inspectable, budgeted resource instead of
   an implicit consequence of amplitude storage, and **the correction to
@@ -713,7 +733,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 455 tests (67 unit + 381 across forty
+`cargo test` runs 461 tests (67 unit + 387 across forty-one
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1227,8 +1247,9 @@ src/
   circuit.rs     Circuit<S> (chainable builders, raw + diagonal kernels,
                  append), BoundCircuit<S> (bind-time validation, inverse())
   backend/       Backend<S> trait + dense / sparse / adaptive / factored /
-                 mps / mera / interference / device / frames /
-                 clifford_frame, BackendRegistry<S>, pauli_expectation
+                 mps / mera / bundle (graph-state) / interference /
+                 device / frames / clifford_frame, BackendRegistry<S>,
+                 pauli_expectation
   schedule.rs    evented scheduler: simultaneous loops, events, recursive
                  measurement feedback (adaptive trees)
   lift.rs        Clifford+T → measurement-feedback loop on n+t qubits
@@ -1240,7 +1261,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           forty integration suites (see Testing)
+tests/           forty-one integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,

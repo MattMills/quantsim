@@ -316,7 +316,11 @@ impl<S: Scalar> BackendRegistry<S> {
     }
 
     /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"`,
-    /// `"factored"`, `"mps"` and `"mera"` backends. (`"mps"` and `"mera"`
+    /// `"factored"`, `"mps"`, `"mera"` and `"bundle"` backends.
+    /// (`"bundle"` is the graph-state
+    /// [`PolarityBundle`](crate::bundle::PolarityBundle): exact and
+    /// `O(n + |E|)` on the Clifford sector, refusing anything else by
+    /// name.) (`"mps"` and `"mera"`
     /// require a commutative division algebra and report an error at
     /// creation elsewhere.)
     pub fn standard() -> Self {
@@ -333,6 +337,14 @@ impl<S: Scalar> BackendRegistry<S> {
             .expect("fresh registry");
         reg.register("mera", |n| Ok(Box::new(MeraState::<S>::new(n)?)))
             .expect("fresh registry");
+        reg.register("bundle", |n| {
+            let mut bundle = crate::bundle::PolarityBundle::new(n)?;
+            // The Backend contract starts at |0…0⟩; the bundle's own
+            // description convention starts at |+…+⟩.
+            <crate::bundle::PolarityBundle as Backend<S>>::reset(&mut bundle);
+            Ok(Box::new(bundle) as Box<dyn Backend<S>>)
+        })
+        .expect("fresh registry");
         reg
     }
 
