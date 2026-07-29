@@ -9,7 +9,9 @@ parts are swappable:
   quaternions ℍ, octonions 𝕆 and sedenions 𝕊, **split-complex** as a
   first non-Cayley–Dickson algebra,
   **[`SplitQuaternion`](src/scalar/split_quaternion.rs)** — the
-  coquaternions held as an *inclusion/exclusion pair* (below) — and
+  coquaternions held as an *inclusion/exclusion pair* (below) —
+  **[`Polarity<N>`](src/scalar/polarity.rs)** — `N` twisted polarities
+  in one amplitude, generalizing that pair — and
   **[`Ball`](src/scalar/ball.rs)** —
   coarse-grained certified arithmetic (complex midpoint ± certified
   radius; midpoints track `C64` bit-for-bit, radii propagate soundly, and
@@ -320,6 +322,56 @@ parts are swappable:
   (`dual_algebra_report` measures the sandwich span full at 16/16,
   embedded action component-linear) and benchmarks next to every other
   backend.
+- **Polarity systems** ([`polarity`](src/polarity.rs),
+  [`Polarity<N>`](src/scalar/polarity.rs)) — `n` inclusion/exclusion
+  axes with a **twist**: generators `j₀ … j_{n−1}` and, for each pair, a
+  choice of commuting or anticommuting. That is the twisted group
+  algebra `ℝ^τ[F₂ⁿ]`, and its whole behaviour follows from the `F₂`
+  **rank** `r` of the twist form — measured by brute force, not quoted:
+  the centre has dimension `2^{n−r}`, a maximal pairwise-commuting set
+  is a *subgroup* of size `2^{n−r/2}` (bilinearity, verified closed
+  under XOR), and the algebra factors as
+  `2^{n−r/2} × 2^{r/2} = 2ⁿ`. That factorization is the point: an
+  abelian polarity system is simultaneously diagonalizable, so its state
+  is `n − r/2` independent **sign bits** — genuinely local, `O(n)` — and
+  everything outside costs `2^{r/2}`. **The twist rank is the measured
+  price of non-locality**, and `PolaritySystem::partial` makes it a
+  dial from untwisted (`2ⁿ` independent sectors, no correlation) to
+  fully twisted (one matrix block, no local part).
+  `PolaritySystem::pauli(n)` puts quantum mechanics on that dial: `2n`
+  generators, measured rank `2n` — maximally twisted, centre trivial —
+  with maximal isotropic subgroups of size `2ⁿ`. Those subgroups **are**
+  stabilizer groups and their `n` sign bits are exactly the `O(n²)`
+  description Gottesman–Knill runs on (shipped here as
+  [`CliffordFramedState`](src/backend/clifford_frame.rs)), so the
+  locally-storable sector is real and is already the best-known
+  classical island. **Where it stops is measured too.**
+  `pairwise_signature` builds the complete pairwise-local object — every
+  one- and two-body Pauli expectation, i.e. all two-qubit reduced
+  density matrices, `3n + 9·C(n,2)` reals — and `ghz_sign_obstruction`
+  shows it is not enough, sharply: from `n = 3` up, the **orthogonal**
+  states `(|0…0⟩ ± |1…1⟩)/√2` have signatures agreeing at deviation
+  **exactly 0.0** with overlap 0, separated only by the `n`-body
+  correlator `⟨X^{⊗n}⟩ = ±1`. At `n = 2` the same pair *is* separable by
+  `⟨XX⟩`, so the measurement catches the obstruction switching on. And
+  it is not a shortage of numbers: at `n = 3` the pairwise signature
+  holds **36 reals against the state vector's 16** and is still blind —
+  the failure is in what pairwise data can express. The sting is that
+  both states are *stabilizer* states, so pairwise data fails inside the
+  sector that is efficiently describable: the description is `O(n²)` in
+  size but not pairwise in **structure**, because GHZ's stabilizer group
+  needs a weight-`n` generator (`stabilizer_weight_profile` measures
+  `[n, 2, 2, …]`). As an amplitude type, `Polarity<N>` carries the
+  grading directly — `abs_sqr = Σ c_g²` is the path weight,
+  `born_weight = Σ (−1)^{deg g} c_g²` the net, falling out of
+  `q·conj(q)` rather than imposed — with `Polarity<1>` the
+  split-complex numbers, `Polarity<2>` **exactly** the split
+  quaternions (isomorphism transported entrywise at deviation 0.0), and
+  ℂ embedding from two polarities up so the full registry exists and the
+  conformance suite passes over `Pol3`. The cost is stated first: `N`
+  polarities is `2^N` reals **per amplitude**, so one polarity per qubit
+  costs `2ⁿ` per stored amplitude — the exponential does not disappear,
+  it moves from the register into the scalar.
 - **Recursive systems** ([`recursive`](src/recursive.rs), [`e8::cube`](src/e8.rs))
   — a site that is either a **point or an entire lattice of the same
   kind**, and a computation that participates in itself. Four qubits
@@ -591,7 +643,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 391 tests (53 unit + 333 across thirty-seven
+`cargo test` runs 414 tests (61 unit + 348 across thirty-eight
 integration suites + 5 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -831,6 +883,22 @@ entirely trivial accessors and defensive guards:
   ratio; plus the algebra-sector qudit and harness rows. The algebra
   also joins the existing `reproductions`, `property_tests` and
   `gate_matrices` sweeps.
+- **polarity** — the structure theorem brute-force verified (centre
+  counted monomial by monomial, maximal commuting sets built by
+  exhaustive search and checked closed under XOR, `isotropic × matrix =
+  dimension` across the whole twist dial, rank always even); the Pauli
+  system measured maximally twisted with stabilizer-sized isotropic
+  subgroups; associativity and the commute/sign equivalence swept over
+  every monomial pair of a 4-generator system; `Polarity<2>` transported
+  onto `SplitQuaternion` at deviation exactly 0 in both product and Born
+  form; the real-subset/full-registry split at one versus two
+  polarities; conformance over `Pol3`; the storage padding pinned rather
+  than hidden; and the obstruction — pairwise-complete at `n = 2`,
+  blind from `n = 3` up with signature deviation exactly 0 against
+  overlap 0, the `n`-body correlator reading ±1, the pairwise-vs-state
+  value counts showing 36 > 16, the GHZ weight profile `[n, 2, …]`, and
+  a product state as the contrasting case where pairwise data does
+  determine the state.
 - **recursive_lattice** — the structure (square = 4 bonds; square of
   squares = 16 qubits, 20 bonds, the four lateral bonds pinned by index
   and each verified to leave its block; depth 3 = 64 qubits, 84 bonds
@@ -1033,6 +1101,7 @@ report must localize the corruption to the exact gates it breaks
 src/
   scalar/        Scalar trait; f64, C64, CD<T> (ℍ/𝕆/𝕊), split-complex,
                  split-quaternion (inclusion/exclusion pair),
+                 polarity<N> (N twisted polarities per amplitude),
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
   bounds.rs      boundary atlas: measured growth laws, advantage scan
@@ -1041,6 +1110,8 @@ src/
   e8.rs          E8 roots built+verified; chains, rep, constellation,
                  cube (the 2x2x2 volume, inward/outward interaction)
   causal.rs      backward cones, causal diamonds, dual-time resolution
+  polarity.rs    twisted polarity systems: twist rank, local sector,
+                 the pairwise-locality obstruction measured
   recursive.rs   point-or-lattice sites, block-spin RG, phonon
                  substitution, self-participation fixed points
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
@@ -1064,7 +1135,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           thirty-seven integration suites (see Testing)
+tests/           thirty-eight integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -1080,6 +1151,7 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  recursive_lattice (point-or-lattice sites, block-spin
                  RG, phonon substitution, self-participation),
                  e8_cube (E8 as a 2x2x2 volume, inward/outward ladder),
+                 polarity_systems (twist dial, the locality obstruction),
                  sampling_hardness (XEB, spoofing economics, exact refs),
                  e8_compound (mixed-arity qudits over the E8 fabric),
                  e8_coboundary (E8×E8 storage, representation, both

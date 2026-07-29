@@ -232,6 +232,7 @@ fn survey_all() {
     survey::<CComplex>();
     survey::<SplitComplex>();
     survey::<SplitQuaternion>();
+    survey::<Polarity<3>>();
     survey::<Quaternion>();
     survey::<Octonion>();
     survey::<Sedenion>();

@@ -78,6 +78,7 @@ pub mod library;
 pub mod lift;
 pub mod math;
 pub mod mixed;
+pub mod polarity;
 pub mod qudit;
 pub mod recursive;
 pub mod registry;
@@ -148,8 +149,8 @@ pub mod prelude {
         spoof_decay, DecayPoint, SpoofPoint, XebScore,
     };
     pub use crate::scalar::{
-        Ball, CComplex, DirectSum, Octonion, Quaternion, Scalar, Sedenion, SplitComplex,
-        SplitQuaternion, Trigintaduonion, C64, CD,
+        Ball, CComplex, DirectSum, Octonion, Polarity, Polarity2, Polarity3, Polarity4, Quaternion,
+        Scalar, Sedenion, SplitComplex, SplitQuaternion, Trigintaduonion, C64, CD,
     };
     pub use crate::schedule::{
         FeedbackOp, GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace,

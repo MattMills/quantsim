@@ -40,6 +40,7 @@ fn ghz_state_on_every_algebra() {
     check::<Sedenion>();
     check::<SplitComplex>();
     check::<SplitQuaternion>();
+    check::<Polarity<3>>();
 }
 
 #[test]

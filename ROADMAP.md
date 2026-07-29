@@ -517,6 +517,39 @@ Next rungs:
   co-boundary payload is addressed by symmetry sector rather than raw
   point index.
 
+## Polarity systems — SHIPPED (core)
+
+`polarity::PolaritySystem` is the twisted group algebra `ℝ^τ[F₂ⁿ]` with
+its structure measured by brute force (twist rank ↦ centre, maximal
+isotropic subgroup, matrix block), `scalar::Polarity<N>` is the fully
+twisted case as an amplitude type, and `pairwise_signature` /
+`ghz_sign_obstruction` measure exactly where pairwise-local data stops
+holding a state. Remaining work:
+
+- **A partial-twist backend.** The dial is currently a statement about
+  algebras, not a representation. A backend that stores the isotropic
+  sector as sign bits and pays `2^{r/2}` only for the rest would put
+  twist rank on the same footing as support, cluster size, bond
+  dimension and T-count in `bounds.rs` — and `advantage_scan` could then
+  classify it. That is the honest way to find out whether the dial buys
+  anything the Clifford frame does not, and the answer might well be no.
+- **Twist rank against T-count.** The Clifford frame's measured `2^t`
+  wall and the polarity system's `2^{r/2}` block are suspiciously the
+  same shape. Whether T-doping literally raises the effective twist rank
+  is a measurable question, not a settled one, and it should be measured
+  before it is claimed anywhere.
+- **`k`-body signatures.** `pairwise_signature` stops at two bodies
+  because that is what the locality hypothesis proposed. Generalizing to
+  `k` and measuring the smallest `k` that separates a given family would
+  turn the GHZ counterexample into a curve — the *correlation order* a
+  state actually needs — which is a genuinely new axis rather than a
+  restatement of an old one.
+- **Exact storage for `Polarity<N>`.** Const-generic arrays cannot be
+  sized `2^N` on stable, so every `N` pays `2^MAX_POLARITIES` slots and
+  `memory_bytes` over-reports for `N < 4`. A macro-generated family of
+  exactly-sized types would fix it; `SplitQuaternion` is the
+  exactly-sized `N = 2` case in the meantime.
+
 ## Recursive systems — SHIPPED (core)
 
 `recursive` and `e8::cube` are live: a `Site` is a point *or* a
