@@ -79,6 +79,7 @@ pub mod lift;
 pub mod math;
 pub mod mixed;
 pub mod qudit;
+pub mod recursive;
 pub mod registry;
 pub mod rng;
 pub mod sampling;

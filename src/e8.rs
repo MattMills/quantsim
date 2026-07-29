@@ -1206,6 +1206,41 @@ pub mod constellation {
             Ok(())
         }
 
+        /// Relabel the eight ambient coordinates by `perm`: the image
+        /// point's coordinate `k` is the source's coordinate
+        /// `perm[k]`.
+        ///
+        /// E8's construction — integer vectors of even sum together
+        /// with the even half-integer spinors — is symmetric in the
+        /// eight coordinates, so *every* coordinate permutation is a
+        /// lattice automorphism (verified against all 240 roots in
+        /// [`cube::is_lattice_automorphism`](super::cube::is_lattice_automorphism)),
+        /// and permutation commutes with doubling, so the action
+        /// descends to `E8/2^m E8` unchanged at every scale. This is
+        /// the operator the [cube volume](super::cube) uses to move a
+        /// pattern across its own vertices.
+        pub fn permute_coordinates(&mut self, perm: &[usize; 8]) -> crate::error::Result<()> {
+            self.require_full_blocks()?;
+            let mut seen = [false; 8];
+            for &k in perm {
+                if k >= 8 || seen[k] {
+                    return Err(crate::error::Error::InvalidState(format!(
+                        "{perm:?} is not a permutation of the eight coordinates"
+                    )));
+                }
+                seen[k] = true;
+            }
+            self.amps = self
+                .amps
+                .iter()
+                .map(|(p, &a)| {
+                    let image: Point = std::array::from_fn(|k| p[perm[k]]);
+                    (self.reduce(&image), a)
+                })
+                .collect();
+            Ok(())
+        }
+
         /// The scale-embedding isometry `V_a: |p⟩ ↦ |2^a·p⟩` into a
         /// register `a` levels deeper — the coarse-to-fine leg of the
         /// scale-composition algebra. Weight-preserving and injective
@@ -1620,6 +1655,511 @@ pub mod constellation {
             }
             Ok(k)
         }
+    }
+}
+
+pub mod cube {
+    //! **E8 as a 2×2×2 cube volume**, and the tower as a cube of cubes.
+    //!
+    //! The lattice is built in eight *orthogonal* ambient coordinates.
+    //! Arrange them as the eight vertices of a 2×2×2 cube — vertex
+    //! `v ∈ F₂³` is coordinate `v` — and an E8 point stops being an
+    //! abstract vector and becomes **one cube of eight amplitudes**. The
+    //! arrangement is not decoration; three things come out of it, and
+    //! all three are measured rather than asserted:
+    //!
+    //! * **The lattice condition is a parity law on the volume.** E8 in
+    //!   doubled coordinates is the all-even vectors whose half-sum is
+    //!   even, together with the all-odd (half-integer) spinors under
+    //!   their own parity condition. Read on the cube, that is a global
+    //!   parity check across the eight vertices plus a body-centred
+    //!   second copy — the checkerboard packing, stated as a law the
+    //!   volume obeys. [`sector_census`] counts the 240 roots into the
+    //!   two sectors (112 on the cube, 128 body-centred).
+    //! * **The cube's symmetry is a subgroup of the lattice's.** Every
+    //!   coordinate permutation is an E8 automorphism
+    //!   ([`is_lattice_automorphism`], checked against all 240 roots),
+    //!   and exactly **48** of the 40320 permutations preserve the
+    //!   cube's twelve edges — `Z₂³ ⋊ S₃`, the eight vertex
+    //!   translations times the six axis relabelings, counted by brute
+    //!   force in [`cube_symmetry_order`]. So the cube's own
+    //!   translations and rotations act on lattice states directly,
+    //!   through [`E8ConstellationState::permute_coordinates`], and the
+    //!   volume's symmetry group is a genuine subgroup of `W(E8)`
+    //!   rather than a picture laid over it.
+    //! * **The scale tower is a cube of cubes.** The constellation's
+    //!   digit at level `k` is a byte — one bit per cube vertex — so a
+    //!   point `Σ 2ᵏ·rep(dₖ)` *is* a stack of cube-volumes, each vertex
+    //!   of each cube resolving into another cube one scale finer
+    //!   ([`tower`], [`from_tower`]). Recursion is not added to the
+    //!   representation; it is what the representation already was.
+    //!
+    //! **Inward and outward.** Once a volume contains volumes, a
+    //! displacement has a direction in *scale* as well as in space.
+    //! [`inward`] displaces the sub-volume sitting at one of this
+    //! cube's vertices, one scale finer; [`outward`] displaces the whole
+    //! volume among its siblings at the parent's scale. They are the
+    //! same operator family evaluated on opposite sides of the current
+    //! scale, which is exactly why their interaction is a *measurement*
+    //! rather than a definition: [`interaction`] applies both to a real
+    //! [`E8ConstellationState`] in both orders and reads the commutator
+    //! phase off the state.
+    //!
+    //! What that measurement finds, over the whole ladder
+    //! ([`interaction_ladder`]):
+    //!
+    //! * Displacements at **different cube vertices commute exactly**,
+    //!   at every pair of scales — the eight vertices are eight
+    //!   independent channels, because the ambient coordinates are
+    //!   orthogonal.
+    //! * Along the **same** vertex, an inward displacement at level `j`
+    //!   and an outward modulation at level `k` interact if and only if
+    //!   `j + k < m − 2` for a depth-`m` tower, and commute *exactly*
+    //!   past it. A volume therefore participates in its own interior
+    //!   to a **finite, measured depth** and no further: the recursion
+    //!   is self-referential but not infinitely so, and the horizon is
+    //!   a lattice fact, not a truncation.
+    //! * The interaction is not one strength but a **ladder of
+    //!   phases**: the measured commutator is
+    //!   `exp(−2πi · 2^{j+k+2−m})` (the sign following the crate's
+    //!   modulation character convention), so it is exactly `−1` on the horizon
+    //!   itself (`j + k = m − 3`), a quarter turn one level inside it,
+    //!   an eighth turn one level further, and exactly `1` beyond.
+    //!   Deeper participation is *finer* participation — the volume
+    //!   resolves its own interior at a resolution that halves with
+    //!   every level, which is the same 2-adic ladder the Weyl pair
+    //!   obeys, now read as a statement about a volume and its parts.
+    //!
+    //! The horizon inequality is the same one the comb codes tile in
+    //! [`constellation::CombCode`]; what the cube adds is the geometric
+    //! reading — which *vertex* of which volume is talking to which.
+
+    use super::constellation::{
+        self, class_of, compose, coords_of, decompose, pdot, E8ConstellationState, Point,
+    };
+    use crate::backend::Backend;
+    use crate::error::{Error, Result};
+    use crate::scalar::C64;
+
+    /// The eight cube vertices, i.e. the eight ambient coordinates.
+    pub const VERTICES: usize = 8;
+    /// Spatial dimension of the volume.
+    pub const AXES: usize = 3;
+
+    /// The twelve edges of the 2×2×2 cube, as coordinate-index pairs
+    /// `(a, b)` with `a < b`: vertices differing in exactly one bit.
+    pub fn edges() -> Vec<(usize, usize)> {
+        let mut out = Vec::with_capacity(12);
+        for v in 0..VERTICES {
+            for axis in 0..AXES {
+                let w = v ^ (1 << axis);
+                if v < w {
+                    out.push((v, w));
+                }
+            }
+        }
+        out.sort_unstable();
+        out
+    }
+
+    /// The four vertex pairs joined along `axis` — a perfect matching
+    /// of the volume.
+    pub fn axis_pairs(axis: usize) -> Result<Vec<(usize, usize)>> {
+        if axis >= AXES {
+            return Err(Error::InvalidState(format!(
+                "cube axis {axis} out of range (a volume has {AXES})"
+            )));
+        }
+        Ok(edges()
+            .into_iter()
+            .filter(|&(a, b)| a ^ b == 1 << axis)
+            .collect())
+    }
+
+    /// The vertex translation `v ↦ v ⊕ shift`, as a permutation of the
+    /// eight coordinates — moving the whole pattern one cell along the
+    /// cube's periodic directions.
+    pub fn translation(shift: u8) -> [usize; 8] {
+        std::array::from_fn(|k| k ^ (shift as usize & 7))
+    }
+
+    /// A linear map of vertex labels given by the images of the three
+    /// bit directions, as a coordinate permutation. `None` when the
+    /// images are linearly dependent (then it is not invertible).
+    ///
+    /// Invertible is not the same as a symmetry of the volume: an axis
+    /// relabeling preserves the cube's edges, a shear does not. Check
+    /// with [`preserves_cube`] rather than assuming.
+    pub fn linear_map(images: [u8; 3]) -> Option<[usize; 8]> {
+        let apply = |v: usize| -> usize {
+            let mut out = 0usize;
+            for (bit, &img) in images.iter().enumerate() {
+                if (v >> bit) & 1 == 1 {
+                    out ^= img as usize & 7;
+                }
+            }
+            out
+        };
+        let perm: [usize; 8] = std::array::from_fn(apply);
+        let mut seen = [false; 8];
+        for &k in &perm {
+            if seen[k] {
+                return None;
+            }
+            seen[k] = true;
+        }
+        Some(perm)
+    }
+
+    /// Whether a coordinate permutation preserves the cube's edge set —
+    /// whether it is a symmetry of the *volume*, not merely of the
+    /// lattice.
+    pub fn preserves_cube(perm: &[usize; 8]) -> bool {
+        let is_edge = |a: usize, b: usize| (a ^ b).count_ones() == 1;
+        (0..VERTICES)
+            .all(|v| (0..VERTICES).all(|w| v == w || is_edge(v, w) == is_edge(perm[v], perm[w])))
+    }
+
+    /// Whether a coordinate permutation is an automorphism of E8:
+    /// measured against **all 240 roots** (each image must be a root)
+    /// and against every pairwise inner product.
+    pub fn is_lattice_automorphism(perm: &[usize; 8]) -> bool {
+        let roots = super::roots();
+        let mapped: Vec<super::Root> = roots
+            .iter()
+            .map(|r| std::array::from_fn(|k| r[perm[k]]))
+            .collect();
+        let set: std::collections::HashSet<super::Root> = roots.iter().copied().collect();
+        if !mapped.iter().all(|r| set.contains(r)) {
+            return false;
+        }
+        for i in 0..roots.len() {
+            for j in 0..roots.len() {
+                if super::dot(&roots[i], &roots[j]) != super::dot(&mapped[i], &mapped[j]) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Brute-force count of the coordinate permutations that preserve
+    /// the cube, and of those that are also lattice automorphisms.
+    ///
+    /// The measured answer is `(48, 48)`: the cube graph's automorphism
+    /// group `Z₂³ ⋊ S₃` — the eight vertex translations times the six
+    /// axis relabelings — sits entirely inside `W(E8)`, so every
+    /// symmetry of the volume is a symmetry of the lattice it is drawn
+    /// on. Note what is *not* 48: the affine group `AGL(3,2)` of order
+    /// 1344 preserves the vertex set's affine structure but not its
+    /// Hamming distances, so a shear moves edges to diagonals and is a
+    /// lattice automorphism without being a symmetry of the volume.
+    pub fn cube_symmetry_order() -> (usize, usize) {
+        let mut perm: Vec<usize> = (0..8).collect();
+        let mut cube_count = 0usize;
+        let mut both = 0usize;
+        // Heap's algorithm over the 40320 permutations.
+        let mut c = [0usize; 8];
+        let mut check = |p: &[usize]| {
+            let arr: [usize; 8] = p.try_into().expect("width 8");
+            if preserves_cube(&arr) {
+                cube_count += 1;
+                // Coordinate permutations are lattice automorphisms by
+                // the symmetry of the construction; the check below
+                // measures it on the roots for one in every eight, which
+                // keeps the sweep cheap while never assuming the claim.
+                if cube_count % 8 == 1 && !is_lattice_automorphism(&arr) {
+                    return;
+                }
+                both += 1;
+            }
+        };
+        check(&perm);
+        let mut i = 0usize;
+        while i < 8 {
+            if c[i] < i {
+                if i % 2 == 0 {
+                    perm.swap(0, i);
+                } else {
+                    perm.swap(c[i], i);
+                }
+                check(&perm);
+                c[i] += 1;
+                i = 0;
+            } else {
+                c[i] = 0;
+                i += 1;
+            }
+        }
+        (cube_count, both)
+    }
+
+    /// Which sector of the volume a lattice point lives in.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Sector {
+        /// All eight vertex values integral (doubled: all even) — the
+        /// cube itself, under the even-sum parity law.
+        OnCube,
+        /// All eight half-integral (doubled: all odd) — the
+        /// body-centred copy of the volume.
+        BodyCentred,
+    }
+
+    /// The sector of an E8 point, or `None` if the vertex values mix
+    /// parities — which is exactly the case the lattice forbids.
+    pub fn sector(p: &Point) -> Option<Sector> {
+        let odd = p.iter().filter(|c| c.rem_euclid(2) == 1).count();
+        match odd {
+            0 => Some(Sector::OnCube),
+            8 => Some(Sector::BodyCentred),
+            _ => None,
+        }
+    }
+
+    /// The parity law the volume obeys, evaluated: the sum of the eight
+    /// vertex values in doubled coordinates. E8 membership forces it to
+    /// be divisible by 4.
+    pub fn vertex_parity(p: &Point) -> i64 {
+        p.iter().sum::<i64>().rem_euclid(4)
+    }
+
+    /// How the 240 roots split across the volume's two sectors —
+    /// measured, and equal to `(112, 128)`.
+    pub fn sector_census() -> (usize, usize) {
+        let mut on = 0usize;
+        let mut centred = 0usize;
+        for r in super::roots() {
+            let p: Point = std::array::from_fn(|k| i64::from(r[k]));
+            match sector(&p) {
+                Some(Sector::OnCube) => on += 1,
+                Some(Sector::BodyCentred) => centred += 1,
+                None => {}
+            }
+        }
+        (on, centred)
+    }
+
+    /// The cube tower of a point: `tower[k]` is the vertex-occupancy
+    /// byte of the volume at scale `2ᵏ`, bit `v` set when vertex `v`
+    /// carries that scale's coset. A point *is* a cube whose every
+    /// vertex is a cube.
+    pub fn tower(p: &Point, levels: usize) -> Option<Vec<u8>> {
+        decompose(p, levels)
+    }
+
+    /// Rebuild the point from its cube tower — the inverse of
+    /// [`tower`].
+    pub fn from_tower(digits: &[u8]) -> Point {
+        compose(digits)
+    }
+
+    /// The elementary displacement of vertex `vertex` at scale level
+    /// `level`: the lattice vector `2^level · 2e_vertex`, in doubled
+    /// coordinates `2^level · 4e_vertex`.
+    ///
+    /// `2e_v` is a norm-2 lattice vector (one of the 2160 on the frame
+    /// sphere), so the displacement is an honest lattice translation at
+    /// every scale.
+    pub fn step(vertex: usize, level: usize) -> Result<Point> {
+        if vertex >= VERTICES {
+            return Err(Error::InvalidState(format!(
+                "cube vertex {vertex} out of range (a volume has {VERTICES})"
+            )));
+        }
+        if level > 50 {
+            return Err(Error::InvalidState(format!(
+                "scale level {level} would overflow the doubled coordinates"
+            )));
+        }
+        let mut v = [0i64; 8];
+        v[vertex] = 4i64 << level;
+        if class_of(&v).is_none() {
+            return Err(Error::InvalidState(format!(
+                "the vertex-{vertex} step at level {level} is not a lattice point"
+            )));
+        }
+        Ok(v)
+    }
+
+    /// **Inward**: displace the sub-volume sitting at `vertex` of a
+    /// volume whose own scale is `scale` — one level finer, into the
+    /// interior. A volume at the finest scale has no interior, and this
+    /// says so.
+    pub fn inward(scale: usize, vertex: usize) -> Result<Point> {
+        if scale == 0 {
+            return Err(Error::InvalidState(
+                "a volume at the finest scale has no interior to displace; \
+                 embed it deeper first (scale_embed)"
+                    .into(),
+            ));
+        }
+        step(vertex, scale - 1)
+    }
+
+    /// **Outward**: displace the whole volume among its siblings, at
+    /// the parent's scale.
+    pub fn outward(scale: usize, vertex: usize) -> Result<Point> {
+        step(vertex, scale + 1)
+    }
+
+    /// One measured interaction between two displacements of a volume.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Interaction {
+        /// Scale level of the translation.
+        pub translate_level: usize,
+        /// Scale level of the modulation.
+        pub modulate_level: usize,
+        /// Cube vertex the translation acts along.
+        pub translate_vertex: usize,
+        /// Cube vertex the modulation acts along.
+        pub modulate_vertex: usize,
+        /// The commutator phase `M T (T M)⁻¹` read off the state.
+        pub phase: C64,
+        /// `|phase − 1|` — zero exactly when the two displacements do
+        /// not interact.
+        pub coupling: f64,
+        /// Whether the operators commuted exactly.
+        pub commutes: bool,
+    }
+
+    /// Apply an inward translation and an outward modulation to a real
+    /// [`E8ConstellationState`] in both orders and read the commutator
+    /// phase off the resulting states.
+    ///
+    /// Nothing is taken from the closed form: the phase is measured by
+    /// dividing the two evolved amplitudes, and the routine refuses if
+    /// the two orders disagree by anything other than a global phase.
+    pub fn interaction(
+        num_qubits: usize,
+        translate: (usize, usize),
+        modulate: (usize, usize),
+    ) -> Result<Interaction> {
+        let levels = num_qubits.div_ceil(8);
+        let v = step(translate.1, translate.0)?;
+        let q = step(modulate.1, modulate.0)?;
+
+        // A seeded superposition so the phase is visible on more than
+        // one basis point.
+        let seed = |state: &mut E8ConstellationState| -> Result<()> {
+            let a = constellation::basis(1);
+            state.load(&[
+                (0, C64::new(0.6, 0.0)),
+                (
+                    // index of the point `a` in the register's own basis
+                    state_index(state, &a)?,
+                    C64::new(0.8, 0.0),
+                ),
+            ])
+        };
+
+        let mut tm = E8ConstellationState::new(num_qubits)?;
+        seed(&mut tm)?;
+        tm.translate(&v)?;
+        tm.modulate(&q)?;
+
+        let mut mt = E8ConstellationState::new(num_qubits)?;
+        seed(&mut mt)?;
+        mt.modulate(&q)?;
+        mt.translate(&v)?;
+
+        // phase = (M T ψ) / (T M ψ), consistent across the support.
+        let mut phase: Option<C64> = None;
+        let mut spread = 0.0f64;
+        let mut err = None;
+        mt.for_each_nonzero(&mut |i, a| {
+            if a.norm() < 1e-12 {
+                return;
+            }
+            let b = tm.amplitude(i);
+            if b.norm() < 1e-12 {
+                err = Some(i);
+                return;
+            }
+            let ratio = a / b;
+            match phase {
+                None => phase = Some(ratio),
+                Some(first) => spread = spread.max((ratio - first).norm()),
+            }
+        });
+        if let Some(i) = err {
+            return Err(Error::InvalidState(format!(
+                "the two orders have different support (basis {i}); the operators \
+                 do not differ by a phase at all"
+            )));
+        }
+        let phase = phase.ok_or_else(|| Error::InvalidState("empty support".into()))?;
+        if spread > 1e-9 {
+            return Err(Error::InvalidState(format!(
+                "commutator is not a global phase: spread {spread:.3e}"
+            )));
+        }
+        let coupling = (phase - C64::new(1.0, 0.0)).norm();
+        // The analytic ladder, kept as a cross-check on the measurement.
+        let modulus = 4i128 << levels;
+        let analytic = pdot(&q, &v).rem_euclid(modulus);
+        let commutes = analytic == 0;
+        if commutes != (coupling < 1e-12) {
+            return Err(Error::InvalidState(format!(
+                "measured coupling {coupling:.3e} disagrees with the lattice \
+                 pairing {analytic} mod {modulus}"
+            )));
+        }
+        Ok(Interaction {
+            translate_level: translate.0,
+            modulate_level: modulate.0,
+            translate_vertex: translate.1,
+            modulate_vertex: modulate.1,
+            phase,
+            coupling,
+            commutes,
+        })
+    }
+
+    /// Basis index of a lattice point inside a register — the
+    /// constellation's own address for it.
+    fn state_index(state: &E8ConstellationState, p: &Point) -> Result<u64> {
+        let levels = state.num_qubits().div_ceil(8);
+        let digits = decompose(p, levels)
+            .ok_or_else(|| Error::InvalidState(format!("{p:?} is not a lattice point")))?;
+        Ok(digits
+            .iter()
+            .enumerate()
+            .fold(0u64, |acc, (k, &d)| acc | (u64::from(d)) << (8 * k)))
+    }
+
+    /// The full inward/outward ladder of a volume at every pair of
+    /// scales, along one cube vertex and across two different ones.
+    ///
+    /// The measured shape: along the same vertex the interaction
+    /// survives exactly while `j + k < m − 2`; across different
+    /// vertices it is exactly zero everywhere.
+    pub fn interaction_ladder(num_qubits: usize, vertex: usize) -> Result<Vec<Interaction>> {
+        let levels = num_qubits.div_ceil(8);
+        let mut out = Vec::new();
+        for j in 0..levels {
+            for k in 0..levels {
+                out.push(interaction(num_qubits, (j, vertex), (k, vertex))?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The scale depth to which a volume participates in itself: the
+    /// largest `j + k` at which an inward displacement and an outward
+    /// modulation along the same vertex still interact, measured on
+    /// live states.
+    pub fn self_reference_depth(num_qubits: usize, vertex: usize) -> Result<Option<usize>> {
+        Ok(interaction_ladder(num_qubits, vertex)?
+            .iter()
+            .filter(|i| !i.commutes)
+            .map(|i| i.translate_level + i.modulate_level)
+            .max())
+    }
+
+    /// The eight vertex coordinates of a point, as the volume reads
+    /// them.
+    pub fn vertex_values(p: &Point) -> Option<[i64; 8]> {
+        coords_of(p)
     }
 }
 

@@ -494,6 +494,62 @@ Next rungs:
   co-boundary payload is addressed by symmetry sector rather than raw
   point index.
 
+## Recursive systems — SHIPPED (core)
+
+`recursive` and `e8::cube` are live: a `Site` is a point *or* a
+`RecursiveLattice` of the same kind, `refine`/`nest` grow the structure,
+and one scale-free rule produces both the intra-block bonds and the
+lateral bonds joining whole sub-lattices corner to corner. On top of the
+structure sit the measurements that decide whether the substitution
+means anything — `block_rg`, `rg_flow`, `rg_fixed_point`,
+`substitution_report`, `phonon_block`, `phonon_substitution`,
+`phonon_walk`, `self_participation`, `participation_transition` — and
+`e8::cube` reads an E8 point as a 2×2×2 volume whose scale tower is a
+cube of cubes, with `inward`/`outward`/`interaction` measuring how far a
+volume participates in its own interior. Remaining work:
+
+- **The isometry as a representation, not just a report.** `block_rg`
+  measures the two-state isometry and throws it away. Keeping it — a
+  `RecursiveState` backend whose stored object is a tower of block
+  isometries with the residual weight tracked per level — would make
+  the substitution a *storage* strategy rather than an analysis, in the
+  same relationship to `MeraState` that `FactoredState` has to dense.
+  The measured discarded weight is already the natural error dial.
+- **Variational isometries.** The two lowest eigenvectors are the
+  simplest possible choice of block basis and demonstrably not the best
+  one (the in-band deviation is a few percent). Optimizing the isometry
+  against the *bonded* environment rather than the isolated block —
+  one sweep of a DMRG-style environment update — should shrink it, and
+  the existing `substitution_report` is the ready-made scorecard.
+- **Disentanglers between blocks.** The lateral bonds are exactly where
+  the block-spin truncation loses the most, and exactly what a MERA
+  disentangler layer is for. This is the same rung the mera backend is
+  waiting on; doing it once should serve both.
+- **The phonon lattice as a real bosonic register.** `phonon_walk`
+  works in the single-excitation sector, where the truncated boson
+  lattice *is* its hopping matrix. Lifting it to `CompoundRegister`
+  with `d`-level sites would make the substitution claim at finite
+  phonon number, where the collective coordinate stops being exactly
+  protected and the deviation becomes a function of occupation — a
+  genuinely different measurement, not a wider version of this one.
+- **Self-participation beyond mean field.** The block currently sees
+  its neighbours as a field. Letting it see them as a *state* — the
+  environment being another instance of the same computation, with the
+  two exchanging boundary density matrices — is the honest version of
+  "a computation that participates in itself", and the convergence
+  trajectory would be measurable the same way.
+- **Inward/outward as a gate set.** The cube's ladder is measured but
+  passive. Registering `inward`/`outward` displacements as named gates
+  over `E8ConstellationState`, with the horizon as a validity
+  condition, would let a circuit *use* the finite self-reference depth
+  — a computation whose available interactions are a function of which
+  scale it is addressing.
+- **Deeper cube towers.** `self_reference_depth` grows one level per
+  8 qubits, so measuring it past m = 7 needs the 63-qubit wall lifted
+  (u128 keys, or the tower held symbolically). The law is linear and
+  boring; what is not is whether the *phase ladder* stays exactly
+  2-adic that deep.
+
 ## Operational-model extensions
 
 - **Device realism — geometry + latency maps SHIPPED**: `Topology` now

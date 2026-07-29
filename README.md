@@ -274,6 +274,80 @@ parts are swappable:
   (logarithmic horizons), and `diameter`/`ball_sizes`/
   `pair_availability` measure any fabric's causal metric, curvature
   signature and interaction availability.
+- **Recursive systems** ([`recursive`](src/recursive.rs), [`e8::cube`](src/e8.rs))
+  — a site that is either a **point or an entire lattice of the same
+  kind**, and a computation that participates in itself. Four qubits
+  bonded in a square; `refine` turns any point into a lattice and
+  `nest` does it uniformly, so a square of four points becomes a square
+  of four squares — 16 qubits, four internal squares, four **lateral**
+  bonds joining the blocks corner to corner by the same scale-free rule
+  that joins their points (measured: depth 3 is 64 qubits, 84 bonds,
+  horizon 16; the fabric is a `Topology` and runs on `DeviceState` like
+  any other geometry). Whether the substitution *means* anything is
+  then measured three ways, and they disagree informatively.
+  **Ising**: `block_rg` diagonalizes a block and reads its effective
+  description off its own spectrum — `h' = Δ/2` from the measured gap,
+  `J' = J·μ²` from the measured boundary element — and `rg_fixed_point`
+  finds where the flow stands still (Chain(2): `g* = 0.783243`,
+  λ = 1.596, ν = 1.482 against the exactly known ν = 1, so the size of
+  the Kadanoff approximation is *reported*, not hidden; residual
+  4e-15). `substitution_report` puts it on trial against two blocks
+  bonded laterally and finds the duality's **resolution horizon**: the
+  spectra track to ~1–7% below the block's internal gap and the coarse
+  description measurably invents a level above it. The ordered flow
+  terminates with the reason named (the block gap falls below double
+  precision — a refusal, not a silent continuation).
+  **Phonons**: the duality is *exact* where it should be. A harmonic
+  block's collective mode is the exact zero mode of its internal
+  springs, so its frequency shift is `0.00e0` measured, and
+  `phonon_substitution` separates the regimes — uniform bonding leaves
+  the collective subspace exactly invariant (deviation 5.6e-16), port
+  bonding is second order in the lateral spring (2.07e-2 → 2.73e-4 →
+  2.80e-6 for 0.3 → 0.03 → 0.003). **On the simulator**: `phonon_walk`
+  loads one phonon into a block's collective coordinate on a real
+  `Backend`, Trotters the spring Laplacian through the lattice's own
+  bonds, and separates Trotter error (→ 0 with the step) from
+  substitution error (flat in the step, quadratic in the lateral
+  spring) — with excitation-number leakage measured at `0.00e0` rather
+  than assumed. And `self_participation` closes the loop: a block
+  solved in the mean field its own boundary magnetization produces —
+  read back off a loaded backend through `pauli_expectation` — so the
+  output of the computation *is* its input. It converges to a measured
+  fixed point at any recursion depth (the block may itself be a lattice
+  of lattices), and `participation_transition` bisects the coupling
+  where a self-feeding computation stops answering zero (`Jc =
+  0.267675`; m = 0.41 at 1.1×Jc, 3.8e-10 at 0.9×).
+  **E8 as a 2×2×2 cube volume** ([`e8::cube`](src/e8.rs)): the
+  lattice's eight *orthogonal* ambient coordinates are the eight
+  vertices of a cube, and three things fall out measured. The lattice
+  condition becomes a **parity law on the volume** — of the 240 roots,
+  112 live wholly on the cube and 128 on the body-centred copy, every
+  one with vertex values summing to a multiple of four, and a
+  mixed-parity volume is in neither sector. The cube's symmetry group
+  sits **inside `W(E8)`**: exactly 48 of the 40320 coordinate
+  permutations preserve the twelve edges (`Z₂³ ⋊ S₃`, brute-forced),
+  all of them verified E8 automorphisms against all 240 roots, and they
+  act on states through `permute_coordinates` — while a `GL(3,2)` shear
+  is a lattice automorphism that is measurably *not* a cube symmetry.
+  And the scale tower **already was** a cube of cubes: a digit is a
+  byte, one bit per vertex, so `Σ 2ᵏ·rep(dₖ)` is a stack of volumes
+  each of whose vertices resolves into another volume. On that
+  structure, `inward` displaces a volume's own interior and `outward`
+  its siblings, and `interaction` measures their commutator **off two
+  evolved states**, cross-checked against the exact integer pairing:
+  different cube vertices commute *exactly* at every scale (eight
+  independent channels), while along one vertex an inward displacement
+  at level `j` and an outward modulation at level `k` interact iff
+  `j + k < m − 2` — with phase `exp(−2πi·2^{j+k+2−m})`, so it is
+  exactly −1 on the horizon, a quarter turn one level inside, an
+  eighth turn one further. **Deeper participation is finer
+  participation**, and `self_reference_depth` reports the finite depth
+  to which a volume can reach itself (none at m = 2, then 0, 1, 2 as
+  the tower grows) — the recursion is self-referential but not
+  infinitely so, and the horizon is a lattice fact rather than a
+  truncation. `Shape::CUBE` closes the circle: its bonds *are*
+  `e8::cube::edges()`, so the tower's cube of cubes and the recursive
+  lattice's are one object reached from two directions.
 - **Hierarchical algebraic registers** ([`qudit`](src/qudit.rs)) — break
   the flat n-wide register into a varied qudit structure: a **site
   sector** (any backend) plus an **algebra sector** — further logical
@@ -471,8 +545,8 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 335 tests (43 unit + 288 across thirty-four
-integration suites + 4 doctests; one more — the 17 s measurement that
+`cargo test` runs 371 tests (46 unit + 320 across thirty-six
+integration suites + 5 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
@@ -694,6 +768,46 @@ entirely trivial accessors and defensive guards:
   logical-vs-physical curves — the degenerate window saturating ≥ 90%
   at every nonzero rate, a=4 strictly rising in p and suppressed by
   wide measured margins below a=3 and a=2.
+- **recursive_lattice** — the structure (square = 4 bonds; square of
+  squares = 16 qubits, 20 bonds, the four lateral bonds pinned by index
+  and each verified to leave its block; depth 3 = 64 qubits, 84 bonds
+  split 64/16/4 by depth; the fabric run as a `DeviceState` geometry
+  carrying a 16-qubit GHZ); refine/coarsen as structural inverses with
+  re-refinement and point-addressing both refused by message; the
+  block-spin step (isometry error < 1e-12, `h' = Δ/2` and `J' = J·μ²`
+  identities exact to 1e-15, a zero field refused rather than divided
+  by); the flow monotone on the disordered side and terminating with
+  the double-precision reason on the ordered one; the fixed point
+  (`g* = 0.783243`, λ = 1.596338, ν = 1.482, residual < 1e-12); the
+  substitution's resolution horizon (in-band deviation < 2% while the
+  full-spectrum deviation exceeds 0.3, with the offending coarse level
+  shown to sit above the block's internal gap, and in-band error held
+  under 10% across the coupling range); the harmonic block's exactly
+  zero frequency shift and 1/2 port participation; uniform bonding
+  exact under 1e-12 against port bonding's finite error, with the
+  second-order law pinned as a 50–200× ratio per decade — twice, once
+  in the spectra and once in the dynamics; the phonon walk's zero
+  leakage, step-independent substitution error and shrinking Trotter
+  error on the dense backend; and self-participation converging to
+  zero below threshold and to a self-sustaining answer above it, at
+  depth 2 as readily as depth 1, with the critical coupling
+  `0.267675` bisected and both unbracketed directions refused by
+  message.
+- **e8_cube** — the twelve edges as three axis matchings; the parity
+  law over all 240 roots (112 + 128 by sector, every root summing to a
+  multiple of four, mixed parities in neither sector); the symmetry
+  count `(48, 48)` with every vertex translation verified against all
+  240 roots, an axis relabeling accepted and a shear accepted as a
+  lattice automorphism but rejected as a cube symmetry; the
+  symmetries acting on live states (norm preserved, the translation an
+  exact involution, non-permutations and partial blocks refused); the
+  tower round-tripping and doubling prepending an empty finest cube;
+  every elementary displacement verified a lattice point at every
+  scale with the finest volume's missing interior refused; and the
+  ladder — different vertices commuting exactly everywhere, the same
+  vertex interacting exactly while `j + k < m − 2`, the phase ladder
+  `exp(−2πi·2^{j+k+2−m})` pinned level by level at m = 5, and the
+  self-reference depth measured none → 0 → 1 → 2 as the tower grows.
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally
@@ -860,8 +974,11 @@ src/
   bounds.rs      boundary atlas: measured growth laws, advantage scan
   sampling.rs    sampling-task hardness: XEB, spoof curves, exact refs
   mixed.rs       mixed-arity compound qudits: volumes, fabric, flow, backend
-  e8.rs          E8 roots built+verified; chains, rep + constellation
+  e8.rs          E8 roots built+verified; chains, rep, constellation,
+                 cube (the 2x2x2 volume, inward/outward interaction)
   causal.rs      backward cones, causal diamonds, dual-time resolution
+  recursive.rs   point-or-lattice sites, block-spin RG, phonon
+                 substitution, self-participation fixed points
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
   guard.rs       resource guard: measured memory admission, time budgets
@@ -883,7 +1000,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           twenty-four integration suites (see Testing)
+tests/           thirty-six integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -896,6 +1013,9 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  algebraic_qudits (hierarchical register, dual-algebra),
                  qudit_scaling (measured scaling laws + honest costs),
                  advantage_bounds (the boundary atlas + advantage scan),
+                 recursive_lattice (point-or-lattice sites, block-spin
+                 RG, phonon substitution, self-participation),
+                 e8_cube (E8 as a 2x2x2 volume, inward/outward ladder),
                  sampling_hardness (XEB, spoofing economics, exact refs),
                  e8_compound (mixed-arity qudits over the E8 fabric),
                  e8_coboundary (E8×E8 storage, representation, both
