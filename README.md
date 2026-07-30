@@ -753,7 +753,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 510 tests (67 unit + 436 across forty-five
+`cargo test` runs 526 tests (67 unit + 452 across forty-seven
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1078,6 +1078,21 @@ entirely trivial accessors and defensive guards:
   and the envelope separates the representations by *measured* bytes per
   stored amplitude — dense ≫ 10× the sparse maps, an eight-coordinate
   lattice key strictly above a `u64` one.
+- **bundle_measure** — graph-state measurement done in the description.
+  The collapse is checked against projecting the *materialized* state over
+  **672 cases** — seven graph shapes × four decorations (bare / vertex
+  operators / spins / both) × three seeds × every site × both outcomes —
+  worst deviation under 1e-9, plus sequences of three successive
+  measurements on five-site graphs so the post-measurement description is
+  shown to be one a further measurement can use. A GHZ bundle returns the
+  same outcome on re-measuring a collapsed qubit and perfectly correlated
+  outcomes across all six sites; tomography against the bundle's own
+  stabilizer generators confirms the description still denotes the state it
+  claims. An isolated fiber's outcome can be deterministic (probability
+  exactly 1 and 0), and the impossible projection is refused by leaving the
+  state alone rather than zeroing it. Native sampling matches the dense
+  marginal distribution to 0.05 over 4000 shots. The collapse is journalled
+  as one semantic step and replays exactly.
 - **phase_degree** — degree 1 is verified to be *exactly* being a
   character, and the degree law
   `multilinear + log₂(denominator) − 1` is confirmed on eleven diagonals
@@ -1654,7 +1669,9 @@ src/
                  operators; the coset class they cannot leave)
   causal.rs      backward cones, causal diamonds, dual-time resolution
   bundle.rs      fibered re-orderable journalled polarity co-bundle:
-                 entanglement as a budgeted, auditable resource
+                 entanglement as a budgeted, auditable resource, with
+                 native graph-state measurement (collapse in the
+                 description, O(deg^2) rather than O(2^n))
   closure.rs     journalled history + geometric closure: loops as
                  undeclared checks, retrodiction by bisecting stamps
   selfhost.rs    the self-computing object: a stack of E8 volumes whose
@@ -1687,7 +1704,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           forty-five integration suites (see Testing)
+tests/           forty-seven integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,

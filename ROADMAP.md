@@ -504,6 +504,57 @@ Next rungs:
   time. What a *sequence* of native operations reaches — and whether the
   linear-per-copy advantage compounds or saturates — is unmeasured.
 
+## Graph-state measurement — SHIPPED (core)
+
+`bundle::project` used to be a documented no-op. That was worse than it
+looked: `for_each_nonzero` materializes, so the default `measure` drew a
+*correct* outcome and then left the state uncollapsed — a second
+measurement of the same qubit could disagree with the first. Silent, and a
+correctness bug rather than a missing feature.
+
+`PolarityBundle::collapse` now does the update in the description:
+
+- **An isolated site** carries the product state `V|+⟩`, so the collapse is
+  a single-qubit projection and the probability comes off `V`'s matrix — it
+  can be exactly 0 or 1.
+- **A site with a neighbour** is rotated until its operator sends `Z` to
+  `±Z`, by the same breadth-first local-complementation search `apply_cz`
+  uses with a different target predicate. After that its two outcomes are
+  equally likely; its edges are deleted, a `Z` goes to each former
+  neighbour when the bare graph state's eigenvalue is `−1`, and the site is
+  left in the state it was projected onto.
+- `measure` is overridden to take its bias from the description, so it is
+  `O(deg²)` rather than `O(2^n)`.
+- The collapse is journalled as ONE semantic step. Its internal
+  complementations are suppressed, because replay re-runs `collapse` and
+  would otherwise apply them twice — the history worth keeping is "site a
+  was measured and came out `outcome`", not the search that implemented it.
+
+**A pre-existing bug fell out of it.** A site's operator is `U · Z^spin`,
+so right-multiplying *that* by a generator means composing `Z^spin g Z^spin`
+onto `U`. `sqrt_z` commutes with `Z` and is fine; `sqrt_x` does not — so
+`local_complement` was silently wrong on any site with a spin set, as were
+the two breadth-first searches that predict which word to apply. It was
+latent because the `Backend` path never sets spins; the collapse rules were
+the first code to exercise it. Isolating it took separating the decorations:
+vops-only passed, spins-only passed, both failed.
+
+Verified over 672 cases against dense projection, worst deviation under
+1e-9, plus three-deep measurement sequences.
+
+Next rungs:
+
+- **Non-materializing `sample`.** `measure` is native now, but `sample`
+  still inherits the materializing default. Per-shot clone-and-measure
+  would make the bundle a genuine sampling backend and let it join
+  `sampling`'s XEB machinery.
+- **Measurement in `characterize` and the atlas.** With `project` working,
+  the bundle can carry adaptive circuits and the evented scheduler, which
+  is where a graph-state representation should be strongest.
+- **`closure` still imports only `bundle` and `error`.** The journalled
+  history and retrodiction work remains outside the simulator, and a
+  measurement is exactly the kind of event a closure history should stamp.
+
 ## The √2 obstruction — RESOLVED (measured)
 
 Two modules reported the same number from different directions:

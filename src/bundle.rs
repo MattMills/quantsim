@@ -79,6 +79,7 @@
 //! is what fails, not the bundle.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use crate::backend::{pauli_expectation, Backend, DenseState};
 use crate::circuit::Circuit;
@@ -86,6 +87,7 @@ use crate::error::{Error, Result};
 use crate::gates::Pauli;
 use crate::math::GateMatrix;
 use crate::registry::GateRegistry;
+use crate::rng::Prng;
 use crate::scalar::{Scalar, C64};
 
 /// Widest bundle [`PolarityBundle::to_state`] will materialize. The
@@ -170,6 +172,16 @@ pub enum BundleOp {
     LocalComplement(u32),
     /// Swap two adjacent positions in the generator ordering.
     SwapOrder(u32),
+    /// Collapse a site onto a definite outcome, decoupling the
+    /// `neighbours` edges it held.
+    Collapse {
+        /// The measured site.
+        site: u32,
+        /// The outcome it was projected onto.
+        outcome: bool,
+        /// Edges the collapse removed.
+        neighbours: usize,
+    },
     /// Absorb `absorbed` into `into`, spending `internal` links.
     Merge {
         /// Surviving fiber.
@@ -845,6 +857,13 @@ impl PolarityBundle {
                 BundleOp::Vertex(s, v) => out.apply_vop(*s, *v)?,
                 BundleOp::LocalComplement(s) => out.local_complement(*s)?,
                 BundleOp::SwapOrder(p) => out.swap_order(*p as usize)?,
+                BundleOp::Collapse { site, outcome, .. } => {
+                    // Replaying a collapse re-derives the same graph update
+                    // from the same description, so the outcome is enough
+                    // to reproduce it — the journal records history, and a
+                    // measurement's history is which outcome happened.
+                    out.collapse(*site, *outcome)?;
+                }
                 BundleOp::Merge { into, absorbed, .. } => {
                     let mut group = vec![*into];
                     group.extend_from_slice(absorbed);
@@ -1262,6 +1281,11 @@ pub mod vop {
         find(1, false, 2, false)
     }
 
+    /// The Pauli `Z` as a vertex operator: `S²`.
+    pub fn pauli_z() -> Vop {
+        compose(phase(), phase())
+    }
+
     /// Inverse of a vertex operator.
     pub fn inverse(v: Vop) -> Vop {
         (0..count() as Vop)
@@ -1374,14 +1398,184 @@ impl PolarityBundle {
                 }
             }
         }
-        let sx = vop::inverse(vop::sqrt_x());
+        let sx = through_spin(vop::inverse(vop::sqrt_x()), self.fibers[s].spin);
         self.fibers[s].vop = vop::compose(self.fibers[s].vop, sx);
-        let sz = vop::sqrt_z();
         for &w in &neighbours {
-            self.fibers[w as usize].vop = vop::compose(self.fibers[w as usize].vop, sz);
+            let index = w as usize;
+            let sz = through_spin(vop::sqrt_z(), self.fibers[index].spin);
+            self.fibers[index].vop = vop::compose(self.fibers[index].vop, sz);
         }
         self.journal.push(BundleOp::LocalComplement(site));
         Ok(())
+    }
+
+    /// The total single-qubit operator a site carries *after* the bare
+    /// graph state: its vertex operator composed with its spin sign.
+    ///
+    /// [`PolarityBundle::to_state`] applies the spin `Z` first and the
+    /// vertex operator second, so the matrix is `U · Z^spin` — and
+    /// `vop::compose` is the matrix product in that order.
+    fn site_operator(&self, s: usize) -> vop::Vop {
+        let fiber = &self.fibers[s];
+        if fiber.spin {
+            vop::compose(fiber.vop, vop::pauli_z())
+        } else {
+            fiber.vop
+        }
+    }
+
+    /// Rotate the description until site `a`'s operator sends `Z` to `±Z`,
+    /// using local complementations.
+    ///
+    /// Measuring `Z` on the physical state means measuring `V† Z V` on the
+    /// bare graph state, and the graph-state update rules are stated for
+    /// Paulis. Rather than carry a separate rule per Pauli, this walks the
+    /// description to one where the effective Pauli *is* `Z` — the same
+    /// breadth-first search over local-complementation words that
+    /// [`PolarityBundle::reduce_vop`] uses for `cz`, with a different
+    /// target predicate. The two generators reach the whole group, so a
+    /// word always exists provided `a` has a neighbour.
+    fn align_to_z(&mut self, a: u32) -> Result<()> {
+        let s = self.check(a)?;
+        let preserves_z =
+            |v: vop::Vop| vop::map_pauli(vop::inverse(v), PAULI_Z, false).0 == PAULI_Z;
+        if preserves_z(self.site_operator(s)) {
+            return Ok(());
+        }
+        let helper = self.links[s].first().copied().ok_or_else(|| {
+            Error::InvalidState(format!(
+                "site {a} is isolated, so its collapse is a single-qubit projection and \
+                 needs no alignment"
+            ))
+        })?;
+        // Local complementation right-multiplies the *vertex operator*,
+        // and the spin `Z` sits to that operator's right — so the search
+        // must walk the vop, not the site operator. `sqrt_x` does not
+        // commute with `Z`, so walking `U·Z` would find a word that does
+        // not align `U·w·Z`, which is exactly what it did before this was
+        // fixed. The predicate itself is spin-blind: if `U† Z U = ±Z` then
+        // `(UZ)† Z (UZ) = ±Z` too, because `Z` normalizes `Z`.
+        let sx = through_spin(vop::inverse(vop::sqrt_x()), self.fibers[s].spin);
+        let sz = through_spin(vop::sqrt_z(), self.fibers[s].spin);
+        let start = self.fibers[s].vop;
+        let mut seen: HashMap<vop::Vop, Vec<bool>> = HashMap::new();
+        seen.insert(start, Vec::new());
+        let mut queue = std::collections::VecDeque::from([start]);
+        let mut word = None;
+        while let Some(current) = queue.pop_front() {
+            if preserves_z(current) {
+                word = Some(seen[&current].clone());
+                break;
+            }
+            for (here, generator) in [(true, sx), (false, sz)] {
+                let next = vop::compose(current, generator);
+                if !seen.contains_key(&next) {
+                    let mut path = seen[&current].clone();
+                    path.push(here);
+                    seen.insert(next, path);
+                    queue.push_back(next);
+                }
+            }
+        }
+        let word = word.ok_or_else(|| {
+            Error::InvalidState(format!(
+                "no local-complementation word aligns site {a} to the Z axis"
+            ))
+        })?;
+        for here in word {
+            if here {
+                self.local_complement(a)?;
+            } else {
+                self.local_complement(helper)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Collapse site `a` onto `outcome` in the computational basis,
+    /// returning the probability that outcome had.
+    ///
+    /// The graph-state measurement update, done in the description rather
+    /// than on amplitudes:
+    ///
+    /// * an **isolated** site carries the product state `V|+⟩` (every site
+    ///   is Hadamarded in [`PolarityBundle::to_state`], and no edge touches
+    ///   it), so the collapse is a single-qubit projection and the
+    ///   probability comes straight from `V`'s matrix — it can be 0 or 1;
+    /// * a site with a **neighbour** is aligned to the `Z` axis by
+    ///   an internal local-complementation search, after which its two outcomes are
+    ///   equally likely. Its edges are deleted, a `Z` is applied to each
+    ///   former neighbour when the bare graph state's eigenvalue is `−1`,
+    ///   and the site is left in the definite state it was projected onto.
+    ///
+    /// The bookkeeping that makes the sign right: with `V† Z V = (−1)^ν Z`,
+    /// the physical `Z_a` eigenvalue is `(−1)^ν` times the graph state's,
+    /// so a physical outcome `b` means a graph eigenvalue of `−1` exactly
+    /// when `b ≠ ν`.
+    pub fn collapse(&mut self, a: u32, outcome: bool) -> Result<f64> {
+        let s = self.check(a)?;
+        // The collapse is journalled as ONE semantic step. Its internal
+        // complementations and unlinks are suppressed, because replay
+        // re-runs `collapse` and would otherwise apply them twice — and
+        // because the history worth keeping is "site a was measured and
+        // came out `outcome`", not the search that implemented it. The
+        // internals are deterministic given the description, so the single
+        // entry reproduces them exactly.
+        let mark = self.journal.len();
+        if self.links[s].is_empty() {
+            // Product state V|+⟩: read the probability off the matrix.
+            let v = self.site_operator(s);
+            let m = vop::matrix::<C64>(v).ok_or_else(|| Error::UnsupportedForAlgebra {
+                gate: "vertex operator".into(),
+                algebra: "non-complex".into(),
+            })?;
+            let root = std::f64::consts::FRAC_1_SQRT_2;
+            let zero = (m[0] + m[1]) * C64::new(root, 0.0);
+            let one = (m[2] + m[3]) * C64::new(root, 0.0);
+            let (kept, total) = (
+                if outcome { one } else { zero }.norm_sqr(),
+                zero.norm_sqr() + one.norm_sqr(),
+            );
+            let probability = if total > 0.0 { kept / total } else { 0.0 };
+            if probability > 0.0 {
+                self.fibers[s].spin = false;
+                self.fibers[s].vop = definite_vop(outcome);
+                self.journal.truncate(mark);
+                self.journal.push(BundleOp::Collapse {
+                    site: a,
+                    outcome,
+                    neighbours: 0,
+                });
+            }
+            return Ok(probability);
+        }
+
+        self.align_to_z(a)?;
+        let v = self.site_operator(s);
+        let (pauli, negated) = vop::map_pauli(vop::inverse(v), PAULI_Z, false);
+        debug_assert_eq!(pauli, PAULI_Z, "align_to_z leaves the Z axis fixed");
+        // Graph-state eigenvalue is −1 exactly when the physical outcome
+        // disagrees with the operator's sign.
+        let flipped = outcome != negated;
+        let neighbours: Vec<u32> = self.links[s].clone();
+        for &w in &neighbours {
+            self.unlink(a, w)?;
+        }
+        if flipped {
+            for &w in &neighbours {
+                let index = w as usize;
+                self.fibers[index].vop = vop::compose(self.fibers[index].vop, vop::pauli_z());
+            }
+        }
+        self.fibers[s].spin = false;
+        self.fibers[s].vop = definite_vop(outcome);
+        self.journal.truncate(mark);
+        self.journal.push(BundleOp::Collapse {
+            site: a,
+            outcome,
+            neighbours: neighbours.len(),
+        });
+        Ok(0.5)
     }
 
     /// Bring a vertex operator into the diagonal subgroup using local
@@ -1408,9 +1602,11 @@ impl PolarityBundle {
             )));
         };
         // Breadth-first over words in {complement here, complement at
-        // the helper}, tracking only the operator.
-        let sx = vop::inverse(vop::sqrt_x());
-        let sz = vop::sqrt_z();
+        // the helper}, tracking only the operator — through the spin, so
+        // the word the search predicts is the word the complementations
+        // actually apply.
+        let sx = through_spin(vop::inverse(vop::sqrt_x()), self.fibers[s].spin);
+        let sz = through_spin(vop::sqrt_z(), self.fibers[s].spin);
         let start = self.fibers[s].vop;
         let mut seen = std::collections::HashMap::new();
         seen.insert(start, Vec::<bool>::new());
@@ -1677,6 +1873,61 @@ impl PolarityBundle {
     }
 }
 
+/// The vertex-operator group's index for the Pauli `Z`.
+const PAULI_Z: u8 = 2;
+
+/// A generator as a fiber carrying a spin sees it.
+///
+/// A site's operator is `U · Z^spin`, so right-multiplying *that* by `g`
+/// means composing `Z^spin g Z^spin` onto `U` (`Z` is its own inverse).
+/// `sqrt_z` commutes with `Z` and is unaffected; `sqrt_x` does not, and
+/// getting this wrong made local complementation silently incorrect on any
+/// site with a spin set — latent until the collapse rules exercised it.
+fn through_spin(g: vop::Vop, spin: bool) -> vop::Vop {
+    if spin {
+        vop::compose(vop::compose(vop::pauli_z(), g), vop::pauli_z())
+    } else {
+        g
+    }
+}
+
+/// The vertex operator that puts an isolated site in `|0⟩` or `|1⟩`.
+///
+/// Every site is Hadamarded by [`PolarityBundle::to_state`], so an isolated
+/// site holds `V|+⟩`; the operator wanted is the one sending `|+⟩` to the
+/// requested basis state. Found by searching the group's own matrices
+/// rather than hardcoded, so it cannot drift from the group.
+fn definite_vop(outcome: bool) -> vop::Vop {
+    static FOUND: OnceLock<(vop::Vop, vop::Vop)> = OnceLock::new();
+    let (zero, one) = *FOUND.get_or_init(|| {
+        let root = std::f64::consts::FRAC_1_SQRT_2;
+        let mut zero = None;
+        let mut one = None;
+        for v in 0..vop::count() as vop::Vop {
+            let Some(m) = vop::matrix::<C64>(v) else {
+                continue;
+            };
+            let top = (m[0] + m[1]) * C64::new(root, 0.0);
+            let bottom = (m[2] + m[3]) * C64::new(root, 0.0);
+            if bottom.norm() < 1e-12 && zero.is_none() {
+                zero = Some(v);
+            }
+            if top.norm() < 1e-12 && one.is_none() {
+                one = Some(v);
+            }
+        }
+        (
+            zero.expect("some Clifford sends |+> to |0>"),
+            one.expect("some Clifford sends |+> to |1>"),
+        )
+    });
+    if outcome {
+        one
+    } else {
+        zero
+    }
+}
+
 impl<S: Scalar> Backend<S> for PolarityBundle {
     fn name(&self) -> &str {
         "bundle"
@@ -1730,11 +1981,43 @@ impl<S: Scalar> Backend<S> for PolarityBundle {
         }
     }
 
-    fn project(&mut self, _qubit: usize, _outcome: bool, _renorm: f64) {
-        // Measurement keeps a graph state in its class, but the update
-        // is a different algorithm from gate action and is not written
-        // yet. Silently collapsing to something wrong would be worse
-        // than leaving the state alone and letting `measure` fail.
+    fn project(&mut self, qubit: usize, outcome: bool, _renorm: f64) {
+        // The graph description stays normalized, so `renorm` has nothing
+        // to scale. An outcome of probability zero cannot be represented —
+        // it is the zero vector — and leaves the state untouched; `measure`
+        // never selects one, and `collapse` reports the probability so a
+        // caller who cares can check.
+        let _ = self.collapse(qubit as u32, outcome);
+    }
+
+    /// Measure natively: the outcome probability comes from the graph
+    /// description, not from materialized amplitudes, so this is
+    /// `O(deg²)` rather than `O(2^n)`.
+    fn measure(&mut self, qubit: usize, rng: &mut Prng) -> Result<bool> {
+        let s = self.check(qubit as u32)?;
+        let outcome = if self.links[s].is_empty() {
+            // A product state: the bias is whatever the operator says.
+            let v = self.site_operator(s);
+            let m = vop::matrix::<C64>(v).ok_or_else(|| Error::UnsupportedForAlgebra {
+                gate: "vertex operator".into(),
+                algebra: "non-complex".into(),
+            })?;
+            let root = std::f64::consts::FRAC_1_SQRT_2;
+            let zero = ((m[0] + m[1]) * C64::new(root, 0.0)).norm_sqr();
+            let one = ((m[2] + m[3]) * C64::new(root, 0.0)).norm_sqr();
+            let total = zero + one;
+            if total <= 0.0 {
+                return Err(Error::InvalidState(
+                    "an isolated fiber carries no weight".into(),
+                ));
+            }
+            rng.next_f64() < (one / total).clamp(0.0, 1.0)
+        } else {
+            // A site with a neighbour is unbiased in Z after alignment.
+            rng.next_f64() < 0.5
+        };
+        self.collapse(qubit as u32, outcome)?;
+        Ok(outcome)
     }
 
     fn reset(&mut self) {
