@@ -1035,6 +1035,45 @@ pub mod constellation {
         Some(digits)
     }
 
+    /// Addition in the residue group `E8/2^m E8`, expressed on the
+    /// tower's bit encoding: decode both operands through
+    /// [`compose`], add as lattice points, and re-encode through
+    /// [`decompose`].
+    ///
+    /// This is the group the native operators act on, and it is **not**
+    /// bitwise XOR beyond one level: `class_of` is linear, so digit 0 of a
+    /// sum is the XOR of the operands' digit 0, but the division by two
+    /// that extracts higher digits carries. One copy therefore behaves as
+    /// `F₂⁸` and every deeper tower does not — measured in
+    /// `tests/phase_degree.rs`.
+    pub fn residue_add(levels: usize, a: u64, b: u64) -> u64 {
+        let digits = |bits: u64| -> Vec<u8> {
+            (0..levels)
+                .map(|k| ((bits >> (8 * k)) & 0xff) as u8)
+                .collect()
+        };
+        let (pa, pb) = (compose(&digits(a)), compose(&digits(b)));
+        let sum: Point = std::array::from_fn(|k| pa[k] + pb[k]);
+        let out = decompose(&sum, levels).expect("a sum of lattice points is a lattice point");
+        out.iter()
+            .enumerate()
+            .fold(0u64, |acc, (k, &d)| acc | (u64::from(d) << (8 * k)))
+    }
+
+    /// The phase the native modulation `M_q` applies to the residue whose
+    /// tower encoding is `bits` — exposed so the operator's own polynomial
+    /// degree can be measured by [`crate::phase`] rather than assumed.
+    pub fn modulation_phase(levels: usize, q: &Point, bits: u64) -> C64 {
+        let digits: Vec<u8> = (0..levels)
+            .map(|k| ((bits >> (8 * k)) & 0xff) as u8)
+            .collect();
+        let p = compose(&digits);
+        let modulus = 4i128 << levels;
+        let r = pdot(q, &p).rem_euclid(modulus);
+        let angle = std::f64::consts::TAU * r as f64 / modulus as f64;
+        C64::new(angle.cos(), angle.sin())
+    }
+
     /// The constellation as a first-class qubit [`Backend`], named
     /// `"e8-constellation"`: amplitudes keyed by **lattice points** —
     /// residues in `E8/2^m E8` with `m = ⌈n/8⌉` — so a basis state is
@@ -2196,6 +2235,16 @@ pub mod cube {
 ///    a gate driven through the qubit [`Backend`](crate::backend::Backend)
 ///    path. The difference
 ///    between the two is the answer to "is this universal".
+///
+/// The obstruction this module measures — a `t` breaking the linear-character
+/// class by √2 — is resolved in [`crate::phase`], which measures the
+/// *polynomial degree* of a phase function. The native operators are
+/// characters of the **residue group** (degree one there, high degree on the
+/// register's bits); a `t` is degree three on both. The √2 itself is that
+/// instrument's order-two residual, `|i − 1|`. Whether a *quadratic*
+/// character exists on `E8/2^m E8` — flagged here as the sharpest open
+/// question — is answered there: yes, and the degree ladder it sits in is
+/// the Clifford hierarchy.
 pub mod across {
     use super::constellation::{basis, class_of, compose, E8ConstellationState, Point};
     use super::Root;

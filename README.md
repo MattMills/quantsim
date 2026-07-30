@@ -1078,6 +1078,22 @@ entirely trivial accessors and defensive guards:
   and the envelope separates the representations by *measured* bytes per
   stored amplitude — dense ≫ 10× the sparse maps, an eight-coordinate
   lattice key strictly above a `u64` one.
+- **phase_degree** — degree 1 is verified to be *exactly* being a
+  character, and the degree law
+  `multilinear + log₂(denominator) − 1` is confirmed on eleven diagonals
+  spanning both dials independently, with the two consequences asserted
+  separately: a diagonal is a character iff both dials are minimal, and the
+  ladder sorts `z`/`s`,`cz`/`t`,`cs`,`ccz`/`ct`,`cccz` into Clifford-hierarchy
+  levels 1/2/3/4. One E8 volume is checked to be the bit group over **all**
+  256 × 256 pairs; two volumes differ on most. The native modulation is
+  degree 1 on the residue group and witnessed above 3 on the bits, while a
+  `t` is degree 3 on both — and its order-two residual is pinned to √2 and
+  its order-one to `2 sin(π/8)`, tying this module to `e8_across` and
+  `selfhost` numerically rather than by narrative. Linearizing is shown
+  unable to lower the degree below the denominator floor. The instrument's
+  soundness asymmetry is tested too: a sampled sweep certifies nothing
+  (`certified_degree` is `None`) but still witnesses (`exceeds` holds), and a
+  constant phase stops the sweep at the first vanishing order.
 - **memo** — progressive gate-result memoization. The whole **registry**
   survives it: 24 circuits drawn from the registry's own gates (aliases and
   parametric gates at random angles included) at three fusion widths, every
@@ -1285,6 +1301,87 @@ converts through the tower bijection — its clifford-brickwork ceiling is
 set by *time*, not memory, at a support of only 2048. The honest summary
 is that the constellation's cost tracks the lattice↔bits conversion
 rather than how much state it holds.
+
+### What the √2 was
+
+```sh
+cargo run --release --example phase_degree
+```
+
+Two modules above hit the same number from different directions: `e8::across`
+found a `t` breaking the native linear-character class by **√2**, and
+`selfhost` found a `t` untouched by linearization with the same **√2**
+residual. `phase` resolves it by measuring the thing neither was measuring.
+
+For a phase function `f: G → U(1)` on the group indexing the register, take
+the discrete derivative `(Δ_a f)(p) = f(p+a)/f(p)` and iterate. `f` has
+**degree ≤ d** when every `(d+1)`-fold derivative is identically 1 — and
+**degree 1 is exactly being a character**, since `Δ_a f` not depending on `p`
+*is* `f(p+a) = f(p)f(a)`. So "is it a character" and "what is its degree" are
+one question, and the degree says how far from one a diagonal is.
+
+Measured on nine diagonals spanning both dials independently:
+
+| gate | multilinear | log₂ N | predicted | measured | character? |
+|---|---|---|---|---|---|
+| `z` | 1 | 1 | 1 | **1** | yes |
+| `s` | 1 | 2 | 2 | **2** | no |
+| `t` | 1 | 3 | 3 | **3** | no |
+| `t^½` | 1 | 4 | 4 | **4** | no |
+| `cz` | 2 | 1 | 2 | **2** | no |
+| `cs` | 2 | 2 | 3 | **3** | no |
+| `ct` | 2 | 3 | 4 | **4** | no |
+| `ccz` | 3 | 1 | 3 | **3** | no |
+| `cccz` | 4 | 1 | 4 | **4** | no |
+
+Every case matches
+
+```
+phase degree = multilinear degree + log₂(denominator) − 1
+```
+
+so a diagonal is a character exactly when **both** dials sit at their
+minimum: multilinear degree one *and* ±1 valued. And the degree ladder is
+the **Clifford hierarchy for diagonal gates, rediscovered from
+measurement**: degree 1 the ±1 characters, degree 2 Clifford (`s`, `cz`),
+degree 3 the first non-Clifford diagonals (`t`, `cs`, `ccz`), degree 4
+(`ct`, `cccz`).
+
+**Why the stack fixed a `ccz` but not a `t`.** `selfhost` reduces the
+*multilinear* term. The log-denominator term is untouched, so the floor is
+`log₂(denominator)`:
+
+```
+ccz  degree 3 -> 1   layers 2   multilinear 3 -> 1   character after: true
+t    degree 3 -> 3   layers 0   multilinear 1 -> 1   character after: false
+```
+
+A `t`'s entire degree is its denominator, so no depth of stack can help.
+That derives the earlier observation instead of restating it.
+
+**And the two groups.** The constellation's native operators and the qubit
+path are characters of *different* groups:
+
+```
+1 volume,  n=8:  residue addition differs from XOR on      0 of 65536 pairs
+  native modulate  on residue  degree 1     on bits/XOR  degree 1
+  qubit t          on residue  degree 3     on bits/XOR  degree 3
+
+2 volumes, n=16: residue addition differs from XOR on 229292 of 262144 pairs
+  native modulate  on residue  degree 1     on bits/XOR  degree 5
+  qubit t          on residue  degree 3     on bits/XOR  degree 3
+```
+
+At one volume the two groups **coincide exactly** — `E8/2E8 ≅ F₂⁸` and
+`class_of` is linear, verified over all 256 × 256 pairs. From two volumes on
+they do not, because extracting higher digits carries. A modulation is
+degree 1 on the residue group and degree 5 on the bits; a `t` is degree 3 on
+both.
+
+The √2 itself is this instrument's **order-two residual for a `t`**:
+`|i − 1| = 1.414214`. The full ladder for `t` is
+`[0.765, 1.414, 2.000, 0]` — the first entry `2 sin(π/8)`, then √2, then the
+maximum a phase can be off by, then vanishing at order 4.
 
 ### An object that computes itself, one layer per degree
 
@@ -1539,6 +1636,9 @@ src/
                  polarity<N> (N twisted polarities per amplitude),
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
+  phase.rs       polynomial degree of a phase function by iterated
+                 discrete derivatives: degree 1 IS being a character, and
+                 the degree ladder is the Clifford hierarchy
   memo.rs        progressive gate-result memoization: operations as n-wide
                  objects over a content-addressed entry table, with a
                  journal that unwinds and rewinds to re-explore branches
@@ -1621,7 +1721,9 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  selfhosted_stack (one layer per degree, the diagonal
                  linearized, and what the trade costs),
                  gate_memoization (entry reuse, the fusion dial, and
-                 branch re-exploration over a shared prefix)
+                 branch re-exploration over a shared prefix),
+                 phase_degree (the degree law, the Clifford hierarchy
+                 rediscovered, and the sqrt(2) identified)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

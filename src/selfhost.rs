@@ -57,6 +57,25 @@
 //! and then applies the diagonal as single-qubit phases as often as it
 //! likes, so the question is amortization, and [`amortization`] measures
 //! the crossover on real runs rather than asserting one.
+//!
+//! # Why a `t` is beyond it, derived rather than observed
+//!
+//! [`crate::phase`] measures a diagonal's **phase degree** — the order at
+//! which its iterated discrete derivative vanishes — and degree one is
+//! exactly being a character. The measured law is
+//!
+//! ```text
+//! phase degree = multilinear degree + log2(denominator) - 1
+//! ```
+//!
+//! This module reduces the *first* term to one. The second is untouched by
+//! linearization, so the floor is `log2(denominator)`: a diagonal over
+//! `2^b`-th roots has phase degree at least `b`, and only `b = 1` — a ±1
+//! valued diagonal — is a character. A `ccz` has `b = 1` and reduces to a
+//! character; a `t` has `b = 3` and its entire degree is the denominator
+//! term, so no depth of stack can help. That explains the measurement
+//! [`LinearizationReport::became_character`] reports rather than merely
+//! recording it.
 
 use std::collections::BTreeMap;
 

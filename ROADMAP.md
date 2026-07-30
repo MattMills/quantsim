@@ -504,6 +504,60 @@ Next rungs:
   time. What a *sequence* of native operations reaches — and whether the
   linear-per-copy advantage compounds or saturates — is unmeasured.
 
+## The √2 obstruction — RESOLVED (measured)
+
+Two modules reported the same number from different directions:
+`e8::across` measured a `t` breaking the native linear-character class by
+√2, and `selfhost` measured a `t` untouched by linearization with the same
+√2 residual. `phase` resolves it.
+
+The instrument is the iterated discrete derivative
+`(Δ_a f)(p) = f(p+a)/f(p)`: a phase function has **degree ≤ d** when every
+`(d+1)`-fold derivative vanishes, and **degree 1 is exactly being a
+character**. Measured results:
+
+- **The degree law.** `phase degree = multilinear degree +
+  log₂(denominator) − 1`, confirmed on eleven diagonals spanning both dials
+  independently. A diagonal is a character iff both dials are minimal:
+  multilinear degree one AND ±1 valued.
+- **The ladder is the Clifford hierarchy**, rediscovered from measurement:
+  degree 1 the ±1 characters, 2 Clifford (`s`, `cz`), 3 the first
+  non-Clifford diagonals (`t`, `cs`, `ccz`), 4 (`ct`, `cccz`).
+- **The self-host floor, derived.** The stack reduces the multilinear term
+  only, so the floor is `log₂(denominator)`. A `ccz` (`b = 1`) reduces to a
+  character; a `t` (`b = 3`) cannot at any depth. This explains the earlier
+  measurement rather than restating it.
+- **Two groups, not one.** At one E8 volume the residue group IS the bit
+  group under XOR — verified over all 256 × 256 pairs, because `E8/2E8 ≅
+  F₂⁸` and `class_of` is linear. From two volumes on they differ on most
+  pairs, and the native modulation is degree 1 on the residue group while
+  being degree 5 on the bits. A `t` is degree 3 on both. The native
+  operators and the qubit path are characters of *different* groups, and
+  each is high-degree from the other's side.
+- **The number itself.** √2 is the order-two residual of the `t` phase,
+  `|i − 1|`. The full ladder is `[2 sin(π/8), √2, 2, 0]`.
+
+So the question "does a quadratic character exist on `E8/2^m E8`" has an
+answer: yes — degree 2 is the Clifford level, and an `s`-like denominator-4
+phase is one. It does not make a `t` native, because `t` is degree 3.
+
+Next rungs:
+
+- **Add the degree-2 and degree-3 native operators and re-measure the
+  class.** `across` currently implements translations, modulations,
+  reflections, permutations and the coordinate DFT — all degree 1. The
+  degree ladder says what is missing at each level; adding level 2 should
+  enlarge the measured class to coset-with-quadratic-character, and level 3
+  should reach `t`. Whether the *support* stays a coset under those is the
+  measurement to take.
+- **A degree axis in the boundary atlas.** Phase degree is a structural
+  resource like support or bond dimension. A family's maximum diagonal
+  degree ought to be an axis parameter, so the atlas prices circuits by
+  where they sit in the hierarchy.
+- **Non-diagonal degree.** The instrument is defined for phase functions.
+  The Clifford hierarchy is not restricted to diagonal gates, and whether
+  this derivative construction extends to the general case is open.
+
 ## Progressive gate-result memoization — SHIPPED (core)
 
 `memo` treats qubit operations as `n`-wide operation objects over a shared,
