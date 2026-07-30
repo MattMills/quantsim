@@ -338,6 +338,38 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
             )
         },
     ));
+    // The phase-field representation: cost is the phase polynomial's
+    // monomial count, and the assumption is that the circuit stays
+    // diagonal-with-root-of-unity-entries over an affine subcube. A gate
+    // that leaves the class materializes and the axis honestly reads
+    // dense from then on.
+    axes.push(probe(
+        "phase-field",
+        crate::backend::PhaseFieldState::new,
+        circuit,
+        &reg,
+        |s: &crate::backend::PhaseFieldState| match s.monomials() {
+            Some(m) => (format!("{m} monomials"), true),
+            None => (format!("materialized ({} escapes)", s.escapes()), true),
+        },
+    ));
+
+    // The braided representation: cost is the braid word's length while
+    // the circuit stays inside the realization's generators. Its wall is
+    // the *time* axis, not memory — reading an amplitude replays the
+    // word — and the atlas certifying only when both are sub-exponential
+    // is exactly what should refuse it.
+    axes.push(probe(
+        "braided",
+        crate::backend::BraidedState::new,
+        circuit,
+        &reg,
+        |s: &crate::backend::BraidedState| match s.word() {
+            Some(w) => (format!("word length {}", w.len()), true),
+            None => (format!("materialized ({} escapes)", s.escapes()), true),
+        },
+    ));
+
     axes.push(probe(
         "clifford-framed",
         CliffordFramedState::<C64>::new,

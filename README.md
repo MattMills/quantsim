@@ -738,6 +738,48 @@ measure rather than hide.
   orbits are finite; the property belongs to the path, not only to the
   group.
 
+- **Both of the above as registered representations**
+  ([`phase_field`](src/backend/phase_field.rs),
+  [`braided_state`](src/backend/braided_state.rs)) — the two research
+  modules are not only mathematics beside the library; each ships the
+  `Backend` it implies, so both stand in the *same* conformance and cost
+  harness as dense, sparse, MPS and the rest.
+  **`phase-field`** holds the state as `scale · Σ_x ω_M^{P(x)}|x⟩` on an
+  affine subcube, with `P` a multilinear polynomial over `ℤ/M` stored as
+  a monomial table and the modulus grown by `lcm` as gates demand it —
+  the `padic` radix doing its job inside a backend. Nothing is a float
+  until an amplitude is read, so `verify_backend` over the whole registry
+  returns `max_amplitude_deviation` of **exactly 0.0**, per gate and
+  across 24 random circuits. On the atlas it is a **certified axis**: the
+  IQP core (H layer, all-pairs `cz`, `t` layer) reads polynomial in
+  *both* memory and wall-clock and the verdict names it —
+  `Classical { via: ["mps", "phase-field"] }` — at 608→1976 bytes across
+  widths 6→12 where dense runs 1056→65568. Its class boundary is exactly
+  the physics: add the closing Hadamard layer and the axis goes
+  exponential (base 1.96) and drops out of the verdict, because `h` on an
+  already-free qubit is the interference step. An eighth-turn `rz` stays
+  in class; `rz(0.371)` does not.
+  **`braided`** holds the state as a braid word over a realization's
+  generators and materializes only when an amplitude is asked for. It
+  also conforms at **0.0** deviation, and on a pure-braid family the
+  atlas measures the split the module predicted: memory **Constant** —
+  280 bytes at every width — and time **Exponential** at base 5.6. Since
+  the atlas certifies only when both are sub-exponential, it correctly
+  refuses to certify: the representation trades one exponential for
+  another, and saying so is the point of putting it in. Two further
+  honest costs are reported rather than buried — the generator alphabet
+  is `(strands−1)·4^n` (28 KiB at 4 qubits, 15 MiB at 8), which is why it
+  is derived lazily and never charged to `memory_bytes`; and past 16
+  strands the realization **refuses**, which `compare_backends` records
+  as a measured error instead of a wrong answer.
+  One thing the measurement contradicted: the Majorana generators are
+  Clifford, so `clifford-framed` ought to hold these circuits cheaply,
+  and on this family it reads exponential too (base 1.69). The frame's
+  assumption is about the **gate set**, not the unitary — generators
+  arriving as raw matrices are outside what it can exploit. That is a
+  limitation of the frame surfaced by adding the axis, not a point in
+  the braided representation's favour.
+
 - **Interference as a congruence** ([`padic`](src/padic.rs)) — a phase
   lives in `ℤ/M` where `M` is the modulus the source geometry supplies,
   and two structural facts carry a representation.
@@ -1825,7 +1867,9 @@ src/
                  append), BoundCircuit<S> (bind-time validation, inverse())
   backend/       Backend<S> trait + dense / sparse / adaptive / factored /
                  mps / mera / bundle (graph-state) / interference /
-                 device / frames / clifford_frame, BackendRegistry<S>,
+                 device / frames / clifford_frame / phase_field (exact
+                 phase polynomial over ℤ/M) / braided_state (the braid
+                 word as the storage), BackendRegistry<S>,
                  pauli_expectation
   schedule.rs    evented scheduler: simultaneous loops, events, recursive
                  measurement feedback (adaptive trees)

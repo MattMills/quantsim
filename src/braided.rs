@@ -143,7 +143,7 @@ use crate::scalar::C64;
 
 /// Largest strand count for which the Majorana realization is built:
 /// the matrices are `2^{strands/2}` on a side.
-pub const MAX_STRANDS: usize = 12;
+pub const MAX_STRANDS: usize = 16;
 
 /// How far [`run_path`] searches for a period element's projective
 /// order before reporting that it did not close.

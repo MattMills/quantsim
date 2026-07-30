@@ -982,13 +982,19 @@ bracket's order from measurement, `realized_rank` measuring the collapse
 onto `so(6)`, and `RecursionLedger` with `projective_order` as the
 decisive per-path closure test. Remaining work:
 
-- **A boundary-atlas axis, not just a module.** `orbit_closure` measures
-  exactly the resource the atlas is built to price — *braid-word depth*
-  — but nothing registers it as an `AxisProbe`. A `BraidedState`
-  backend storing the word plus the realization's group element would
-  read flat on Ising families and exponential on Fibonacci ones,
-  reproducing the Clifford/T boundary from a completely different
-  direction. The measurement is done; the plumbing is not.
+- **A boundary-atlas axis — SHIPPED.** `BraidedState`
+  (`src/backend/braided_state.rs`) stores the word and materializes on
+  demand; it is registered, passes `verify_backend` at 0.0 deviation,
+  and appears in `resource_profile`. The measurement came out as the
+  split rather than the win: memory Constant on a pure-braid family,
+  wall-clock exponential, so the atlas correctly declines to certify it.
+  What is still open is the *closed-orbit* form — for a finite image
+  (Ising) the state is one of `k` group elements, so an enumerated
+  orbit table would make amplitude lookup `O(1)` and put the time axis
+  inside the bound too. That needs the group enumeration
+  `orbit_closure` already performs to be cached and keyed, and it only
+  helps where the orbit closes, which is exactly the measured
+  distinction.
 - **Larger strand counts.** `MAX_STRANDS = 12` is structural (the
   Majorana matrices are `2^{strands/2}`), and `orbit_closure` at 8
   strands is a BFS over a group whose order grows fast. Walking the
@@ -1036,12 +1042,17 @@ golden ratio's Hurwitz quantity pinned. Remaining work:
   below for the congruence, ordinary from above for the magnitude) is
   the honest shape of that, and the residual is already the natural
   dial.
-- **The register as a backend.** `factored_field` builds a
-  `CompoundRegister` per wave and reads amplitudes back out. Making it a
-  registered representation — a phase field as a rank-`k` CRT product
-  state, with the rank growing only when waves genuinely mix — would put
-  it in `conformance` and the boundary atlas alongside the others, on
-  the axis it is exponential in (the number of interfering components).
+- **The register as a backend — SHIPPED, in its qubit form.**
+  `PhaseFieldState` (`src/backend/phase_field.rs`) is the registered
+  representation: an exact phase polynomial over `ℤ/M` on an affine
+  subcube, conforming at 0.0 amplitude deviation and certifying the IQP
+  core on the atlas in both memory and time. What is *not* shipped is
+  the rank-`k` form — the backend holds one phase field, so two
+  genuinely mixed waves materialize where a rank-2 object would not.
+  Growing the rank on demand, with the atlas axis being the interfering-
+  component count, is the remaining rung and the natural place for
+  `factored_field`'s per-wave registers to become a backend rather than
+  a measurement.
 - **Multi-dimensional phase arguments.** `factored_field` takes a 1-D
   argument; an `n`-D field is a product over the axes and each axis
   CRT-factors, so the construction should compose directly. It has not

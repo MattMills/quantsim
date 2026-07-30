@@ -18,6 +18,7 @@
 //! [`BackendRegistry`], exactly like research gates in the gate registry.
 
 mod adaptive;
+mod braided_state;
 mod clifford_frame;
 mod dense;
 mod device;
@@ -26,9 +27,11 @@ mod frames;
 mod interference;
 mod mera;
 mod mps;
+mod phase_field;
 mod sparse;
 
 pub use adaptive::AdaptiveState;
+pub use braided_state::{BraidedState, Realization};
 pub use clifford_frame::{
     CliffordFrameStats, CliffordFramedState, PauliString, CLIFFORD_DIAGONAL_MAX,
     CLIFFORD_RECOGNITION_MAX,
@@ -40,6 +43,7 @@ pub use frames::{FrameStats, FramedState, FRAME_CONJUGATION_MAX};
 pub use interference::{InterferenceRecord, InterferenceState};
 pub use mera::{MeraConfig, MeraState, MERA_LOAD_MAX_QUBITS, MERA_MAX_QUBITS};
 pub use mps::{MpsConfig, MpsState, MPS_LOAD_MAX_QUBITS, MPS_MAX_QUBITS, MPS_MAX_WINDOW};
+pub use phase_field::{PhaseFieldState, MAX_FIELD_MODULUS, MAX_ROOT_ORDER};
 pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
 
 use std::collections::HashMap;
