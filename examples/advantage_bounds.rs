@@ -67,7 +67,13 @@ fn main() -> Result<()> {
     println!("  factored         entangled clusters stay small");
     println!("  mps              entanglement across linear cuts stays small");
     println!("  mera             entanglement across tree cuts stays small");
-    println!("  clifford-framed  non-Clifford content stays small");
+    println!("  clifford-framed  non-Clifford content stays small
+  phase-field      the circuit stays diagonal-with-root-of-unity entries
+                   over an affine subcube (an IQP *core*; the closing
+                   Hadamard layer is exactly where the bet fails)
+  braided          the circuit is a word in a braid realization's
+                   generators — flat in memory, but replaying the word to
+                   read an amplitude is exponential, so it never certifies");
     println!("  each is efficient exactly while its bet holds; the scan below measures");
     println!("  which bet holds per family, and classifies every axis's growth law.\n");
 
