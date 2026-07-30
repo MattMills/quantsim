@@ -19,7 +19,7 @@
 //!    A phase `e^{2πi a x / M}` is therefore a **product of single-component
 //!    phases** — [`crt_phase_factors`] computes the per-component
 //!    coefficients, and [`factored_field`] applies them to a
-//!    [`CompoundRegister`](crate::mixed::CompoundRegister) of mixed arity.
+//!    [`CompoundRegister`] of mixed arity.
 //!    The whole `M`-point phase field is stored in `Σ p_i^{n_i}` entries
 //!    instead of `M`, exactly, with the deviation measured at ~1e-15.
 //!    This is the Good–Thomas factorization read as a *representation*:
@@ -766,7 +766,7 @@ impl FactoredField {
 }
 
 /// Hold each wave's **entire phase field over `ℤ/M`** on a
-/// [`CompoundRegister`](crate::mixed::CompoundRegister) whose sites are
+/// [`CompoundRegister`] whose sites are
 /// the CRT components, and measure the assembled interference pattern
 /// against the direct sum.
 ///

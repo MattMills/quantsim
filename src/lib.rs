@@ -64,6 +64,7 @@
 
 pub mod backend;
 pub mod bounds;
+pub mod braided;
 pub mod bundle;
 pub mod causal;
 pub mod characterize;
@@ -113,6 +114,14 @@ pub mod prelude {
         InterferenceState, LatencyMap, MeraConfig, MeraState, MpsConfig, MpsState, PauliString,
         PhysicalOp, SparseState, Topology,
     };
+    pub use crate::braided::{
+        bch_residual, bracket, cayley_ball, commutator_residual, distinct_orbits,
+        fibonacci_generators, free_lie_dim, lyndon_count, lyndon_factorization, majorana_bilinears,
+        majorana_generators, majorana_operators, mat_exp, mutual_encoding, necklace_count,
+        orbit_closure, projective_order, realized_rank, run_path, verify_relations, BraidRelations,
+        BraidWord, FreeWord, LedgerStep, MutualEncoding, OrbitClosure, PeriodicPath,
+        RealizedAlgebra, RecursionLedger, ResidualLaw,
+    };
     pub use crate::bounds::{
         advantage_scan, classify_law, fit_law, resource_profile, select_by_scaling, AxisProbe,
         AxisScan, FamilyScan, Law, LawFit, ResourceProfile, ScalingChoice, ScalingSelection,
@@ -152,6 +161,12 @@ pub mod prelude {
     pub use crate::mixed::{
         clock_d, cshift, fabric, fourier_d, shift_d, swap_dd, CompoundBackend, CompoundRegister,
         FabricReport, Interaction,
+    };
+    pub use crate::padic::{
+        best_rational, character, compare_diagonals, crt_phase_factors, factored_field,
+        fringe_period, geometry_radix, predicted_writes_per_point, resolve, sweep, Character,
+        CrtDiagonal, DiagonalComparison, FactoredField, GeometryRadix, JournalEntry, Order, Radix,
+        Resolution, Sweep, SweepReport, Wave, WaveSystem,
     };
     pub use crate::phase::{
         bit_group_elements, compare_degrees, phase_degree, DegreeComparison, PhaseDegree,

@@ -966,6 +966,99 @@ holding a state. Remaining work:
   exactly-sized types would fix it; `SplitQuaternion` is the
   exactly-sized `N = 2` case in the meantime.
 
+## Braided boundary encoding — SHIPPED (core)
+
+`braided` is live: the register as `n` mutually encoding boundaries with
+the navigation, not the storage, as the new object. Shipped and measured
+— the mutual encoding in both directions (`ρ_A`/`ρ_B` spectra to
+2.2e-16, `ρ_A` alone purifying to a spectrally correct `B`), the
+faithful Artin action making path identity decidable, `cayley_ball`
+growth, `PeriodicPath` with necklace/Lyndon counts and Duval
+factorization, `majorana_generators`/`majorana_bilinears`/
+`fibonacci_generators` with the braid relations verified on the actual
+matrices, `orbit_closure` (Ising closes at 192 / 23040; Fibonacci does
+not within the radius), `commutator_residual`/`bch_residual` fitting the
+bracket's order from measurement, `realized_rank` measuring the collapse
+onto `so(6)`, and `RecursionLedger` with `projective_order` as the
+decisive per-path closure test. Remaining work:
+
+- **A boundary-atlas axis, not just a module.** `orbit_closure` measures
+  exactly the resource the atlas is built to price — *braid-word depth*
+  — but nothing registers it as an `AxisProbe`. A `BraidedState`
+  backend storing the word plus the realization's group element would
+  read flat on Ising families and exponential on Fibonacci ones,
+  reproducing the Clifford/T boundary from a completely different
+  direction. The measurement is done; the plumbing is not.
+- **Larger strand counts.** `MAX_STRANDS = 12` is structural (the
+  Majorana matrices are `2^{strands/2}`), and `orbit_closure` at 8
+  strands is a BFS over a group whose order grows fast. Walking the
+  closure with a Clifford tableau instead of dense matrices would lift
+  it — the Ising image *is* inside the Clifford group, which the crate
+  already represents in `size²`.
+- **The Artin action's cost.** `BraidWord::equals` compares free-group
+  images, which grow with the word; it is exact and it is not cheap.
+  Bringing in a normal form (Garside, or the handle reduction the
+  literature uses) would make `cayley_ball` reach further, and the
+  existing exact comparison is the ready-made oracle to verify it
+  against.
+- **Non-adjacent boundaries.** The realizations braid adjacent strands
+  only, which is what `B_n` presents. A register whose boundaries are
+  coupled by a general fabric would want the *loop braid* or a
+  surface-braid group, and the question of what the Artin action becomes
+  there is open — the honest statement today is that the module measures
+  `B_n`, not an arbitrary boundary graph.
+- **The recursion's second direction.** `RecursionLedger` ascends by
+  applying the inverse word, which is exact but is not the same thing as
+  addressing a rank configuration directly. Reading the state *at* a
+  given rank without replaying the path — the "address is the content"
+  claim in its strong form — needs the group element to be indexable,
+  which is available exactly in the finite (Ising) case and is precisely
+  what the atlas axis above would expose.
+
+## Interference as a congruence — SHIPPED (core)
+
+`padic` is live: phases in `ℤ/M`, the CRT diagonal, the interference
+character from trailing digits, the journalled sweep priced against a
+closed form, and the radix read off the geometry. Shipped and measured —
+`Radix`/`crt_phase_factors`/`factored_field` (75600 amplitudes in 75,
+2.3e-15, register stayed a product), `character` (cost in the prime
+count, not the modulus), `CrtDiagonal` and `compare_diagonals`,
+`Sweep`/`sweep`/`predicted_writes_per_point` (1.9995 predicted, 1.9995
+measured), `fringe_period`, `geometry_radix`/`best_rational` with the
+golden ratio's Hurwitz quantity pinned. Remaining work:
+
+- **The amplitude, not only the character.** The module resolves the
+  *congruence* structure — in-phase, antiphase, fringe period, root-of-
+  unity order — and recovers the amplitude by evaluating the factored
+  field. What it does not yet do is stop early on a *magnitude*
+  tolerance, because the p-adic order resolves fine structure first and
+  the magnitude needs the coarse end. A two-ended sweep (p-adic from
+  below for the congruence, ordinary from above for the magnitude) is
+  the honest shape of that, and the residual is already the natural
+  dial.
+- **The register as a backend.** `factored_field` builds a
+  `CompoundRegister` per wave and reads amplitudes back out. Making it a
+  registered representation — a phase field as a rank-`k` CRT product
+  state, with the rank growing only when waves genuinely mix — would put
+  it in `conformance` and the boundary atlas alongside the others, on
+  the axis it is exponential in (the number of interfering components).
+- **Multi-dimensional phase arguments.** `factored_field` takes a 1-D
+  argument; an `n`-D field is a product over the axes and each axis
+  CRT-factors, so the construction should compose directly. It has not
+  been built or measured, and the module refuses rather than pretending.
+- **The QFT connection made explicit.** `ℤ/M ≅ ∏ ℤ/p_i^{n_i}` is exactly
+  the Good–Thomas factorization of the DFT, and `mixed::fourier_d`
+  already ships the component transforms. Measuring the full
+  `QFT_M = ∏ QFT_{p_i^{n_i}}` decomposition against the crate's existing
+  QFT would tie the phase register to the gate-level machinery rather
+  than running beside it.
+- **Irrational geometry as a first-class regime.** `geometry_radix`
+  reports the convergent's error and stops. Sweeping the *sequence* of
+  convergents and measuring how the interference character converges —
+  which structures are stable under refinement and which flip — is the
+  measurement that would say something about quasi-periodic patterns
+  rather than merely pricing them.
+
 ## Recursive systems — SHIPPED (core)
 
 `recursive` and `e8::cube` are live: a `Site` is a point *or* a

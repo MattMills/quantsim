@@ -663,6 +663,129 @@ BQP support: the standard registry contains a universal set (`h`, `t`, `cx`,
 unavoidable `O(2^n)` memory cost in width `n`, which the width benchmarks
 measure rather than hide.
 
+- **Braided boundary encoding** ([`braided`](src/braided.rs)) — the
+  register as `n` mutually encoding boundaries, navigated by a periodic
+  word, with the path, the address and the stored state as one object.
+  The **mutual encoding** is exact and measured in both directions:
+  `ρ_A` and `ρ_B` are built from different-sized matrices and their
+  spectra agree to 0.0e0 on GHZ and 2.2e-16 on a random state, and `ρ_A`
+  **alone** purifies to a state whose complement is spectrally the true
+  `B` — the holographic claim in its checkable form. The storage claim
+  is reported rather than assumed, and it fails honestly: GHZ across
+  4|4 is rank 2 and stores 66 numbers against 256, while a random state
+  is rank 16 and stores **528 against 256** — boundary encoding is
+  dimension-reducing exactly when the state is, which is the same
+  condition the boundary atlas prices every other representation
+  against.
+  What is new is the **navigation**. The mutual encoding written as a
+  substitution *is* the Artin action `σ_i: x_i ↦ x_i x_{i+1} x_i^{-1}`,
+  `x_{i+1} ↦ x_i` — one boundary conjugated by the other — and Artin's
+  theorem makes it faithful, so `BraidWord::equals` decides path identity
+  exactly (`σ1σ2σ1σ2⁻σ1⁻σ2⁻`, freely irreducible at length 6, is
+  recognized as the identity; the commutator `σ1σ2σ1⁻σ2⁻` is not).
+  `cayley_ball` measures the infinite graph the path navigates by
+  deduplicating words into group elements (`B_3`: 1, 5, 17, 47, 115,
+  263, 577, the ratio falling from 5.00 to 2.19 as the relations bite),
+  and `PeriodicPath` turns a finite period into an infinite path whose
+  orbit types are **necklaces** and whose primitive orbits are **Lyndon
+  words** — Burnside and Möbius closed forms, verified against
+  enumeration, with Duval's factorization tested for both properties it
+  claims. That factorization also answers what happens **between** two
+  orbits, and the answer is sharper than "a boundary layer":
+  `orbit_junction` measures two regimes with nothing in between. When the
+  first orbit's last factor is `≥` the second's first factor the two
+  factorizations already concatenate legally and the join costs exactly
+  nothing; otherwise the smaller tail absorbs the larger head and can
+  swallow everything past the seam (`[1,1,0]` then `[0,1]`: 13 of 24
+  letters, and the second orbit keeps zero factors). A junction is free
+  or total, never partial; it is a property of the *ordered* pair; and it
+  is settled by comparing words, with nothing about the geometry
+  entering. It is not even stable under relabelling — the same orbit
+  joined to itself is free exactly when its period is written in its
+  canonical rotation, and free at 18 letters but merged at 20.
+  The bracket is **measured, not posited**: the group commutator agrees
+  with `exp(ε²[A,B])` at a fitted order of 3.02 and third-order BCH at
+  3.97, and the fit is sharp enough to catch a degeneracy rather than
+  paper over it — for the `su(2)` pair `iX, iZ` the order-4 term
+  `[B,[A,[A,B]]]` vanishes identically and the exponent comes out 5.01.
+  `majorana_bilinears` gives the infinitesimal folds `γ_iγ_{i+1}` whose
+  exponentials are the braid generators (verified to 1e-12), and
+  `realized_rank` measures the collapse: on 6 strands the free Lie
+  algebra runs 5, 15, 55, 205, 829 through degrees 1…5 while the
+  realization runs 5, 9, 12, 14, **15** and stops — the whole infinite
+  path algebra lands inside `so(6)`.
+  Whether the path can *be* the storage is then decided rather than
+  hoped. Two realizations are built and their relations verified on the
+  actual matrices (`≤ 2.2e-16`): the Majorana/Ising braiding, a genuine
+  `B_n` representation at every even strand count, and the 2-dimensional
+  Fibonacci `B_3` representation. The Ising image is **finite** and the
+  closure is walked, not asserted — 4 strands close at 192 projective
+  elements at radius 7, 6 strands at 23040 at radius 16 — so an
+  arbitrarily long Ising path is stored in `O(1)`. The Fibonacci ball is
+  still growing at ratio 1.88 when the search stops, which is evidence
+  and not proof, and the report says exactly that. The same boundary the
+  crate already measures from the other side: Ising braiding is Clifford
+  and `CliffordFramedState` simulates it in `size²`; Fibonacci braiding
+  is universal and nothing does.
+  `RecursionLedger` closes it per path. Every path **ascends exactly**
+  (3.5e-14): the descent erased nothing, because the recursion never
+  flattened the geometry into symbols. Whether the storage is `O(1)` is
+  a separate question and is answered by `projective_order` rather than
+  by counting states — a tolerance-rounded count saturates for a dense
+  orbit too. Measured in the Fibonacci realization: `01` closes at order
+  3, `001` at 2, `0110` at 5, `01011` at 10, and `0111001` **does not
+  close** within 10⁵ periods. Even in a universal realization many short
+  orbits are finite; the property belongs to the path, not only to the
+  group.
+
+- **Interference as a congruence** ([`padic`](src/padic.rs)) — a phase
+  lives in `ℤ/M` where `M` is the modulus the source geometry supplies,
+  and two structural facts carry a representation.
+  **The field factors.** `ℤ/M ≅ ∏ ℤ/p_i^{n_i}`, so a phase over `ℤ/M` is
+  a product of single-component phases and a wave's *entire* field is a
+  product state on a mixed-arity `CompoundRegister`: at
+  `M = 2^4·3^3·5^2·7 = 75600` the field is 75600 amplitudes held in 75,
+  measured at 2.3e-15 against the direct sum, with the register's own
+  volume count confirming no interaction ever coupled two components.
+  `k` interfering waves are a rank-`k` object of size `k·Σ p_i^{n_i}`,
+  not `M` — Good–Thomas read as a representation.
+  **The interference character is a low-digit quantity.**
+  `gcd(Δa, M) = ∏ p_i^{min(v_i, n_i)}` from the per-component p-adic
+  valuations, so the *order of the phase as a root of unity* — 1 exactly
+  in phase, 2 exactly antiphase and total destruction — is decided by
+  **trailing** digits at `Σ_i (v_i + 1)` reads. Measured: `Σ p/(p−1)`,
+  so the modulus grows a millionfold (`2^10·3^5 → 2^30·3^5`) and the
+  cost does not move. That is why the p-adic direction is right here and
+  backwards for magnitude: interference is a congruence condition, and
+  congruences live at the fine end. `compare_diagonals` prices all four
+  consumption orders on one population rather than arguing about them
+  (coarsest-first 1.18 < interleaved 1.71 < shuffled 1.76 < sequential
+  1.98, against a full depth of 10).
+  **The sweep is priced against a closed form.** A lattice walk writes
+  `Σ (1 − p^{−n})/(1 − 1/p)` digits per point *independently of depth*;
+  a scrambled one writes `Σ n(1 − 1/p)`, linear in it. On a grid
+  covering `ℤ/M` exactly: predicted 1.9995 / 6.0000, measured 1.9995 /
+  5.9502 at `2^12`, and 1.4998 / 5.3333 predicted against 1.4998 /
+  5.3126 at `3^8`. The measurement also corrects the obvious guess about
+  *which* lattice order to take — every one lands on the same closed
+  form, so it is the linearity that carries the claim, not the choice of
+  line. The verdict cache is priced next to its hit count and does not
+  pay; what does is `fringe_period`, the exact spacing `M/gcd(Δs, M)`
+  read off the slope's trailing digits with the field never evaluated,
+  confirmed against a brute-force scan.
+  **The radix comes from the geometry**, in closed form, so nothing has
+  to be computed first: `M = lcm` of the path-difference denominators.
+  Commensurate slits are exact at `M = 24`; incommensurate geometry has
+  no finite radix at all and pays a continued-fraction convergent, with
+  the golden ratio — the worst-approximable number — paying most at
+  every budget (denominators 8, 21, 89, 377, 1597, Hurwitz quantity
+  pinned at 1/√5). The quasi-periodic pattern is the expensive one on
+  exactly the axis that makes it quasi-periodic. Everything here is
+  exact for phases that are rational multiples of `2π` — the same
+  fragment `exact` and the qudit registers already live in — and
+  irrational geometry enters only as a measured approximation with a
+  reported error.
+
 ## Quick start
 
 ```rust
@@ -1682,6 +1805,17 @@ src/
                  the pairwise-locality obstruction measured
   recursive.rs   point-or-lattice sites, block-spin RG, phonon
                  substitution, self-participation fixed points
+  braided.rs     braided boundary encoding: mutual (Schmidt/purification)
+                 encoding across a cut, the faithful Artin action making
+                 path identity decidable, periodic navigation words
+                 (necklaces/Lyndon), the bracket as measured geometric
+                 residue, and which realizations let the path be the
+                 storage (Ising closes, Fibonacci does not)
+  padic.rs       interference as congruence: a phase register over ℤ/M,
+                 the CRT diagonal that factors the field into
+                 single-component phases, the interference character read
+                 from trailing digits, and a journalled sweep priced
+                 against a closed form
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
   guard.rs       resource guard: measured memory admission, time budgets
