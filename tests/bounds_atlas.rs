@@ -112,7 +112,20 @@ fn random_circuits_escape_every_assumption_at_once() {
         &[6, 8, 10, 12],
     );
     assert_eq!(scan.verdict, Verdict::Candidate);
+    let mut priced = 0usize;
+    let mut declined = 0usize;
     for a in &scan.axes {
+        if a.costs.iter().any(|c| c.is_none()) {
+            // A representation that cannot hold this family at all has
+            // not *truncated* it — it has declined it, and said so. The
+            // graph-state bundle does exactly that: a random universal
+            // circuit is full of non-Clifford gates and it refuses them
+            // by name. Only a silent approximation would undermine the
+            // escape, so that is what the exactness check is for.
+            declined += 1;
+            continue;
+        }
+        priced += 1;
         assert!(a.exact, "{} truncated — the escape must be exact", a.axis);
         let base = base_of(a.law.as_ref().unwrap());
         assert!(
@@ -121,6 +134,14 @@ fn random_circuits_escape_every_assumption_at_once() {
             a.axis
         );
     }
+    assert!(
+        priced >= 8,
+        "only {priced} axes priced the candidate family"
+    );
+    assert!(
+        declined <= 2,
+        "{declined} axes declined; the candidate family should be holdable by most"
+    );
     // Where the advantage would have to live, made operational: a new
     // representation whose axis stays sub-exponential HERE — while
     // exact — would be a discovered sub-exponential simulation. The

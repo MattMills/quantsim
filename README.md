@@ -7,12 +7,17 @@ parts are swappable:
   generic over a [`Scalar`](src/scalar/mod.rs) trait. Shipped: ℝ, ℂ
   (default), a generic **Cayley–Dickson doubling** `CD<T>` giving
   quaternions ℍ, octonions 𝕆 and sedenions 𝕊, **split-complex** as a
-  first non-Cayley–Dickson algebra, and **[`Ball`](src/scalar/ball.rs)** —
+  first non-Cayley–Dickson algebra,
+  **[`SplitQuaternion`](src/scalar/split_quaternion.rs)** — the
+  coquaternions held as an *inclusion/exclusion pair* (below) —
+  **[`Polarity<N>`](src/scalar/polarity.rs)** — `N` twisted polarities
+  in one amplitude, generalizing that pair — and
+  **[`Ball`](src/scalar/ball.rs)** —
   coarse-grained certified arithmetic (complex midpoint ± certified
   radius; midpoints track `C64` bit-for-bit, radii propagate soundly, and
   `quantize` is a deliberate resolution dial). Planned (see
   [ROADMAP](ROADMAP.md)): truncated p-adics, dual numbers,
-  split-quaternions, Clifford scalars.
+  Clifford scalars.
 - **State representation** — a [`Backend<S>`](src/backend/mod.rs) trait with
   six shipped implementations: **dense** state vector (the BQP reference),
   **sparse** hash-map state, an **adaptive** backend that promotes sparse →
@@ -274,6 +279,283 @@ parts are swappable:
   (logarithmic horizons), and `diameter`/`ball_sizes`/
   `pair_availability` measure any fabric's causal metric, curvature
   signature and interaction availability.
+- **The inclusion/exclusion pair**
+  ([`SplitQuaternion`](src/scalar/split_quaternion.rs)) — an amplitude
+  that carries a **constructive and a destructive complex component**,
+  tracked independently, with measurement reading their difference. The
+  split quaternions `q = z₊ + z₋·j` (`i² = −1`, `j² = +1`) are graded by
+  `j`, and the product *is* the inclusion–exclusion rule: two exclusions
+  make an inclusion, one of each makes an exclusion. The crate's two
+  magnitudes finally separate usefully — `born_weight = |z₊|² − |z₋|²`
+  is the **net**, `abs_sqr = |z₊|² + |z₋|²` is the **path weight**.
+  Because ℂ embeds, this is the first non-division algebra here to carry
+  the **full 39-name standard registry** (split-complex, lacking `i`,
+  gets the real subset only), so the conformance suite applies
+  unmodified: sparse and adaptive pass at deviation **0.0e0**, factored
+  at 1.4e-16, while mps/mera/clifford-frame refuse by named structural
+  reason. The first measured consequence is that an embedded-ℂ matrix
+  entry acts as `m·(z₊, z₋) = (m z₊, m z₋)`: **a standard circuit drives
+  both channels with the same matrix and never mixes them**, so one
+  split-quaternion run carrying ψ in inclusion and φ in exclusion is
+  *bit-for-bit* two ordinary complex runs — measured exactly equal, with
+  the per-state net equal to `p_ψ − p_φ` and the totals to
+  `A−B` and `A+B`. Unitary gates conserve the net exactly even when it
+  is negative (measured drift 2.2e-16 across every registry gate on a
+  net −0.28 state). Weight crosses between the ledgers through the
+  non-compact part of the group: the unit-norm elements are `SL(2,ℝ)`
+  (split quaternions are `M₂(ℝ)`, the norm is the determinant), so
+  `SplitQuaternion::boost(t) = cosh t + sinh t·j` is a genuinely unitary
+  gate (deviation ~1e-16) that **pumps path weight as `cosh 2t` while
+  conserving the net exactly** — constructive and destructive amplitude
+  created in matched pairs at zero net cost, interference as a gate
+  rather than a ledger. The exchange `j` itself has `N(j) = −1`: it
+  swaps the ledgers and negates the net, measures a unitarity deviation
+  of exactly **2**, and the registry refuses it — turning inclusion into
+  exclusion outright is precisely a non-unitary act. On the null cone
+  `|z₊| = |z₋|` the net is exactly 0 with the path weight positive, so
+  **"everything cancelled" is decidable and distinct from "nothing was
+  there"**, which a complex amplitude cannot express; measurement
+  refuses such a state by the existing rule rather than inventing a
+  distribution. The honest bound: the grading means *no* gate can evolve
+  the two channels differently — the pair is a pair, not two independent
+  registers. It also works as an algebra-sector qudit
+  (`dual_algebra_report` measures the sandwich span full at 16/16,
+  embedded action component-linear) and benchmarks next to every other
+  backend.
+- **Geometric closure, retrodictively** ([`closure`](src/closure.rs)) —
+  a journalled state representation whose history carries its
+  entanglement, and whose errors are found by loops failing to close.
+  The log *is* the state: every legitimate change is an entry, the twist
+  links are part of the record, any past configuration replays. What
+  makes it work is a **closure stamp** — two bits per independent loop,
+  nothing more. A geometry's loops are **checks nobody declared**:
+  exactly `|E| − |V| + components` of them, measured
+  (grid 6×6 → rank 25), and a tree has none, so a tree sees nothing and
+  says so. Each loop reports two channels: **spin closure** (the parity
+  of the fiber signs it passes through) and **chirality closure** (the
+  parity of the descents it makes against the current ordering).
+  Breaking is *geometric*, not statistical — a perturbed site breaks
+  **exactly** the loops through it and no others, asserted site by site
+  across a 5×5 grid. Intersecting the broken against the intact names
+  the site (grid 6×6: 24 of 36 named exactly, the rest reported
+  *ambiguous* with the true site always among the candidates, and
+  correction refusing rather than guessing). An ordering break names a
+  **link** instead — measured as `(5,6)` after one unrecorded swap —
+  and correction declines there too: the link is determined, the
+  transposition is not. **Retrodiction** reads the history backwards:
+  an unrepaired break persists, so the stamps are monotone and the
+  first broken one is found by bisection — measured **5 comparisons
+  against 22**, bracketing an injection at step 41 between "last held
+  at 40" and "already broken by 45", naming site 14 uniquely in the
+  same act. No state is replayed and nothing was ever recorded as an
+  error. Correction then restores closure (8 broken loops → 0) *and*
+  the denoted state, at deviation **0.00e0** against a directly
+  simulated clean bundle. The cost of being able to retrodict a
+  120×120 geometry is 28 322 bits — about 3.5 kB — a stamp; the honest
+  counterweight, printed rather than omitted, is that *evaluating*
+  closure costs the total loop length (1.7M at 14 400 sites), which a
+  spanning-forest basis does not keep small.
+- **The bundle is a backend, and an atlas axis** — `PolarityBundle`
+  implements `Backend<S>` and is registered as **`"bundle"`** in
+  `BackendRegistry::standard()`, so `sim.run_on("bundle", &circuit)`
+  works like any other representation — and `resource_profile` /
+  `advantage_scan` now carry a **`bundle`** axis beside support,
+  clusters, bonds and T-count, with **`e8-constellation`** joining them
+  through the new `BackendRegistry::<C64>::register_e8()` (the E8
+  representations store complex amplitudes natively, so they cannot
+  live in the generic `standard()` and are opt-in by that call). Adding
+  them found a real defect immediately: `memory_bytes` was counting the
+  *journal*, so the atlas classified the bundle's audit trail as
+  **Exponential(1.40)** on GHZ. Reporting structure only — the journal
+  is an optional addition whose size tracks gates applied, not state
+  size — GHZ-14 falls from 67 088 to **1 552 bytes** and the law reads
+  **Polynomial(1.50)**, putting `bundle` inside the atlas's
+  `Classical { via: [...] }` verdict. The width sweep shows why neither
+  representation dominates: on GHZ at 24 qubits, dense pays 256 MiB,
+  sparse 125 B, bundle 4.0 KiB (23 links), the E8 tower 224 B (2
+  lattice points); on an H-layer at 20 qubits, dense pays 16 MiB,
+  sparse **50 MiB**, the E8 tower **80 MiB**, and the bundle **944 B
+  with no links at all**. The bundle is the only one cheap on both, and
+  on the random-universal candidate family it **declines outright**
+  rather than truncating — which `tests/bounds_atlas.rs` now
+  distinguishes from silent approximation explicitly. Gate action is on the graph
+  itself: a single-qubit Clifford composes into the fiber's **vertex
+  operator** (the full 24-element group, generated and verified — `H²=I`,
+  `S⁴=I`, matrices consistent with the Pauli action at 4.4e-16), `cz`
+  reduces both endpoints' operators into the diagonal subgroup by
+  **local complementation** and toggles the link, `cx` and `swap`
+  decompose into those. Local complementation is verified to change the
+  *description* and not the state (link signature moves, state deviation
+  **0.0** up to global phase). Measured against dense over 40 random
+  30-gate Clifford circuits: **exact where it runs (deviation 0.0),
+  39 of 40 ran**, and the one that did not **refused by name** rather
+  than returning a wrong state — the vertex-operator reduction does not
+  yet converge on every configuration, and that is a pinned test rather
+  than a footnote. Non-Clifford gates refuse by name (`t` → "non-Clifford
+  1-qubit gate ... graph-state bundle"), and `load` refuses because a
+  description cannot hold arbitrary amplitudes. GHZ-20 runs at under 1%
+  of dense's footprint.
+- **The polarity co-bundle** ([`bundle`](src/bundle.rs)) —
+  entanglement as an explicit, inspectable, budgeted resource instead of
+  an implicit consequence of amplitude storage, and **the correction to
+  the measurement below**. The polarity module measures that two-body
+  *marginals* cannot distinguish `(|0…0⟩ ± |1…1⟩)/√2`. That stands, and
+  it says nothing about a fibered representation, because a bundle does
+  not store marginals. It stores a **base** — which sites are
+  twist-linked — and a **fiber** over each site carrying that site's own
+  polarity data, and **the GHZ sign lives in a fiber**: `ghz_bundle(n,
+  ±)` produces bit-identical link signatures whose denoted states are
+  *orthogonal* (measured overlap 0), with two-body marginals blind at
+  deviation 0.0 exactly as before while `verify_against` reads the sign
+  straight back off the state at deviation ~1e-16. The obstruction was
+  an obstruction to marginals; it was never one to fibers.
+  Structurally: sparse links (`O(n + |E|)`, never `2ⁿ`), a maintained
+  **re-orderable** generator sequence where swapping two *linked* sites
+  flips the bundle's **chirality** — the sign a product of anticommuting
+  generators picks up, cross-checked against
+  `PolaritySystem::product` rather than asserted — and an append-only
+  **journal** where `rewind(k)` reconstructs any earlier configuration
+  exactly. Entanglement is then a quantity with an owner: `profile`
+  reports degree, independent clusters and bytes; `coarse_grain` merges
+  fibers and reports every link removed on one of two lines (**absorbed**
+  into a super-fiber, or **collapsed** parallel links);
+  `coarse_grain_to_budget` drives the total under a cap and prices it
+  (measured: 60 000 links → 29 601 → 9 918 → 1 518 → 0, with the
+  surviving fibers still accounting for all 20 000 original sites).
+  `commonality`/`interact` confine interaction to shared sites with
+  *compatible* frames and leave everything else untouched. It runs where
+  the amplitude picture does not exist: **100 000 sites in 30 ms and
+  7 MB of structure**, a million in 320 ms — with the journal measured
+  separately as the dominant term and `checkpoint()` the explicit way to
+  decline paying for it. Scope, stated first: a bundle denotes a graph
+  state dressed by local frames — a known classically-tractable sector,
+  and nothing here moves that boundary. States that leave it are
+  *reported* (`verify_against` deviation jumps from 1e-16 to >0.1 on a
+  T-rotation) rather than silently approximated.
+- **Polarity systems** ([`polarity`](src/polarity.rs),
+  [`Polarity<N>`](src/scalar/polarity.rs)) — `n` inclusion/exclusion
+  axes with a **twist**: generators `j₀ … j_{n−1}` and, for each pair, a
+  choice of commuting or anticommuting. That is the twisted group
+  algebra `ℝ^τ[F₂ⁿ]`, and its whole behaviour follows from the `F₂`
+  **rank** `r` of the twist form — measured by brute force, not quoted:
+  the centre has dimension `2^{n−r}`, a maximal pairwise-commuting set
+  is a *subgroup* of size `2^{n−r/2}` (bilinearity, verified closed
+  under XOR), and the algebra factors as
+  `2^{n−r/2} × 2^{r/2} = 2ⁿ`. That factorization is the point: an
+  abelian polarity system is simultaneously diagonalizable, so its state
+  is `n − r/2` independent **sign bits** — genuinely local, `O(n)` — and
+  everything outside costs `2^{r/2}`. **The twist rank is the measured
+  price of non-locality**, and `PolaritySystem::partial` makes it a
+  dial from untwisted (`2ⁿ` independent sectors, no correlation) to
+  fully twisted (one matrix block, no local part).
+  `PolaritySystem::pauli(n)` puts quantum mechanics on that dial: `2n`
+  generators, measured rank `2n` — maximally twisted, centre trivial —
+  with maximal isotropic subgroups of size `2ⁿ`. Those subgroups **are**
+  stabilizer groups and their `n` sign bits are exactly the `O(n²)`
+  description Gottesman–Knill runs on (shipped here as
+  [`CliffordFramedState`](src/backend/clifford_frame.rs)), so the
+  locally-storable sector is real and is already the best-known
+  classical island. **Where it stops is measured too.**
+  `pairwise_signature` builds the complete pairwise-local object — every
+  one- and two-body Pauli expectation, i.e. all two-qubit reduced
+  density matrices, `3n + 9·C(n,2)` reals — and `ghz_sign_obstruction`
+  shows it is not enough, sharply: from `n = 3` up, the **orthogonal**
+  states `(|0…0⟩ ± |1…1⟩)/√2` have signatures agreeing at deviation
+  **exactly 0.0** with overlap 0, separated only by the `n`-body
+  correlator `⟨X^{⊗n}⟩ = ±1`. At `n = 2` the same pair *is* separable by
+  `⟨XX⟩`, so the measurement catches the obstruction switching on. And
+  it is not a shortage of numbers: at `n = 3` the pairwise signature
+  holds **36 reals against the state vector's 16** and is still blind —
+  the failure is in what pairwise data can express. The sting is that
+  both states are *stabilizer* states, so pairwise data fails inside the
+  sector that is efficiently describable: the description is `O(n²)` in
+  size but not pairwise in **structure**, because GHZ's stabilizer group
+  needs a weight-`n` generator (`stabilizer_weight_profile` measures
+  `[n, 2, 2, …]`). As an amplitude type, `Polarity<N>` carries the
+  grading directly — `abs_sqr = Σ c_g²` is the path weight,
+  `born_weight = Σ (−1)^{deg g} c_g²` the net, falling out of
+  `q·conj(q)` rather than imposed — with `Polarity<1>` the
+  split-complex numbers, `Polarity<2>` **exactly** the split
+  quaternions (isomorphism transported entrywise at deviation 0.0), and
+  ℂ embedding from two polarities up so the full registry exists and the
+  conformance suite passes over `Pol3`. The cost is stated first: `N`
+  polarities is `2^N` reals **per amplitude**, so one polarity per qubit
+  costs `2ⁿ` per stored amplitude — the exponential does not disappear,
+  it moves from the register into the scalar.
+- **Recursive systems** ([`recursive`](src/recursive.rs), [`e8::cube`](src/e8.rs))
+  — a site that is either a **point or an entire lattice of the same
+  kind**, and a computation that participates in itself. Four qubits
+  bonded in a square; `refine` turns any point into a lattice and
+  `nest` does it uniformly, so a square of four points becomes a square
+  of four squares — 16 qubits, four internal squares, four **lateral**
+  bonds joining the blocks corner to corner by the same scale-free rule
+  that joins their points (measured: depth 3 is 64 qubits, 84 bonds,
+  horizon 16; the fabric is a `Topology` and runs on `DeviceState` like
+  any other geometry). Whether the substitution *means* anything is
+  then measured three ways, and they disagree informatively.
+  **Ising**: `block_rg` diagonalizes a block and reads its effective
+  description off its own spectrum — `h' = Δ/2` from the measured gap,
+  `J' = J·μ²` from the measured boundary element — and `rg_fixed_point`
+  finds where the flow stands still (Chain(2): `g* = 0.783243`,
+  λ = 1.596, ν = 1.482 against the exactly known ν = 1, so the size of
+  the Kadanoff approximation is *reported*, not hidden; residual
+  4e-15). `substitution_report` puts it on trial against two blocks
+  bonded laterally and finds the duality's **resolution horizon**: the
+  spectra track to ~1–7% below the block's internal gap and the coarse
+  description measurably invents a level above it. The ordered flow
+  terminates with the reason named (the block gap falls below double
+  precision — a refusal, not a silent continuation).
+  **Phonons**: the duality is *exact* where it should be. A harmonic
+  block's collective mode is the exact zero mode of its internal
+  springs, so its frequency shift is `0.00e0` measured, and
+  `phonon_substitution` separates the regimes — uniform bonding leaves
+  the collective subspace exactly invariant (deviation 5.6e-16), port
+  bonding is second order in the lateral spring (2.07e-2 → 2.73e-4 →
+  2.80e-6 for 0.3 → 0.03 → 0.003). **On the simulator**: `phonon_walk`
+  loads one phonon into a block's collective coordinate on a real
+  `Backend`, Trotters the spring Laplacian through the lattice's own
+  bonds, and separates Trotter error (→ 0 with the step) from
+  substitution error (flat in the step, quadratic in the lateral
+  spring) — with excitation-number leakage measured at `0.00e0` rather
+  than assumed. And `self_participation` closes the loop: a block
+  solved in the mean field its own boundary magnetization produces —
+  read back off a loaded backend through `pauli_expectation` — so the
+  output of the computation *is* its input. It converges to a measured
+  fixed point at any recursion depth (the block may itself be a lattice
+  of lattices), and `participation_transition` bisects the coupling
+  where a self-feeding computation stops answering zero (`Jc =
+  0.267675`; m = 0.41 at 1.1×Jc, 3.8e-10 at 0.9×).
+  **E8 as a 2×2×2 cube volume** ([`e8::cube`](src/e8.rs)): the
+  lattice's eight *orthogonal* ambient coordinates are the eight
+  vertices of a cube, and three things fall out measured. The lattice
+  condition becomes a **parity law on the volume** — of the 240 roots,
+  112 live wholly on the cube and 128 on the body-centred copy, every
+  one with vertex values summing to a multiple of four, and a
+  mixed-parity volume is in neither sector. The cube's symmetry group
+  sits **inside `W(E8)`**: exactly 48 of the 40320 coordinate
+  permutations preserve the twelve edges (`Z₂³ ⋊ S₃`, brute-forced),
+  all of them verified E8 automorphisms against all 240 roots, and they
+  act on states through `permute_coordinates` — while a `GL(3,2)` shear
+  is a lattice automorphism that is measurably *not* a cube symmetry.
+  And the scale tower **already was** a cube of cubes: a digit is a
+  byte, one bit per vertex, so `Σ 2ᵏ·rep(dₖ)` is a stack of volumes
+  each of whose vertices resolves into another volume. On that
+  structure, `inward` displaces a volume's own interior and `outward`
+  its siblings, and `interaction` measures their commutator **off two
+  evolved states**, cross-checked against the exact integer pairing:
+  different cube vertices commute *exactly* at every scale (eight
+  independent channels), while along one vertex an inward displacement
+  at level `j` and an outward modulation at level `k` interact iff
+  `j + k < m − 2` — with phase `exp(−2πi·2^{j+k+2−m})`, so it is
+  exactly −1 on the horizon, a quarter turn one level inside, an
+  eighth turn one further. **Deeper participation is finer
+  participation**, and `self_reference_depth` reports the finite depth
+  to which a volume can reach itself (none at m = 2, then 0, 1, 2 as
+  the tower grows) — the recursion is self-referential but not
+  infinitely so, and the horizon is a lattice fact rather than a
+  truncation. `Shape::CUBE` closes the circle: its bonds *are*
+  `e8::cube::edges()`, so the tower's cube of cubes and the recursive
+  lattice's are one object reached from two directions.
 - **Hierarchical algebraic registers** ([`qudit`](src/qudit.rs)) — break
   the flat n-wide register into a varied qudit structure: a **site
   sector** (any backend) plus an **algebra sector** — further logical
@@ -471,8 +753,8 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 335 tests (43 unit + 288 across thirty-four
-integration suites + 4 doctests; one more — the 17 s measurement that
+`cargo test` runs 494 tests (67 unit + 420 across forty-four
+integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
@@ -694,6 +976,159 @@ entirely trivial accessors and defensive guards:
   logical-vs-physical curves — the degenerate window saturating ≥ 90%
   at every nonzero rate, a=4 strictly rising in p and suppressed by
   wide measured margins below a=3 and a=2.
+- **split_quaternion** — the coquaternion table (`i²=−1`, `j²=k²=+1`,
+  `ij=k`, `ji=−k`) and the norm measured multiplicative; the grading as
+  the inclusion–exclusion rule; the full registry equal to ℂ's against
+  split-complex's strict subset; conformance on sparse/adaptive/factored
+  with mps/mera/clifford-frame refusing by named reason; framed, device
+  and interference agreeing with dense (and `H·H` destroying exactly
+  1.0 over the new algebra); the channel decomposition asserted
+  **exactly equal** to two separate complex runs, per amplitude and in
+  both totals; net-weight conservation across every registry gate on a
+  net-negative state; the boost unitary with path weight pinned to
+  `cosh 2t` and a basis-mixing boost unitary too; the exchange's
+  deviation of exactly 2 with the registry refusal and the measured sign
+  flip; the null cone decidable with measurement and sampling refusing,
+  and a net-positive mixed state sampling at the predicted `0.64 : 1.0`
+  ratio; plus the algebra-sector qudit and harness rows. The algebra
+  also joins the existing `reproductions`, `property_tests` and
+  `gate_matrices` sweeps.
+- **closure** — cycle rank equal to `|E| − |V| + 1` on rings and grids
+  with every loop verified to be a real closed walk; a tree measured to
+  have no reach at all; thirty intended changes each leaving closure
+  intact; a perturbation breaking **exactly** the loops through its site,
+  asserted for all 25 sites of a grid; localization classified into
+  named / ambiguous / invisible with the true site always among the
+  candidates; retrodiction bracketing an unrecorded injection and
+  naming its site, in no more than `log2(stamps) + 2` comparisons; an
+  unbroken history retrodicting to nothing; stamp cost pinned at two
+  bits per loop; correction restoring closure and the denoted state at
+  deviation exactly 0.0; correction refusing both ambiguity and
+  link-only breaks by message; the chirality channel localizing an
+  ordering break to `(5,6)` while deliberate re-orderings keep closure;
+  past entanglement reconstructed by rewind with the cycle rank changing
+  with it; and a 14 400-site geometry stamped, perturbed and retrodicted
+  inside 32 000 bits.
+- **bundle** — the GHZ sign measured into a fiber (identical base
+  signature, orthogonal denoted states, marginals blind at 0.0,
+  tomography reading the flipped fiber at ~1e-16) across n = 3…8;
+  mixed-frame tomography round-tripping through a real state; a
+  T-rotated state reported as out-of-sector rather than smoothed over;
+  chirality checked against `PolaritySystem::product` on four orderings
+  and adjacent swaps agreeing with a wholesale reorder; coarse-graining
+  accounting for every removed link on the absorbed/collapsed split with
+  surviving weights still covering every original site; budgets met and
+  priced; interaction confined to frame-compatible commonality with the
+  incompatible fiber measurably untouched; journal replay exact at the
+  end and at every prefix; a coarse-grained bundle refusing to pretend
+  it still denotes a state; and 100 000 sites built, profiled, reordered
+  and inspected with the structural footprint held under 128 B/site and
+  `checkpoint()` measured to halve the total.
+- **polarity** — the structure theorem brute-force verified (centre
+  counted monomial by monomial, maximal commuting sets built by
+  exhaustive search and checked closed under XOR, `isotropic × matrix =
+  dimension` across the whole twist dial, rank always even); the Pauli
+  system measured maximally twisted with stabilizer-sized isotropic
+  subgroups; associativity and the commute/sign equivalence swept over
+  every monomial pair of a 4-generator system; `Polarity<2>` transported
+  onto `SplitQuaternion` at deviation exactly 0 in both product and Born
+  form; the real-subset/full-registry split at one versus two
+  polarities; conformance over `Pol3`; the storage padding pinned rather
+  than hidden; and the obstruction — pairwise-complete at `n = 2`,
+  blind from `n = 3` up with signature deviation exactly 0 against
+  overlap 0, the `n`-body correlator reading ±1, the pairwise-vs-state
+  value counts showing 36 > 16, the GHZ weight profile `[n, 2, …]`, and
+  a product state as the contrasting case where pairwise data does
+  determine the state.
+- **recursive_lattice** — the structure (square = 4 bonds; square of
+  squares = 16 qubits, 20 bonds, the four lateral bonds pinned by index
+  and each verified to leave its block; depth 3 = 64 qubits, 84 bonds
+  split 64/16/4 by depth; the fabric run as a `DeviceState` geometry
+  carrying a 16-qubit GHZ); refine/coarsen as structural inverses with
+  re-refinement and point-addressing both refused by message; the
+  block-spin step (isometry error < 1e-12, `h' = Δ/2` and `J' = J·μ²`
+  identities exact to 1e-15, a zero field refused rather than divided
+  by); the flow monotone on the disordered side and terminating with
+  the double-precision reason on the ordered one; the fixed point
+  (`g* = 0.783243`, λ = 1.596338, ν = 1.482, residual < 1e-12); the
+  substitution's resolution horizon (in-band deviation < 2% while the
+  full-spectrum deviation exceeds 0.3, with the offending coarse level
+  shown to sit above the block's internal gap, and in-band error held
+  under 10% across the coupling range); the harmonic block's exactly
+  zero frequency shift and 1/2 port participation; uniform bonding
+  exact under 1e-12 against port bonding's finite error, with the
+  second-order law pinned as a 50–200× ratio per decade — twice, once
+  in the spectra and once in the dynamics; the phonon walk's zero
+  leakage, step-independent substitution error and shrinking Trotter
+  error on the dense backend; and self-participation converging to
+  zero below threshold and to a self-sustaining answer above it, at
+  depth 2 as readily as depth 1, with the critical coupling
+  `0.267675` bisected and both unbracketed directions refused by
+  message.
+- **characterize** — the characterization harness measures what it
+  claims: the census covers every registry name (dense bit-exact against
+  itself, sparse bit-exact against dense on all 39); a construction
+  ceiling is the backend's own refusal (`e8-rep` at 8, carrying its
+  message) while a sweep stopping short reports no refusal at all; a
+  family ceiling is allowed to be far narrower than the constructor's
+  (GHZ vs an H-layer on the constellation, the latter walling on a
+  measured operation refusal); a walled width contributes **no**
+  fabricated cost to the fitted laws (the sweep past `e8-rep`'s ceiling
+  records nothing, and dense still fits base ≈ 2 over widths that fit);
+  and the envelope separates the representations by *measured* bytes per
+  stored amplitude — dense ≫ 10× the sparse maps, an eight-coordinate
+  lattice key strictly above a `u64` one.
+- **selfhost** — the self-computing object: **each layer of E8 volumes
+  buys exactly one degree** (depth = degree − 1, verified for degrees 2
+  through 6, every route exact at deviation `0.0`), and the linearized
+  degree is 1 throughout. A `ccz` goes from character residual 2.00 on the
+  substrate to 2.4e-16 on the stack and its single-qubit phase reproduces
+  the registry's own three-qubit `ccz` to under 1e-12 — a non-Clifford
+  diagonal became a character. A `t` is the kept-apart exception: degree 1
+  already, so zero layers, zero volumes, zero cost, and a residual that is
+  the **same √2** `e8_across` measures for a `t` on the constellation, so
+  the two modules pin one obstruction from two directions. The trade is
+  counted, not asserted: entangling gates per use (`[1,2,4,8,16]`) versus
+  once (`[1,1,1,1,1]`), counted crossover at the second use, with the
+  wall-clock slope measured lower even where the constant is higher.
+  Volumes are quantized to eight coordinates and `occupancy` says so;
+  planning refuses a monomial outside the substrate, linearizing refuses a
+  monomial the stack does not hold, and a non-linear diagonal refuses to
+  factorize into single-qubit phases. Exact on dense, sparse and adaptive
+  alike.
+- **e8_across** — computing *across* a set of E8 volumes, measured: one
+  finest-scale translation carries into **every** copy (touching
+  `8m − 7` qubits, support-preserving), while a single copy has no
+  carries at all (`E8/2E8 ≅ F₂⁸` is linear, so the operation is a
+  bitwise XOR needing zero two-qubit gates) — the cross-scale reach is
+  created by having more than one copy. The carry ties the whole register
+  into one influence component, so the measured two-qubit lower bound is
+  `n − 1`, and the advantage over the qubit path is **linear**: exactly
+  8 qubits and 8 gates per added copy, fitted degree 1.04, subexponential.
+  The native direct DFT is the honest limit — support exactly
+  `2^m` (fitted base 2.0) and a cost law that is *not* subexponential.
+  And the class: every native operator (translate, modulate, reflect,
+  permute, Fourier) stays inside coset-with-linear-character, verified on
+  a genuinely spread state, while a `t` through the qubit path keeps the
+  coset and breaks the character (residual 1.41) — so the qubit path
+  reaches states no sequence of native operators can. A pair whose
+  difference has order four is measured *not* a coset, and a partial
+  8-qubit block is refused rather than silently embedded.
+- **e8_cube** — the twelve edges as three axis matchings; the parity
+  law over all 240 roots (112 + 128 by sector, every root summing to a
+  multiple of four, mixed parities in neither sector); the symmetry
+  count `(48, 48)` with every vertex translation verified against all
+  240 roots, an axis relabeling accepted and a shear accepted as a
+  lattice automorphism but rejected as a cube symmetry; the
+  symmetries acting on live states (norm preserved, the translation an
+  exact involution, non-permutations and partial blocks refused); the
+  tower round-tripping and doubling prepending an empty finest cube;
+  every elementary displacement verified a lattice point at every
+  scale with the finest volume's missing interior refused; and the
+  ladder — different vertices commuting exactly everywhere, the same
+  vertex interacting exactly while `j + k < m − 2`, the phase ladder
+  `exp(−2πi·2^{j+k+2−m})` pinned level by level at m = 5, and the
+  self-reference depth measured none → 0 → 1 → 2 as the tower grows.
 - **causal_geometry** — the causal-geometry suite across every backend:
   the register metric measured through the router on six geometries
   (swaps = graph distance − 1, the clock in exact agreement); causally
@@ -800,6 +1235,160 @@ qubits       estimate      RSS delta      (dense C64)
 algebra (dense, n=16):  R 512 KiB · C 1 MiB · H 2 MiB · O 4 MiB · S 8 MiB
 ```
 
+## Characterizing a representation fully
+
+```sh
+cargo run --release --example e8_characterization
+```
+
+`characterize` produces the numbers you ask of a new representation
+before anything else — the maximum width, how much of the gate set it
+actually reproduces, and its best and worst cases — and every one of
+them comes from a run. A ceiling is the width at which a real
+construction or a real gate application refused, carrying the library's
+own message; a fidelity count is a gate-by-gate comparison against the
+reference; an envelope is wall-clock timing and reported footprint at the
+widths that ran. A walled width contributes **nothing** to the fitted
+laws rather than a fabricated cost.
+
+Measured on this machine (widths 4…24, 8 s armed budget):
+
+| backend | constructs to | registry match | GHZ ceiling | H-layer ceiling | ns/gate @ n=8 | B/amplitude |
+|---|---|---|---|---|---|---|
+| `dense` | 24+ | 39/39 bit-exact | 24 (268 MiB) | 24 (268 MiB) | 593 – 2860 | 2064 – 4128 |
+| `sparse` | 24+ | 39/39 bit-exact | 24 (**125 B**) | 24 (800 MiB) | 11379 – 14416 | 62.5 – 125 |
+| `e8-rep` | **8, declared** | 39/39 bit-exact | 8 (168 B) | 8 (14 KiB) | 226 – 385 | 84 – 112 |
+| `e8-constellation` | 24+ (u64 wall at 63) | 39/39 bit-exact | 24 (**224 B**) | 20, then time-walled | 8726 – 24539 | 112 – 144 |
+
+Both E8 backends reproduce the **entire 39-gate registry bit-exactly**,
+so universality on them is not in question. What the characterization
+adds is the price: `e8-rep` is eight qubits by construction, and the
+constellation's per-gate cost is 10–30× dense because every gate
+converts through the tower bijection — its clifford-brickwork ceiling is
+set by *time*, not memory, at a support of only 2048. The honest summary
+is that the constellation's cost tracks the lattice↔bits conversion
+rather than how much state it holds.
+
+### An object that computes itself, one layer per degree
+
+```sh
+cargo run --release --example selfhosted_stack
+```
+
+`selfhost` builds the object as described: a substrate register, and above
+it a tower of E8 volumes where **each layer holds the layers below it as
+its own coordinates**. One volume is `E8/2E8 ≅ F₂⁸` — one byte, eight
+coordinates — and the class map's measured F₂-linearity is what lets a
+coordinate hold an arbitrary F₂ function of the substrate and still be a
+coordinate.
+
+Any diagonal unitary is a phase polynomial
+`exp(2πi Σ_M c_M x_M / 2^bits)`. Degree 1 is the special case: **a
+degree-1 diagonal is a product of single-qubit phase gates**, and on a
+group whose coordinates are the bits it is a *character* — the one
+diagonal an F₂ volume applies natively. `SelfHostedStack::linearize`
+rewrites a degree-`d` diagonal as degree **1** over the stack by replacing
+each higher monomial with the coordinate holding it.
+
+Measured, on a 6-qubit substrate:
+
+| gate | deg | layers | vols | width | χ(substrate) | χ(stack) | character? |
+|---|---|---|---|---|---|---|---|
+| `cz` | 2 | 1 | 1 | 14 | 2.00 | 2.4e-16 | **yes** |
+| `ccz` | 3 | 2 | 2 | 22 | 2.00 | 2.4e-16 | **yes** |
+| `cccz` | 4 | 3 | 3 | 30 | 2.00 | 2.4e-16 | **yes** |
+| `t` | 1 | 0 | 0 | 6 | 1.41 | 1.41 | no |
+
+χ is the failure of the diagonal to be a character of the bit group — the
+same instrument `e8::across` points at the constellation. A `ccz` is
+maximally far from one (2.00) and becomes one exactly; the linearized
+`ccz` is a **single-qubit phase gate** that reproduces the registry's
+three-qubit `ccz` on a uniform superposition to 0.0e0. A genuinely
+non-Clifford diagonal has become a character.
+
+`t` is the honest exception, and it is the *same* obstruction measured
+twice: `t` is already degree 1, so the object correctly does nothing (zero
+layers, zero volumes, zero cost), and its eighth-root phases never become
+±1 valued. That residual is exactly the √2 the constellation reports for a
+`t` through the qubit path. Degree reduction and character-hood are two
+different things, and the report keeps them apart.
+
+**The recursive expansion is exactly one layer per degree:**
+
+```
+degree  layers   vols  width   linear   toffoli  deviation
+     2       1      1     16        1         1      0.0e0
+     3       2      2     24        1         3      0.0e0
+     4       3      3     32        1         5      0.0e0
+     5       4      4     40        1         7      0.0e0
+     6       5      5     48        1         9      0.0e0
+     7       6      6     56        1        11      0.0e0
+```
+
+**What it costs.** The expansion cannot be free — if it were, the native
+operator set would manufacture non-Clifford diagonals from nothing.
+Writing a degree-`k` monomial into its coordinate is a `k`-controlled X:
+precisely the non-native work. But it is paid **once**, and the diagonal is
+single-qubit phases forever after:
+
+```
+uses        [1,   2,   8,    32,   128,   256,   512,   1024]
+direct 2q+  [1,   2,   8,    32,   128,   256,   512,   1024]   max arity 3
+stack  2q+  [1,   1,   1,    1,    1,     1,     1,     1]      steady arity 1
+direct ns   [461, 632, 2243, 8604, 35947, 71730, 154954, 280923]
+stack  ns   [18488, 14057, 11810, 20000, 34640, 59721, 106926, 186216]
+```
+
+Counted crossover: **2 uses**. Measured crossover: **128 uses** — a
+classical simulator applies a diagonal kernel in `O(support)` whatever its
+arity, so the win shows up in the slope (164 ns/use versus 274) rather
+than the constant. Both numbers are reported because the counted one is
+the resource the object actually trades and the measured one is what this
+machine sees.
+
+### Does computing *across* a set of E8 volumes pay?
+
+`e8::across` measures it instead of arguing it. One native finest-scale
+translation carries into **every** copy in the tower, and its influence
+graph is a single connected component, so the measured two-qubit lower
+bound for any circuit realizing the same permutation is `n − 1`:
+
+```
+op           qubits  touched  involved  copies  comps  2q-min     nanos
+translate         8        1         8     1/1      8       0       250
+translate        24       17        24     3/3      1      23       404
+translate        40       33        40     5/5      1      39       586
+fourier[0]       40       33         —     5/5      —       —     27401
+
+copies      [1, 2, 3, 4, 5, 6]
+touched     [1, 9, 17, 25, 33, 41]
+2q-min      [0, 15, 23, 31, 39, 47]
+per extra copy: 8 qubits touched, 8 two-qubit gates replaced
+advantage law over copies: Polynomial { degree: 1.04 }
+```
+
+At **one** copy there are no carries at all — `E8/2E8 ≅ F₂⁸` and the
+class map is linear, so the translation is a bitwise XOR needing zero
+two-qubit gates. The cross-scale reach is created by having more than one
+copy, which is the "across" effect, measured. But it is **linear**: 8
+qubits and 8 gates per added copy, exactly, fitted degree 1.04. One
+native operation replaces `Θ(n)` two-qubit gates — a real
+constant-factor-per-copy win, not a non-linear advantage.
+
+The native direct DFT is the ceiling on that side: support exactly `2^m`
+(fitted base 2.0) with a cost law that is *not* subexponential. The one
+native operation that creates superposition pays exponentially for it.
+
+And the reachable class is closed: every native operator — translate,
+modulate, reflect, permute, Fourier — maps a coset carrying a linear
+character to another one (verified on a genuinely spread state, since a
+size-1 support satisfies the class trivially and proves nothing). A `t`
+driven through `Backend::apply` keeps the coset and **breaks the
+character** (residual 1.4), so the qubit path reaches states no sequence
+of native operators can. Full quantum computing on the constellation is
+real, and it is bought entirely on the qubit path — which prices as
+sparse with a bigger key.
+
 ## Research mode: verify, then measure
 
 The workflow for a new gate set or a new backend (an MPS, a p-adic
@@ -855,13 +1444,33 @@ report must localize the corruption to the exact gates it breaks
 ```
 src/
   scalar/        Scalar trait; f64, C64, CD<T> (ℍ/𝕆/𝕊), split-complex,
+                 split-quaternion (inclusion/exclusion pair),
+                 polarity<N> (N twisted polarities per amplitude),
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
   bounds.rs      boundary atlas: measured growth laws, advantage scan
+  characterize.rs full per-backend characterization: construction and
+                 per-family width ceilings (carrying the library's own
+                 refusal), gate-fidelity census, min/max perf envelope
   sampling.rs    sampling-task hardness: XEB, spoof curves, exact refs
   mixed.rs       mixed-arity compound qudits: volumes, fabric, flow, backend
-  e8.rs          E8 roots built+verified; chains, rep + constellation
+  e8.rs          E8 roots built+verified; chains, rep, constellation,
+                 cube (the 2x2x2 volume, inward/outward interaction),
+                 across (reach per unit cost of the native cross-scale
+                 operators; the coset class they cannot leave)
   causal.rs      backward cones, causal diamonds, dual-time resolution
+  bundle.rs      fibered re-orderable journalled polarity co-bundle:
+                 entanglement as a budgeted, auditable resource
+  closure.rs     journalled history + geometric closure: loops as
+                 undeclared checks, retrodiction by bisecting stamps
+  selfhost.rs    the self-computing object: a stack of E8 volumes whose
+                 each layer holds the layers below as its own
+                 coordinates, linearizing the diagonal one degree per
+                 layer (a ccz becomes a single-qubit phase)
+  polarity.rs    twisted polarity systems: twist rank, local sector,
+                 the pairwise-locality obstruction measured
+  recursive.rs   point-or-lattice sites, block-spin RG, phonon
+                 substitution, self-participation fixed points
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
   guard.rs       resource guard: measured memory admission, time budgets
@@ -870,8 +1479,9 @@ src/
   circuit.rs     Circuit<S> (chainable builders, raw + diagonal kernels,
                  append), BoundCircuit<S> (bind-time validation, inverse())
   backend/       Backend<S> trait + dense / sparse / adaptive / factored /
-                 mps / mera / interference / device / frames /
-                 clifford_frame, BackendRegistry<S>, pauli_expectation
+                 mps / mera / bundle (graph-state) / interference /
+                 device / frames / clifford_frame, BackendRegistry<S>,
+                 pauli_expectation
   schedule.rs    evented scheduler: simultaneous loops, events, recursive
                  measurement feedback (adaptive trees)
   lift.rs        Clifford+T → measurement-feedback loop on n+t qubits
@@ -883,7 +1493,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           twenty-four integration suites (see Testing)
+tests/           forty-four integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -896,6 +1506,13 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  algebraic_qudits (hierarchical register, dual-algebra),
                  qudit_scaling (measured scaling laws + honest costs),
                  advantage_bounds (the boundary atlas + advantage scan),
+                 recursive_lattice (point-or-lattice sites, block-spin
+                 RG, phonon substitution, self-participation),
+                 e8_cube (E8 as a 2x2x2 volume, inward/outward ladder),
+                 polarity_systems (twist dial, the locality obstruction),
+                 polarity_bundle (fibers, chirality, budgets, 10^6 sites),
+                 bundle_backend (Clifford gate action vs dense, priced),
+                 geometric_closure (undeclared checks, retrodiction),
                  sampling_hardness (XEB, spoofing economics, exact refs),
                  e8_compound (mixed-arity qudits over the E8 fabric),
                  e8_coboundary (E8×E8 storage, representation, both
@@ -903,7 +1520,12 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  e8_constellation (the coset tower + n-qubit backend),
                  e8_weyl (the dual cross-scale Weyl pair, W(E8) Clifford),
                  e8_dual_scale (scale operad, cross-scale QEC, folding),
-                 e8_comb_noise (logical-vs-physical error curves)
+                 e8_comb_noise (logical-vs-physical error curves),
+                 e8_characterization (width ceilings, gate-fidelity
+                 census, perf envelope, and the measured answer to
+                 whether computing across a set of E8s pays),
+                 selfhosted_stack (one layer per degree, the diagonal
+                 linearized, and what the trade costs)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

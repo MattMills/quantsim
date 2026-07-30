@@ -316,7 +316,11 @@ impl<S: Scalar> BackendRegistry<S> {
     }
 
     /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"`,
-    /// `"factored"`, `"mps"` and `"mera"` backends. (`"mps"` and `"mera"`
+    /// `"factored"`, `"mps"`, `"mera"` and `"bundle"` backends.
+    /// (`"bundle"` is the graph-state
+    /// [`PolarityBundle`](crate::bundle::PolarityBundle): exact and
+    /// `O(n + |E|)` on the Clifford sector, refusing anything else by
+    /// name.) (`"mps"` and `"mera"`
     /// require a commutative division algebra and report an error at
     /// creation elsewhere.)
     pub fn standard() -> Self {
@@ -333,6 +337,14 @@ impl<S: Scalar> BackendRegistry<S> {
             .expect("fresh registry");
         reg.register("mera", |n| Ok(Box::new(MeraState::<S>::new(n)?)))
             .expect("fresh registry");
+        reg.register("bundle", |n| {
+            let mut bundle = crate::bundle::PolarityBundle::new(n)?;
+            // The Backend contract starts at |0…0⟩; the bundle's own
+            // description convention starts at |+…+⟩.
+            <crate::bundle::PolarityBundle as Backend<S>>::reset(&mut bundle);
+            Ok(Box::new(bundle) as Box<dyn Backend<S>>)
+        })
+        .expect("fresh registry");
         reg
     }
 
@@ -368,6 +380,27 @@ impl<S: Scalar> BackendRegistry<S> {
     /// Whether a backend with this name exists.
     pub fn contains(&self, name: &str) -> bool {
         self.ctors.contains_key(name)
+    }
+}
+
+impl BackendRegistry<C64> {
+    /// Add the representations that exist **only** over ℂ, because they
+    /// store complex amplitudes natively rather than being generic over
+    /// the algebra: the E8 scale tower (`"e8-constellation"`) and the
+    /// single-copy E8×E8 register (`"e8-rep"`).
+    ///
+    /// They cannot live in [`standard`](BackendRegistry::standard),
+    /// which is generic over every [`Scalar`], so they are opt-in by
+    /// this call — and that is a statement about them, not an oversight.
+    pub fn register_e8(&mut self) -> Result<()> {
+        self.register("e8-constellation", |n| {
+            Ok(Box::new(
+                crate::e8::constellation::E8ConstellationState::new(n)?,
+            ))
+        })?;
+        self.register("e8-rep", |n| {
+            Ok(Box::new(crate::e8::rep::E8RepState::new(n)?))
+        })
     }
 }
 

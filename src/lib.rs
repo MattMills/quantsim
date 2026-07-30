@@ -64,8 +64,11 @@
 
 pub mod backend;
 pub mod bounds;
+pub mod bundle;
 pub mod causal;
+pub mod characterize;
 pub mod circuit;
+pub mod closure;
 pub mod conformance;
 pub mod discovery;
 pub mod e8;
@@ -78,12 +81,15 @@ pub mod library;
 pub mod lift;
 pub mod math;
 pub mod mixed;
+pub mod polarity;
 pub mod qudit;
+pub mod recursive;
 pub mod registry;
 pub mod rng;
 pub mod sampling;
 pub mod scalar;
 pub mod schedule;
+pub mod selfhost;
 pub mod sim;
 
 pub use backend::{AdaptiveState, Backend, BackendRegistry, DenseState, SparseState};
@@ -111,6 +117,11 @@ pub mod prelude {
     };
     pub use crate::causal::{
         backward_cone, causal_diamond, dual_time_amplitude, DiamondReport, DualTimeResolution,
+    };
+    pub use crate::characterize::{
+        characterize, construction_ceiling, family_laws, fidelity_census, perf_envelope,
+        width_ceiling, Characterization, CharacterizeConfig, ConstructionCeiling, Family,
+        FamilyLaws, FidelityCensus, GateCost, PerfEnvelope, Wall, WidthCeiling,
     };
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
     pub use crate::conformance::{
@@ -147,12 +158,16 @@ pub mod prelude {
         spoof_decay, DecayPoint, SpoofPoint, XebScore,
     };
     pub use crate::scalar::{
-        Ball, CComplex, DirectSum, Octonion, Quaternion, Scalar, Sedenion, SplitComplex,
-        Trigintaduonion, C64, CD,
+        Ball, CComplex, DirectSum, Octonion, Polarity, Polarity2, Polarity3, Polarity4, Quaternion,
+        Scalar, Sedenion, SplitComplex, SplitQuaternion, Trigintaduonion, C64, CD,
     };
     pub use crate::schedule::{
         FeedbackOp, GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace,
         ScheduledKernel, TimedOp,
+    };
+    pub use crate::selfhost::{
+        amortization, full_degree, recursive_expansion, verify, Amortization, Diagonal, Layer,
+        LinearizationReport, SelfComputationCost, SelfHostedStack, VOLUME_COORDINATES,
     };
     pub use crate::sim::Simulator;
 }

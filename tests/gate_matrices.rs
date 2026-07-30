@@ -331,6 +331,9 @@ fn algebra_gate_support_matrix() {
     assert_eq!(GateRegistry::<Quaternion>::standard().names(), full);
     assert_eq!(GateRegistry::<Octonion>::standard().names(), full);
     assert_eq!(GateRegistry::<Sedenion>::standard().names(), full);
+    // ...and the split quaternions, which contain i even though they are
+    // neither commutative nor a division algebra.
+    assert_eq!(GateRegistry::<SplitQuaternion>::standard().names(), full);
 
     // ℝ gets exactly the real-matrix subset.
     let real = GateRegistry::<f64>::standard().names();

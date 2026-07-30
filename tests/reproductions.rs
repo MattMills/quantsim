@@ -39,6 +39,90 @@ fn ghz_state_on_every_algebra() {
     check::<Octonion>();
     check::<Sedenion>();
     check::<SplitComplex>();
+    check::<SplitQuaternion>();
+    check::<Polarity<3>>();
+}
+
+/// Absolute acceptance for the exotic algebras: an amplitude over any
+/// algebra containing ℂ must equal the **embedding of the complex
+/// amplitude**, not merely agree with another backend over the same
+/// algebra. Conformance is a relative check — it would pass just as
+/// happily if the reference itself were wrong — so this is the one that
+/// says the answers mean anything.
+#[test]
+fn exotic_algebras_reproduce_the_complex_answer_exactly() {
+    fn check<S: Scalar>(n: usize) {
+        fn build<T: Scalar>(n: usize) -> Circuit<T> {
+            let mut c: Circuit<T> = Circuit::new(n);
+            for q in 0..n {
+                c.h(q);
+            }
+            for q in 0..n - 1 {
+                c.cx(q, q + 1);
+            }
+            c.t(0)
+                .s(1)
+                .ry(2, 0.7)
+                .rz(0, 1.3)
+                .cz(0, 2)
+                .h(1)
+                .tdg(3)
+                .cry(1, 3, 0.4);
+            c
+        }
+        let exotic: Circuit<S> = build(n);
+        let complex: Circuit<C64> = build(n);
+
+        let truth = Simulator::<C64>::new().run(&complex).unwrap();
+        for backend in ["dense", "sparse", "adaptive", "factored"] {
+            let got = Simulator::<S>::new().run_on(backend, &exotic).unwrap();
+            for i in 0..(1u64 << n) {
+                let expected = S::try_from_c64(truth.amplitude(i)).expect("ℂ embeds");
+                assert!(
+                    got.amplitude(i).approx_eq(expected, 1e-12),
+                    "{}/{backend} amplitude {i}: {:?} vs embedded {:?}",
+                    S::algebra_name(),
+                    got.amplitude(i).coeffs(),
+                    expected.coeffs()
+                );
+                assert!((got.probability(i) - truth.probability(i)).abs() < 1e-12);
+            }
+        }
+    }
+    check::<CComplex>(4);
+    check::<Quaternion>(4);
+    check::<Octonion>(4);
+    check::<Sedenion>(4);
+    check::<SplitQuaternion>(4);
+    check::<Polarity<2>>(4);
+    check::<Polarity<3>>(4);
+    check::<Polarity<4>>(4);
+}
+
+/// Grover amplifies to the same probability over every algebra that
+/// carries the full gate set — an end-to-end algorithm, not a gate
+/// identity.
+#[test]
+fn grover_amplifies_identically_over_every_full_algebra() {
+    let truth = Simulator::<C64>::new()
+        .run(&library::grover(3, 5, 2).unwrap())
+        .unwrap()
+        .probability(5);
+    assert!(truth > 0.9, "the complex reference must actually amplify");
+    fn check<S: Scalar>(truth: f64) {
+        let state = Simulator::<S>::new()
+            .run(&library::grover(3, 5, 2).unwrap())
+            .unwrap();
+        assert!(
+            (state.probability(5) - truth).abs() < 1e-12,
+            "{}: {} vs {truth}",
+            S::algebra_name(),
+            state.probability(5)
+        );
+    }
+    check::<Quaternion>(truth);
+    check::<SplitQuaternion>(truth);
+    check::<Polarity<3>>(truth);
 }
 
 #[test]

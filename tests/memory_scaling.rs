@@ -163,3 +163,119 @@ fn interference_can_shrink_sparse_support() {
         "destructive interference must prune"
     );
 }
+
+// ── the structure-storing representations ────────────────────────────
+
+/// The graph-state bundle's footprint is linear in the register, not
+/// exponential — and the boundary atlas says so, now that it is a
+/// registered backend rather than a description alongside one.
+#[test]
+fn the_bundle_scales_linearly_on_ghz_and_the_atlas_classifies_it() {
+    let sim: Simulator = Simulator::new();
+    let mut bytes = Vec::new();
+    for n in [8usize, 12, 16, 20, 24] {
+        let state = sim.run_on("bundle", &library::ghz(n)).unwrap();
+        let bundle = state
+            .as_any()
+            .downcast_ref::<quantsim::bundle::PolarityBundle>()
+            .unwrap();
+        // GHZ is a star: exactly n − 1 links, whatever the width.
+        assert_eq!(bundle.profile().links, n - 1);
+        bytes.push(state.memory_bytes());
+    }
+    // Doubling the width from 12 to 24 must not square the cost.
+    let growth = bytes[4] as f64 / bytes[1] as f64;
+    assert!(
+        growth < 6.0,
+        "bytes {bytes:?} grew by {growth}x from n=12 to 24"
+    );
+    // And it is dwarfed by dense at the top of the sweep.
+    let dense = DenseState::<C64>::new(24).unwrap().memory_bytes();
+    assert!(
+        bytes[4] * 1000 < dense,
+        "bundle {} vs dense {dense}",
+        bytes[4]
+    );
+
+    // The atlas classifies it sub-exponential, which is the whole point
+    // of it being a backend.
+    let scan = advantage_scan("ghz", library::ghz, &[8, 10, 12, 14]);
+    let axis = scan
+        .axes
+        .iter()
+        .find(|a| a.axis == "bundle")
+        .expect("the bundle is an atlas axis");
+    let law = axis.law.clone().expect("no width walled");
+    assert!(
+        !matches!(law, Law::Exponential { .. }),
+        "bundle memory law {law:?}"
+    );
+}
+
+/// An H-layer is the reverse workload: every amplitude is occupied, so
+/// support-based representations pay the most and the bundle pays
+/// nothing at all — it has no links to store.
+#[test]
+fn an_h_layer_is_free_for_the_bundle_and_expensive_for_everything_else() {
+    let sim: Simulator = Simulator::new();
+    let n = 20;
+    let mut layer: Circuit = Circuit::new(n);
+    for q in 0..n {
+        layer.h(q);
+    }
+    let state = sim.run_on("bundle", &layer).unwrap();
+    let bundle = state
+        .as_any()
+        .downcast_ref::<quantsim::bundle::PolarityBundle>()
+        .unwrap();
+    assert_eq!(bundle.profile().links, 0, "|+…+⟩ has no entanglement");
+    assert_eq!(bundle.profile().components, n);
+
+    let dense = sim.run_on("dense", &layer).unwrap().memory_bytes();
+    let sparse = sim.run_on("sparse", &layer).unwrap().memory_bytes();
+    assert!(state.memory_bytes() * 1000 < dense);
+    assert!(state.memory_bytes() * 1000 < sparse);
+    // Sparse is worse than dense here: the support is the whole space.
+    assert!(sparse > dense);
+}
+
+/// The E8 scale tower is opt-in, because it stores complex amplitudes
+/// natively and cannot be generic over the algebra. On GHZ it is two
+/// lattice points at any width; on an H-layer it is the whole space.
+#[test]
+fn the_e8_tower_is_two_lattice_points_on_ghz_at_every_width() {
+    let mut sim: Simulator = Simulator::new();
+    // Not in `standard()`, and the registrar says why.
+    assert!(!sim.backends().contains("e8-constellation"));
+    sim.backends_mut().register_e8().unwrap();
+    assert!(sim.backends().contains("e8-constellation"));
+    assert!(sim.backends().contains("e8-rep"));
+
+    let mut bytes = Vec::new();
+    for n in [8usize, 16, 24, 32] {
+        let state = sim.run_on("e8-constellation", &library::ghz(n)).unwrap();
+        let tower = state
+            .as_any()
+            .downcast_ref::<quantsim::e8::constellation::E8ConstellationState>()
+            .unwrap();
+        assert_eq!(tower.stored_points().len(), 2, "GHZ is two points");
+        common::assert_close(state.probability(0), 0.5, 1e-12);
+        bytes.push(state.memory_bytes());
+    }
+    // Flat: the same two points however wide the register.
+    assert_eq!(bytes[0], bytes[3], "bytes {bytes:?}");
+
+    // And the reverse workload costs it the whole space.
+    let n = 16;
+    let mut layer: Circuit = Circuit::new(n);
+    for q in 0..n {
+        layer.h(q);
+    }
+    let full = sim.run_on("e8-constellation", &layer).unwrap();
+    let tower = full
+        .as_any()
+        .downcast_ref::<quantsim::e8::constellation::E8ConstellationState>()
+        .unwrap();
+    assert_eq!(tower.stored_points().len(), 1 << n);
+    assert!(full.memory_bytes() > 1_000_000);
+}
