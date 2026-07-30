@@ -753,7 +753,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 483 tests (67 unit + 409 across forty-three
+`cargo test` runs 494 tests (67 unit + 420 across forty-four
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1078,6 +1078,24 @@ entirely trivial accessors and defensive guards:
   and the envelope separates the representations by *measured* bytes per
   stored amplitude — dense ≫ 10× the sparse maps, an eight-coordinate
   lattice key strictly above a `u64` one.
+- **selfhost** — the self-computing object: **each layer of E8 volumes
+  buys exactly one degree** (depth = degree − 1, verified for degrees 2
+  through 6, every route exact at deviation `0.0`), and the linearized
+  degree is 1 throughout. A `ccz` goes from character residual 2.00 on the
+  substrate to 2.4e-16 on the stack and its single-qubit phase reproduces
+  the registry's own three-qubit `ccz` to under 1e-12 — a non-Clifford
+  diagonal became a character. A `t` is the kept-apart exception: degree 1
+  already, so zero layers, zero volumes, zero cost, and a residual that is
+  the **same √2** `e8_across` measures for a `t` on the constellation, so
+  the two modules pin one obstruction from two directions. The trade is
+  counted, not asserted: entangling gates per use (`[1,2,4,8,16]`) versus
+  once (`[1,1,1,1,1]`), counted crossover at the second use, with the
+  wall-clock slope measured lower even where the constant is higher.
+  Volumes are quantized to eight coordinates and `occupancy` says so;
+  planning refuses a monomial outside the substrate, linearizing refuses a
+  monomial the stack does not hold, and a non-linear diagonal refuses to
+  factorize into single-qubit phases. Exact on dense, sparse and adaptive
+  alike.
 - **e8_across** — computing *across* a set of E8 volumes, measured: one
   finest-scale translation carries into **every** copy (touching
   `8m − 7` qubits, support-preserving), while a single copy has no
@@ -1251,6 +1269,83 @@ set by *time*, not memory, at a support of only 2048. The honest summary
 is that the constellation's cost tracks the lattice↔bits conversion
 rather than how much state it holds.
 
+### An object that computes itself, one layer per degree
+
+```sh
+cargo run --release --example selfhosted_stack
+```
+
+`selfhost` builds the object as described: a substrate register, and above
+it a tower of E8 volumes where **each layer holds the layers below it as
+its own coordinates**. One volume is `E8/2E8 ≅ F₂⁸` — one byte, eight
+coordinates — and the class map's measured F₂-linearity is what lets a
+coordinate hold an arbitrary F₂ function of the substrate and still be a
+coordinate.
+
+Any diagonal unitary is a phase polynomial
+`exp(2πi Σ_M c_M x_M / 2^bits)`. Degree 1 is the special case: **a
+degree-1 diagonal is a product of single-qubit phase gates**, and on a
+group whose coordinates are the bits it is a *character* — the one
+diagonal an F₂ volume applies natively. `SelfHostedStack::linearize`
+rewrites a degree-`d` diagonal as degree **1** over the stack by replacing
+each higher monomial with the coordinate holding it.
+
+Measured, on a 6-qubit substrate:
+
+| gate | deg | layers | vols | width | χ(substrate) | χ(stack) | character? |
+|---|---|---|---|---|---|---|---|
+| `cz` | 2 | 1 | 1 | 14 | 2.00 | 2.4e-16 | **yes** |
+| `ccz` | 3 | 2 | 2 | 22 | 2.00 | 2.4e-16 | **yes** |
+| `cccz` | 4 | 3 | 3 | 30 | 2.00 | 2.4e-16 | **yes** |
+| `t` | 1 | 0 | 0 | 6 | 1.41 | 1.41 | no |
+
+χ is the failure of the diagonal to be a character of the bit group — the
+same instrument `e8::across` points at the constellation. A `ccz` is
+maximally far from one (2.00) and becomes one exactly; the linearized
+`ccz` is a **single-qubit phase gate** that reproduces the registry's
+three-qubit `ccz` on a uniform superposition to 0.0e0. A genuinely
+non-Clifford diagonal has become a character.
+
+`t` is the honest exception, and it is the *same* obstruction measured
+twice: `t` is already degree 1, so the object correctly does nothing (zero
+layers, zero volumes, zero cost), and its eighth-root phases never become
+±1 valued. That residual is exactly the √2 the constellation reports for a
+`t` through the qubit path. Degree reduction and character-hood are two
+different things, and the report keeps them apart.
+
+**The recursive expansion is exactly one layer per degree:**
+
+```
+degree  layers   vols  width   linear   toffoli  deviation
+     2       1      1     16        1         1      0.0e0
+     3       2      2     24        1         3      0.0e0
+     4       3      3     32        1         5      0.0e0
+     5       4      4     40        1         7      0.0e0
+     6       5      5     48        1         9      0.0e0
+     7       6      6     56        1        11      0.0e0
+```
+
+**What it costs.** The expansion cannot be free — if it were, the native
+operator set would manufacture non-Clifford diagonals from nothing.
+Writing a degree-`k` monomial into its coordinate is a `k`-controlled X:
+precisely the non-native work. But it is paid **once**, and the diagonal is
+single-qubit phases forever after:
+
+```
+uses        [1,   2,   8,    32,   128,   256,   512,   1024]
+direct 2q+  [1,   2,   8,    32,   128,   256,   512,   1024]   max arity 3
+stack  2q+  [1,   1,   1,    1,    1,     1,     1,     1]      steady arity 1
+direct ns   [461, 632, 2243, 8604, 35947, 71730, 154954, 280923]
+stack  ns   [18488, 14057, 11810, 20000, 34640, 59721, 106926, 186216]
+```
+
+Counted crossover: **2 uses**. Measured crossover: **128 uses** — a
+classical simulator applies a diagonal kernel in `O(support)` whatever its
+arity, so the win shows up in the slope (164 ns/use versus 274) rather
+than the constant. Both numbers are reported because the counted one is
+the resource the object actually trades and the measured one is what this
+machine sees.
+
 ### Does computing *across* a set of E8 volumes pay?
 
 `e8::across` measures it instead of arguing it. One native finest-scale
@@ -1368,6 +1463,10 @@ src/
                  entanglement as a budgeted, auditable resource
   closure.rs     journalled history + geometric closure: loops as
                  undeclared checks, retrodiction by bisecting stamps
+  selfhost.rs    the self-computing object: a stack of E8 volumes whose
+                 each layer holds the layers below as its own
+                 coordinates, linearizing the diagonal one degree per
+                 layer (a ccz becomes a single-qubit phase)
   polarity.rs    twisted polarity systems: twist rank, local sector,
                  the pairwise-locality obstruction measured
   recursive.rs   point-or-lattice sites, block-spin RG, phonon
@@ -1394,7 +1493,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           forty-three integration suites (see Testing)
+tests/           forty-four integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -1424,7 +1523,9 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  e8_comb_noise (logical-vs-physical error curves),
                  e8_characterization (width ceilings, gate-fidelity
                  census, perf envelope, and the measured answer to
-                 whether computing across a set of E8s pays)
+                 whether computing across a set of E8s pays),
+                 selfhosted_stack (one layer per degree, the diagonal
+                 linearized, and what the trade costs)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

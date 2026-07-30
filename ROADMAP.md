@@ -504,6 +504,64 @@ Next rungs:
   time. What a *sequence* of native operations reaches — and whether the
   linear-per-copy advantage compounds or saturates — is unmeasured.
 
+## The self-computing object — SHIPPED (core)
+
+A geometric object that is computationally active as a feedback system
+*and* on its own purpose, expanding its capacity recursively by computing
+itself at each layer, linearizing the diagonal. `selfhost` builds it.
+
+One E8 volume is `E8/2E8 ≅ F₂⁸` — one byte, eight coordinates — and the
+measured F₂-linearity of the class map is the load-bearing fact: a
+coordinate can hold an arbitrary F₂ function of the substrate and still be
+a coordinate. A `SelfHostedStack` is a substrate (layer 0, the object on
+its own purpose) under a tower of such volumes, where layer `k` holds the
+degree-`k+1` monomials of the layers below it (the object computing
+itself), populated by evaluating them (the feedback).
+
+- **Linearizing the diagonal.** Any diagonal unitary is a phase
+  polynomial; degree 1 is the case that factorizes into single-qubit
+  phases and is a *character* of the bit group — the one diagonal an F₂
+  volume applies natively. `linearize` rewrites degree `d` as degree 1 by
+  substituting the coordinate that holds each higher monomial.
+- **Each layer buys exactly one degree.** Measured for degrees 2 through
+  7: depth = degree − 1, linearized degree 1 throughout, deviation
+  exactly `0.0` against applying the diagonal directly on the substrate,
+  on dense, sparse and adaptive alike.
+- **A non-Clifford diagonal becomes a character.** `ccz` moves from
+  character residual 2.00 (maximal) to 2.4e-16, and its single-qubit phase
+  reproduces the registry's three-qubit `ccz` to under 1e-12.
+- **The boundary held apart.** A `t` is degree 1 already, so the object
+  does nothing — and its eighth-root phases never become ±1 valued. Its
+  residual is the *same √2* `e8::across` measures for a `t` on the
+  constellation. Degree reduction and character-hood are different
+  properties and `LinearizationReport` reports them separately rather than
+  letting one imply the other.
+- **The cost, counted.** The expansion cannot be free, or the native
+  operator set would manufacture non-Clifford diagonals from nothing.
+  Writing a degree-`k` monomial is a `k`-controlled X — the non-native
+  work — paid once against per-use. Counted crossover: the second use.
+  Measured wall-clock crossover on sparse: 128 uses, because a classical
+  simulator applies a diagonal kernel in `O(support)` whatever its arity,
+  so the win lands in the slope (164 vs 274 ns/use) not the constant. Both
+  are reported.
+
+Next rungs:
+
+- **The stack as a `Backend`.** The object is currently a planner and a
+  verifier over other backends. As a representation in its own right it
+  would join `conformance`, `characterize` and the boundary atlas, and be
+  priced by the same machinery as everything else.
+- **Coordinate reuse across layers.** Volumes are quantized to eight
+  coordinates and a sparse polynomial wastes most of them (a `ccz` uses 2
+  of 16). Sharing partial products between monomials — `x₀x₁` serving both
+  `x₀x₁` and `x₀x₁x₂` — would cut both width and Toffoli count, and the
+  measured occupancy is the number to drive up.
+- **The quadratic character on `E8/2^m E8`.** The F₂ stack linearizes real
+  diagonals into genuine characters; the `t` boundary needs a character
+  valued in `2^k`-th roots, which is the open question `e8::across`
+  already flags. The stack narrows it: what is needed is not a new layer
+  but a coordinate group that is `Z/2^k` rather than `F₂`.
+
 ## Mixed-arity compound qudits — SHIPPED (core)
 
 `mixed::CompoundRegister` + `e8`: the representation/interaction/flow

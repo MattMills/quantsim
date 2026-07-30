@@ -89,6 +89,7 @@ pub mod rng;
 pub mod sampling;
 pub mod scalar;
 pub mod schedule;
+pub mod selfhost;
 pub mod sim;
 
 pub use backend::{AdaptiveState, Backend, BackendRegistry, DenseState, SparseState};
@@ -163,6 +164,10 @@ pub mod prelude {
     pub use crate::schedule::{
         FeedbackOp, GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace,
         ScheduledKernel, TimedOp,
+    };
+    pub use crate::selfhost::{
+        amortization, full_degree, recursive_expansion, verify, Amortization, Diagonal, Layer,
+        LinearizationReport, SelfComputationCost, SelfHostedStack, VOLUME_COORDINATES,
     };
     pub use crate::sim::Simulator;
 }
