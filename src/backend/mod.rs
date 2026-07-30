@@ -383,6 +383,27 @@ impl<S: Scalar> BackendRegistry<S> {
     }
 }
 
+impl BackendRegistry<C64> {
+    /// Add the representations that exist **only** over ℂ, because they
+    /// store complex amplitudes natively rather than being generic over
+    /// the algebra: the E8 scale tower (`"e8-constellation"`) and the
+    /// single-copy E8×E8 register (`"e8-rep"`).
+    ///
+    /// They cannot live in [`standard`](BackendRegistry::standard),
+    /// which is generic over every [`Scalar`], so they are opt-in by
+    /// this call — and that is a statement about them, not an oversight.
+    pub fn register_e8(&mut self) -> Result<()> {
+        self.register("e8-constellation", |n| {
+            Ok(Box::new(
+                crate::e8::constellation::E8ConstellationState::new(n)?,
+            ))
+        })?;
+        self.register("e8-rep", |n| {
+            Ok(Box::new(crate::e8::rep::E8RepState::new(n)?))
+        })
+    }
+}
+
 /// Shared validation for gate application: matrix dimension vs target count,
 /// and target validity vs register width.
 pub(crate) fn validate_apply<S: Scalar>(

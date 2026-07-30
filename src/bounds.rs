@@ -348,6 +348,39 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
         },
     ));
 
+    // The graph-state bundle: its cost is the link count, and it holds
+    // only the Clifford sector — a non-Clifford gate reports as a
+    // measured refusal rather than a number, which is exactly what an
+    // assumption failing looks like.
+    axes.push(probe(
+        "bundle",
+        |n| {
+            let mut bundle = crate::bundle::PolarityBundle::new(n)?;
+            <crate::bundle::PolarityBundle as Backend<C64>>::reset(&mut bundle);
+            Ok(bundle)
+        },
+        circuit,
+        &reg,
+        |s: &crate::bundle::PolarityBundle| {
+            let profile = s.profile();
+            (
+                format!("{} links, {} clusters", profile.links, profile.components),
+                true,
+            )
+        },
+    ));
+    // The E8 scale tower: cost is the stored lattice-point count, and
+    // its own wall is the u64 index rather than the amplitude count.
+    axes.push(probe(
+        "e8-constellation",
+        crate::e8::constellation::E8ConstellationState::new,
+        circuit,
+        &reg,
+        |s: &crate::e8::constellation::E8ConstellationState| {
+            (format!("{} lattice points", s.stored_points().len()), true)
+        },
+    ));
+
     // Register SHAPES are axes too: the hierarchical splits (k logical
     // qubits carried inside each scalar over a sparse site sector)
     // compete in every scan and selection on the same measured terms.

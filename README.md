@@ -355,10 +355,30 @@ parts are swappable:
   counterweight, printed rather than omitted, is that *evaluating*
   closure costs the total loop length (1.7M at 14 400 sites), which a
   spanning-forest basis does not keep small.
-- **The bundle is a backend** — `PolarityBundle` implements
-  `Backend<S>` and is registered as **`"bundle"`** in
+- **The bundle is a backend, and an atlas axis** — `PolarityBundle`
+  implements `Backend<S>` and is registered as **`"bundle"`** in
   `BackendRegistry::standard()`, so `sim.run_on("bundle", &circuit)`
-  works like any other representation. Gate action is on the graph
+  works like any other representation — and `resource_profile` /
+  `advantage_scan` now carry a **`bundle`** axis beside support,
+  clusters, bonds and T-count, with **`e8-constellation`** joining them
+  through the new `BackendRegistry::<C64>::register_e8()` (the E8
+  representations store complex amplitudes natively, so they cannot
+  live in the generic `standard()` and are opt-in by that call). Adding
+  them found a real defect immediately: `memory_bytes` was counting the
+  *journal*, so the atlas classified the bundle's audit trail as
+  **Exponential(1.40)** on GHZ. Reporting structure only — the journal
+  is an optional addition whose size tracks gates applied, not state
+  size — GHZ-14 falls from 67 088 to **1 552 bytes** and the law reads
+  **Polynomial(1.50)**, putting `bundle` inside the atlas's
+  `Classical { via: [...] }` verdict. The width sweep shows why neither
+  representation dominates: on GHZ at 24 qubits, dense pays 256 MiB,
+  sparse 125 B, bundle 4.0 KiB (23 links), the E8 tower 224 B (2
+  lattice points); on an H-layer at 20 qubits, dense pays 16 MiB,
+  sparse **50 MiB**, the E8 tower **80 MiB**, and the bundle **944 B
+  with no links at all**. The bundle is the only one cheap on both, and
+  on the random-universal candidate family it **declines outright**
+  rather than truncating — which `tests/bounds_atlas.rs` now
+  distinguishes from silent approximation explicitly. Gate action is on the graph
   itself: a single-qubit Clifford composes into the fiber's **vertex
   operator** (the full 24-element group, generated and verified — `H²=I`,
   `S⁴=I`, matrices consistent with the Pauli action at 4.4e-16), `cz`
@@ -733,7 +753,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 461 tests (67 unit + 387 across forty-one
+`cargo test` runs 464 tests (67 unit + 390 across forty-one
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);

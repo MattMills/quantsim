@@ -1758,7 +1758,13 @@ impl<S: Scalar> Backend<S> for PolarityBundle {
     }
 
     fn memory_bytes(&self) -> usize {
-        self.profile().bytes
+        // The STRUCTURE, not the audit trail. A journal is an optional
+        // addition whose size tracks how many gates ran, not how big
+        // the state is; counting it here would have the boundary atlas
+        // classify the journal's growth instead of the
+        // representation's. `profile()` reports both, separately.
+        let profile = self.profile();
+        profile.bytes - profile.journal_bytes
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

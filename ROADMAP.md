@@ -575,9 +575,12 @@ Remaining work:
     `sample` fail rather than collapsing wrongly. Graph-state
     measurement is a known algorithm and a separate one from gate
     action.
-  - **An axis in `bounds.rs`.** Now that it is a backend, link count and
-    cycle rank can join support, clusters, bonds and T-count in
-    `resource_profile`/`advantage_scan`.
+  - **An axis in `bounds.rs` — DONE.** `bundle` and `e8-constellation`
+    are atlas axes. Adding them found `memory_bytes` counting the
+    journal, which made the atlas read the audit trail's growth as the
+    representation's; structure-only reporting fixed it and the law
+    reads Polynomial. Remaining nearby: `e8-rep` is registered but has
+    no scan family that suits its 8-qubit-native shape.
 - **Non-Clifford escape as a measured budget.** A `t` gate leaves the
   sector; the bundle detects that after the fact
   (`verify_against` deviation). Carrying a small superposition of

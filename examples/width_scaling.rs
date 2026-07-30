@@ -122,6 +122,84 @@ fn main() {
     println!("  (Ball = C64 midpoint + certified radius: 1.5× the complex footprint)");
 
     println!();
+    println!("== Clifford-sector representations: width where the amplitude picture ends ==");
+    let mut e8_sim: Simulator = Simulator::new();
+    e8_sim.backends_mut().register_e8().expect("fresh registry");
+    println!("(GHZ and an H-layer, on the two representations that store structure");
+    println!(" rather than amplitudes, against the ones that do)");
+    println!(
+        "{:>6} {:>12} {:>12} {:>12} {:>16} {:>12} {:>16}",
+        "qubits", "dense", "sparse", "bundle", "bundle param", "e8-const", "e8 param"
+    );
+    for n in [8usize, 12, 16, 20, 24] {
+        let ghz = library::ghz(n);
+        let dense = attempt(|| Ok(sim.run_on("dense", &ghz)?.memory_bytes()));
+        let sparse = attempt(|| Ok(sim.run_on("sparse", &ghz)?.memory_bytes()));
+        let (bundle_bytes, bundle_param) = match sim.run_on("bundle", &ghz) {
+            Ok(state) => {
+                let bundle = state
+                    .as_any()
+                    .downcast_ref::<quantsim::bundle::PolarityBundle>()
+                    .expect("the bundle downcasts to itself");
+                (
+                    fmt_bytes(state.memory_bytes()),
+                    format!("{} links", bundle.profile().links),
+                )
+            }
+            Err(e) => ("—".to_string(), e.to_string()),
+        };
+        let (e8_bytes, e8_param) = match e8_sim.run_on("e8-constellation", &ghz) {
+            Ok(state) => {
+                let e8 = state
+                    .as_any()
+                    .downcast_ref::<quantsim::e8::constellation::E8ConstellationState>()
+                    .expect("the tower downcasts to itself");
+                (
+                    fmt_bytes(state.memory_bytes()),
+                    format!("{} points", e8.stored_points().len()),
+                )
+            }
+            Err(e) => ("—".to_string(), e.to_string()),
+        };
+        println!(
+            "{n:>6} {dense:>12} {sparse:>12} {bundle_bytes:>12} {bundle_param:>16} \
+             {e8_bytes:>12} {e8_param:>16}"
+        );
+    }
+    println!();
+    println!("  and the same widths on an H-layer, where every amplitude is populated:");
+    println!(
+        "{:>6} {:>12} {:>12} {:>12} {:>16} {:>12}",
+        "qubits", "dense", "sparse", "bundle", "bundle param", "e8-const"
+    );
+    for n in [8usize, 12, 16, 20] {
+        let mut layer: Circuit = Circuit::new(n);
+        for q in 0..n {
+            layer.h(q);
+        }
+        let dense = attempt(|| Ok(sim.run_on("dense", &layer)?.memory_bytes()));
+        let sparse = attempt(|| Ok(sim.run_on("sparse", &layer)?.memory_bytes()));
+        let (bundle_bytes, bundle_param) = match sim.run_on("bundle", &layer) {
+            Ok(state) => {
+                let bundle = state
+                    .as_any()
+                    .downcast_ref::<quantsim::bundle::PolarityBundle>()
+                    .unwrap();
+                (
+                    fmt_bytes(state.memory_bytes()),
+                    format!("{} links", bundle.profile().links),
+                )
+            }
+            Err(e) => ("—".to_string(), e.to_string()),
+        };
+        let e8 = attempt(|| Ok(e8_sim.run_on("e8-constellation", &layer)?.memory_bytes()));
+        println!("{n:>6} {dense:>12} {sparse:>12} {bundle_bytes:>12} {bundle_param:>16} {e8:>12}");
+    }
+    println!("  The H-layer is free for the bundle — no links at all — and it is exactly");
+    println!("  where the E8 tower and sparse pay the most: every basis state is occupied.");
+    println!("  GHZ is the reverse. Neither is universally better; the atlas measures which.");
+
+    println!();
     println!("== Factored: cost tracks entanglement clusters, not register width ==");
     println!();
     println!("(a) width sweep, entanglement held local (pairs): linear in width");
