@@ -471,6 +471,10 @@ pub struct AxisScan {
     /// the median the law is variance-robust; when they straddle, the
     /// classification is jitter-limited and says so.
     pub time_law_bounds: Option<(Law, Law)>,
+    /// Per-size `(min, max)` timing envelope — the raw jitter behind
+    /// [`AxisScan::time_law_bounds`], kept so a caller can tell a noisy
+    /// measurement from a clean one before trusting either law.
+    pub time_spread: Vec<Option<(usize, usize)>>,
     /// Every probe exact.
     pub exact: bool,
 }
@@ -483,6 +487,53 @@ impl AxisScan {
         self.exact
             && self.law.as_ref().is_some_and(Law::is_subexponential)
             && self.time_law.as_ref().is_some_and(Law::is_subexponential)
+    }
+
+    /// The worst per-size timing spread, `max / min` — how noisy the
+    /// wall-clock measurement was. Near 1.0 is a clean measurement; a
+    /// large value means the machine, not the algorithm, dominated the
+    /// numbers, and neither the time law nor its envelope should be read
+    /// as a property of the code.
+    pub fn worst_time_spread_ratio(&self) -> Option<f64> {
+        let mut worst: Option<f64> = None;
+        for entry in &self.time_spread {
+            let (lo, hi) = (*entry)?;
+            if lo == 0 {
+                return None;
+            }
+            let ratio = hi as f64 / lo as f64;
+            worst = Some(worst.map_or(ratio, |w: f64| w.max(ratio)));
+        }
+        worst
+    }
+
+    /// Measured memory growth across the swept sizes: the last cost over
+    /// the first. `None` if any size walled.
+    ///
+    /// Growth *without* a fitted shape. A fit has to choose between
+    /// `Polynomial` and `Exponential`, and over a short sweep those two
+    /// are numerically adjacent — a steep polynomial and a shallow
+    /// exponential differ by less than timing jitter. This ratio is the
+    /// part of the claim that jitter cannot flip, so an assertion about
+    /// *how much* a representation pays belongs here, and one about the
+    /// *shape* belongs behind [`AxisScan::time_law_is_variance_robust`].
+    pub fn measured_growth(&self) -> Option<f64> {
+        Self::ratio(&self.costs)
+    }
+
+    /// Measured wall-clock growth across the swept sizes, last over
+    /// first. `None` if any size walled.
+    pub fn measured_time_growth(&self) -> Option<f64> {
+        Self::ratio(&self.nanos)
+    }
+
+    fn ratio(values: &[Option<usize>]) -> Option<f64> {
+        let first = (*values.first()?)? as f64;
+        let last = (*values.last()?)? as f64;
+        if first <= 0.0 {
+            return None;
+        }
+        Some(last / first)
     }
 
     /// Whether the time classification is variance-robust: the minimum
@@ -562,6 +613,7 @@ pub fn advantage_scan(
             law,
             time_law,
             time_law_bounds,
+            time_spread: spreads,
             exact,
         });
     }

@@ -80,7 +80,9 @@ pub mod harness;
 pub mod library;
 pub mod lift;
 pub mod math;
+pub mod memo;
 pub mod mixed;
+pub mod phase;
 pub mod polarity;
 pub mod qudit;
 pub mod recursive;
@@ -143,9 +145,16 @@ pub mod prelude {
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};
+    pub use crate::memo::{
+        explore, BranchReport, Explorer, MemoConfig, MemoPlan, MemoStats, PlanOp, DEFAULT_MAX_FUSE,
+    };
     pub use crate::mixed::{
         clock_d, cshift, fabric, fourier_d, shift_d, swap_dd, CompoundBackend, CompoundRegister,
         FabricReport, Interaction,
+    };
+    pub use crate::phase::{
+        bit_group_elements, compare_degrees, phase_degree, DegreeComparison, PhaseDegree,
+        PhaseGroup, EXHAUSTIVE_BUDGET,
     };
     pub use crate::qudit::{
         algebra_capacity, dual_algebra_report, synthesize_sandwich, AlgebraicRegister,

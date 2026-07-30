@@ -504,6 +504,164 @@ Next rungs:
   time. What a *sequence* of native operations reaches — and whether the
   linear-per-copy advantage compounds or saturates — is unmeasured.
 
+## Graph-state measurement — SHIPPED (core)
+
+`bundle::project` used to be a documented no-op. That was worse than it
+looked: `for_each_nonzero` materializes, so the default `measure` drew a
+*correct* outcome and then left the state uncollapsed — a second
+measurement of the same qubit could disagree with the first. Silent, and a
+correctness bug rather than a missing feature.
+
+`PolarityBundle::collapse` now does the update in the description:
+
+- **An isolated site** carries the product state `V|+⟩`, so the collapse is
+  a single-qubit projection and the probability comes off `V`'s matrix — it
+  can be exactly 0 or 1.
+- **A site with a neighbour** is rotated until its operator sends `Z` to
+  `±Z`, by the same breadth-first local-complementation search `apply_cz`
+  uses with a different target predicate. After that its two outcomes are
+  equally likely; its edges are deleted, a `Z` goes to each former
+  neighbour when the bare graph state's eigenvalue is `−1`, and the site is
+  left in the state it was projected onto.
+- `measure` is overridden to take its bias from the description, so it is
+  `O(deg²)` rather than `O(2^n)`.
+- The collapse is journalled as ONE semantic step. Its internal
+  complementations are suppressed, because replay re-runs `collapse` and
+  would otherwise apply them twice — the history worth keeping is "site a
+  was measured and came out `outcome`", not the search that implemented it.
+
+**A pre-existing bug fell out of it.** A site's operator is `U · Z^spin`,
+so right-multiplying *that* by a generator means composing `Z^spin g Z^spin`
+onto `U`. `sqrt_z` commutes with `Z` and is fine; `sqrt_x` does not — so
+`local_complement` was silently wrong on any site with a spin set, as were
+the two breadth-first searches that predict which word to apply. It was
+latent because the `Backend` path never sets spins; the collapse rules were
+the first code to exercise it. Isolating it took separating the decorations:
+vops-only passed, spins-only passed, both failed.
+
+Verified over 672 cases against dense projection, worst deviation under
+1e-9, plus three-deep measurement sequences.
+
+Next rungs:
+
+- **Non-materializing `sample`.** `measure` is native now, but `sample`
+  still inherits the materializing default. Per-shot clone-and-measure
+  would make the bundle a genuine sampling backend and let it join
+  `sampling`'s XEB machinery.
+- **Measurement in `characterize` and the atlas.** With `project` working,
+  the bundle can carry adaptive circuits and the evented scheduler, which
+  is where a graph-state representation should be strongest.
+- **`closure` still imports only `bundle` and `error`.** The journalled
+  history and retrodiction work remains outside the simulator, and a
+  measurement is exactly the kind of event a closure history should stamp.
+
+## The √2 obstruction — RESOLVED (measured)
+
+Two modules reported the same number from different directions:
+`e8::across` measured a `t` breaking the native linear-character class by
+√2, and `selfhost` measured a `t` untouched by linearization with the same
+√2 residual. `phase` resolves it.
+
+The instrument is the iterated discrete derivative
+`(Δ_a f)(p) = f(p+a)/f(p)`: a phase function has **degree ≤ d** when every
+`(d+1)`-fold derivative vanishes, and **degree 1 is exactly being a
+character**. Measured results:
+
+- **The degree law.** `phase degree = multilinear degree +
+  log₂(denominator) − 1`, confirmed on eleven diagonals spanning both dials
+  independently. A diagonal is a character iff both dials are minimal:
+  multilinear degree one AND ±1 valued.
+- **The ladder is the Clifford hierarchy**, rediscovered from measurement:
+  degree 1 the ±1 characters, 2 Clifford (`s`, `cz`), 3 the first
+  non-Clifford diagonals (`t`, `cs`, `ccz`), 4 (`ct`, `cccz`).
+- **The self-host floor, derived.** The stack reduces the multilinear term
+  only, so the floor is `log₂(denominator)`. A `ccz` (`b = 1`) reduces to a
+  character; a `t` (`b = 3`) cannot at any depth. This explains the earlier
+  measurement rather than restating it.
+- **Two groups, not one.** At one E8 volume the residue group IS the bit
+  group under XOR — verified over all 256 × 256 pairs, because `E8/2E8 ≅
+  F₂⁸` and `class_of` is linear. From two volumes on they differ on most
+  pairs, and the native modulation is degree 1 on the residue group while
+  being degree 5 on the bits. A `t` is degree 3 on both. The native
+  operators and the qubit path are characters of *different* groups, and
+  each is high-degree from the other's side.
+- **The number itself.** √2 is the order-two residual of the `t` phase,
+  `|i − 1|`. The full ladder is `[2 sin(π/8), √2, 2, 0]`.
+
+So the question "does a quadratic character exist on `E8/2^m E8`" has an
+answer: yes — degree 2 is the Clifford level, and an `s`-like denominator-4
+phase is one. It does not make a `t` native, because `t` is degree 3.
+
+Next rungs:
+
+- **Add the degree-2 and degree-3 native operators and re-measure the
+  class.** `across` currently implements translations, modulations,
+  reflections, permutations and the coordinate DFT — all degree 1. The
+  degree ladder says what is missing at each level; adding level 2 should
+  enlarge the measured class to coset-with-quadratic-character, and level 3
+  should reach `t`. Whether the *support* stays a coset under those is the
+  measurement to take.
+- **A degree axis in the boundary atlas.** Phase degree is a structural
+  resource like support or bond dimension. A family's maximum diagonal
+  degree ought to be an axis parameter, so the atlas prices circuits by
+  where they sit in the hierarchy.
+- **Non-diagonal degree.** The instrument is defined for phase functions.
+  The Clifford hierarchy is not restricted to diagonal gates, and whether
+  this derivative construction extends to the general case is open.
+
+## Progressive gate-result memoization — SHIPPED (core)
+
+`memo` treats qubit operations as `n`-wide operation objects over a shared,
+content-addressed entry table, holds the whole computational path at once,
+and journals the state so branches can be re-explored.
+
+- **The geometry is memoized away by content addressing.** A fused operator
+  over an ascending support is indexed by position within that support, so
+  it carries no absolute qubit information: identical structure anywhere in
+  the circuit is the identical matrix and therefore one entry. The key is
+  every coefficient's exact bit pattern (`Scalar::coeffs`), so a hit is an
+  identity rather than a hash guess, and the mechanism is generic over the
+  amplitude algebra (verified over ℍ as well as ℂ).
+- **Fusion sound by disjointness.** Open supports are disjoint; touched
+  groups merge when their union fits, because disjoint operators commute.
+  Operations are emitted in **commit order** — a valid linearization
+  because a qubit has at most one open owner and ownership transfers only
+  at commit.
+- **Measured reuse.** A rainbow collapses to one entry; `brickwork-10x6`
+  runs 81 gates as 16 operations over 8 entries; a random circuit reuses
+  almost nothing, which is the honest signal that it has no structure to
+  exploit. `max_fuse` is a monotone dial trading operations (61 → 9) for
+  entry bytes (448 → 169 216).
+- **Journalled unwind/rewind.** `Explorer` snapshots on a stride and
+  rewinds to any earlier step, landing exactly on the fresh-run state
+  (asserted at every step). `explore` shares a prefix across variants:
+  counted work 288 → 32 at sixteen variants (9.00×), measured 3.82×, with
+  the deviation against from-scratch runs reported alongside so a speedup
+  can never hide a changed answer.
+- **A real bug found and pinned.** Emitting in opening rather than commit
+  order let a still-open group acquire a qubit an already-committed group
+  had used, applying gates out of order for a measured 1.408-amplitude
+  error. The minimized nine-gate case is a regression test.
+
+Next rungs:
+
+- **Persist the entry table across circuits.** The table is currently
+  per-plan. A table shared across a whole study would make the second
+  circuit of a family cheaper than the first, which is where "progressive"
+  should really pay.
+- **Commutation-aware grouping.** Fusion is deliberately restricted to the
+  disjointness argument, so it will not reorder a gate past a
+  non-overlapping-but-commuting neighbour. A Pauli-frame or
+  diagonal-commutation pass would widen the groups without weakening the
+  soundness argument.
+- **A rewind-cost law.** The checkpoint stride trades journal bytes against
+  replay work; the crossover is currently a knob rather than a measured
+  law, and `bounds`-style law fitting would make it one.
+- **Content-addressed states, not just operators.** The same key idea
+  applied to the state at a path node would let two branches that
+  reconverge share their continuation — the natural next step for holding
+  the whole path at once.
+
 ## The self-computing object — SHIPPED (core)
 
 A geometric object that is computationally active as a feedback system

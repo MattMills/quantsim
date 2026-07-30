@@ -753,7 +753,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 494 tests (67 unit + 420 across forty-four
+`cargo test` runs 526 tests (67 unit + 452 across forty-seven
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1078,6 +1078,54 @@ entirely trivial accessors and defensive guards:
   and the envelope separates the representations by *measured* bytes per
   stored amplitude — dense ≫ 10× the sparse maps, an eight-coordinate
   lattice key strictly above a `u64` one.
+- **bundle_measure** — graph-state measurement done in the description.
+  The collapse is checked against projecting the *materialized* state over
+  **672 cases** — seven graph shapes × four decorations (bare / vertex
+  operators / spins / both) × three seeds × every site × both outcomes —
+  worst deviation under 1e-9, plus sequences of three successive
+  measurements on five-site graphs so the post-measurement description is
+  shown to be one a further measurement can use. A GHZ bundle returns the
+  same outcome on re-measuring a collapsed qubit and perfectly correlated
+  outcomes across all six sites; tomography against the bundle's own
+  stabilizer generators confirms the description still denotes the state it
+  claims. An isolated fiber's outcome can be deterministic (probability
+  exactly 1 and 0), and the impossible projection is refused by leaving the
+  state alone rather than zeroing it. Native sampling matches the dense
+  marginal distribution to 0.05 over 4000 shots. The collapse is journalled
+  as one semantic step and replays exactly.
+- **phase_degree** — degree 1 is verified to be *exactly* being a
+  character, and the degree law
+  `multilinear + log₂(denominator) − 1` is confirmed on eleven diagonals
+  spanning both dials independently, with the two consequences asserted
+  separately: a diagonal is a character iff both dials are minimal, and the
+  ladder sorts `z`/`s`,`cz`/`t`,`cs`,`ccz`/`ct`,`cccz` into Clifford-hierarchy
+  levels 1/2/3/4. One E8 volume is checked to be the bit group over **all**
+  256 × 256 pairs; two volumes differ on most. The native modulation is
+  degree 1 on the residue group and witnessed above 3 on the bits, while a
+  `t` is degree 3 on both — and its order-two residual is pinned to √2 and
+  its order-one to `2 sin(π/8)`, tying this module to `e8_across` and
+  `selfhost` numerically rather than by narrative. Linearizing is shown
+  unable to lower the degree below the denominator floor. The instrument's
+  soundness asymmetry is tested too: a sampled sweep certifies nothing
+  (`certified_degree` is `None`) but still witnesses (`exceeds` holds), and a
+  constant phase stops the sweep at the first vanishing order.
+- **memo** — progressive gate-result memoization. The whole **registry**
+  survives it: 24 circuits drawn from the registry's own gates (aliases and
+  parametric gates at random angles included) at three fusion widths, every
+  deviation under 1e-12, and exactness holds on dense, sparse and adaptive
+  and over ℍ as well as ℂ — the content key is `Scalar::coeffs`, so it is
+  not a ℂ-only trick. Repeated geometry collapses to one entry regardless
+  of absolute position while qubit *order* within a support stays part of
+  the identity. `max_fuse` is monotone in both directions (operations never
+  increase, entry bytes never decrease). A lone diagonal stays diagonal;
+  fusing onto it promotes it; a gate wider than the limit keeps its own
+  support and is still memoized. The accounting must add up —
+  hits + misses = operations, entries = misses, and the `fused_from` counts
+  sum to the source gate count. The journal rewinds to states exactly equal
+  to a fresh run at every step, and refuses to advance backwards or rewind
+  ahead of the cursor. **The commit-order regression is pinned** by the
+  minimized nine-gate circuit that gave a 1.408 deviation under
+  opening-order emission.
 - **selfhost** — the self-computing object: **each layer of E8 volumes
   buys exactly one degree** (depth = degree − 1, verified for degrees 2
   through 6, every route exact at deviation `0.0`), and the linearized
@@ -1269,6 +1317,87 @@ set by *time*, not memory, at a support of only 2048. The honest summary
 is that the constellation's cost tracks the lattice↔bits conversion
 rather than how much state it holds.
 
+### What the √2 was
+
+```sh
+cargo run --release --example phase_degree
+```
+
+Two modules above hit the same number from different directions: `e8::across`
+found a `t` breaking the native linear-character class by **√2**, and
+`selfhost` found a `t` untouched by linearization with the same **√2**
+residual. `phase` resolves it by measuring the thing neither was measuring.
+
+For a phase function `f: G → U(1)` on the group indexing the register, take
+the discrete derivative `(Δ_a f)(p) = f(p+a)/f(p)` and iterate. `f` has
+**degree ≤ d** when every `(d+1)`-fold derivative is identically 1 — and
+**degree 1 is exactly being a character**, since `Δ_a f` not depending on `p`
+*is* `f(p+a) = f(p)f(a)`. So "is it a character" and "what is its degree" are
+one question, and the degree says how far from one a diagonal is.
+
+Measured on nine diagonals spanning both dials independently:
+
+| gate | multilinear | log₂ N | predicted | measured | character? |
+|---|---|---|---|---|---|
+| `z` | 1 | 1 | 1 | **1** | yes |
+| `s` | 1 | 2 | 2 | **2** | no |
+| `t` | 1 | 3 | 3 | **3** | no |
+| `t^½` | 1 | 4 | 4 | **4** | no |
+| `cz` | 2 | 1 | 2 | **2** | no |
+| `cs` | 2 | 2 | 3 | **3** | no |
+| `ct` | 2 | 3 | 4 | **4** | no |
+| `ccz` | 3 | 1 | 3 | **3** | no |
+| `cccz` | 4 | 1 | 4 | **4** | no |
+
+Every case matches
+
+```
+phase degree = multilinear degree + log₂(denominator) − 1
+```
+
+so a diagonal is a character exactly when **both** dials sit at their
+minimum: multilinear degree one *and* ±1 valued. And the degree ladder is
+the **Clifford hierarchy for diagonal gates, rediscovered from
+measurement**: degree 1 the ±1 characters, degree 2 Clifford (`s`, `cz`),
+degree 3 the first non-Clifford diagonals (`t`, `cs`, `ccz`), degree 4
+(`ct`, `cccz`).
+
+**Why the stack fixed a `ccz` but not a `t`.** `selfhost` reduces the
+*multilinear* term. The log-denominator term is untouched, so the floor is
+`log₂(denominator)`:
+
+```
+ccz  degree 3 -> 1   layers 2   multilinear 3 -> 1   character after: true
+t    degree 3 -> 3   layers 0   multilinear 1 -> 1   character after: false
+```
+
+A `t`'s entire degree is its denominator, so no depth of stack can help.
+That derives the earlier observation instead of restating it.
+
+**And the two groups.** The constellation's native operators and the qubit
+path are characters of *different* groups:
+
+```
+1 volume,  n=8:  residue addition differs from XOR on      0 of 65536 pairs
+  native modulate  on residue  degree 1     on bits/XOR  degree 1
+  qubit t          on residue  degree 3     on bits/XOR  degree 3
+
+2 volumes, n=16: residue addition differs from XOR on 229292 of 262144 pairs
+  native modulate  on residue  degree 1     on bits/XOR  degree 5
+  qubit t          on residue  degree 3     on bits/XOR  degree 3
+```
+
+At one volume the two groups **coincide exactly** — `E8/2E8 ≅ F₂⁸` and
+`class_of` is linear, verified over all 256 × 256 pairs. From two volumes on
+they do not, because extracting higher digits carries. A modulation is
+degree 1 on the residue group and degree 5 on the bits; a `t` is degree 3 on
+both.
+
+The √2 itself is this instrument's **order-two residual for a `t`**:
+`|i − 1| = 1.414214`. The full ladder for `t` is
+`[0.765, 1.414, 2.000, 0]` — the first entry `2 sin(π/8)`, then √2, then the
+maximum a phase can be off by, then vanishing at order 4.
+
 ### An object that computes itself, one layer per degree
 
 ```sh
@@ -1389,6 +1518,80 @@ of native operators can. Full quantum computing on the constellation is
 real, and it is bought entirely on the qubit path — which prices as
 sparse with a bigger key.
 
+## Progressive gate-result memoization
+
+```sh
+cargo run --release --example gate_memoization
+```
+
+`memo` treats qubit operations as **`n`-wide operation objects** rather
+than "this gate, on those qubits". `MemoPlan` rewrites a circuit into
+operations over a *support*, fusing consecutive gates while they fit inside
+`max_fuse`, and stores each distinct operator once in a shared entry table.
+
+The table is **content-addressed on exact coefficient bits** (via
+`Scalar::coeffs`), which is what memoizes the geometry away: a fused
+operator over a sorted support is indexed by position *within* that
+support, so it does not know which qubits it sits on. A `cx` on `(0, 1)`
+and a `cx` on `(7, 8)` are the same matrix and therefore the same entry —
+nothing is canonicalized by hand, and because the key is the bit pattern
+rather than a hash, a hit is an identity, never a guess. Qubit *order*
+within a support stays part of the identity: `cx(0,1)` and `cx(3,2)` are
+correctly distinct.
+
+| circuit | gates | ops | entries | reuse | hit rate | fusion | entry bytes |
+|---|---|---|---|---|---|---|---|
+| `ghz-12` | 12 | 4 | 3 | 1.33 | 25% | 3.00 | 9 216 |
+| `qft-8` | 40 | 15 | 10 | 1.50 | 33% | 2.67 | 20 224 |
+| `brickwork-10x6` | 81 | 16 | 8 | 2.00 | 50% | 5.06 | 11 072 |
+| `rainbow-10` | 10 | 5 | **1** | 5.00 | 80% | 2.00 | 256 |
+| `random-10x120` | 120 | 21 | 18 | 1.17 | 14% | 5.71 | 40 704 |
+
+Structure shows up as reuse and its absence shows up too: a rainbow
+collapses to a single entry, a random circuit to almost none. `max_fuse` is
+a measured dial trading operations for entry bytes, on `brickwork-10x6`:
+
+```
+max_fuse=1  ops=61  entries=4  widest=2  bytes=448      max_fuse=4  ops=16  entries=8  widest=4  bytes=11072
+max_fuse=2  ops=44  entries=5  widest=2  bytes=1088     max_fuse=5  ops=10  entries=8  widest=5  bytes=58880
+max_fuse=3  ops=16  entries=8  widest=3  bytes=5888     max_fuse=6  ops=9   entries=7  widest=6  bytes=169216
+```
+
+**Fusion is sound by disjointness.** Open supports are disjoint; a gate
+merges the groups it touches when their union fits (disjoint operators
+commute, so the merged operator is their product in any order), otherwise
+those groups commit and the gate opens a fresh one. Operations are emitted
+in **commit order**, which is a valid linearization because a qubit is
+owned by at most one open group and ownership transfers only at commit.
+
+Emitting in *opening* order is not valid, and that is not a hypothetical:
+a still-open group can acquire a qubit an already-committed group used, at
+which point its opening position predates gates it does not contain. That
+produced a **1.408-amplitude** error on a random circuit. `tests/memo.rs`
+pins the minimized nine-gate case.
+
+### Unwinding and rewinding to re-explore
+
+`Explorer` runs a plan while journalling state snapshots at a configurable
+stride; `rewind` restores the nearest snapshot and replays forward, landing
+on states indistinguishable from a fresh run (asserted exactly, at every
+step, in both directions). `explore` uses that to run variants over a
+shared prefix — evolved once instead of per variant:
+
+```
+variants   prefix   operations applied        wall clock (ns)          deviation
+2              16    36 -> 18   2.00x      567807 -> 295553   1.92x     2.8e-17
+4              16    72 -> 20   3.60x      925004 -> 391940   2.36x     2.8e-17
+8              16   144 -> 24   6.00x     1956374 -> 486516   4.02x     2.8e-17
+16             16   288 -> 32   9.00x     3959034 -> 1036463  3.82x     2.8e-17
+```
+
+The sharing is verified rather than assumed: the deviation column is the
+worst amplitude difference against running every variant from scratch. The
+naive route deliberately gets the *better* plan — it may fuse across the
+prefix/variant boundary, which the shared route cannot, since the combined
+plan's operation boundary is not a valid cut — and still loses.
+
 ## Research mode: verify, then measure
 
 The workflow for a new gate set or a new backend (an MPS, a p-adic
@@ -1448,6 +1651,12 @@ src/
                  polarity<N> (N twisted polarities per amplitude),
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
+  phase.rs       polynomial degree of a phase function by iterated
+                 discrete derivatives: degree 1 IS being a character, and
+                 the degree ladder is the Clifford hierarchy
+  memo.rs        progressive gate-result memoization: operations as n-wide
+                 objects over a content-addressed entry table, with a
+                 journal that unwinds and rewinds to re-explore branches
   bounds.rs      boundary atlas: measured growth laws, advantage scan
   characterize.rs full per-backend characterization: construction and
                  per-family width ceilings (carrying the library's own
@@ -1460,7 +1669,9 @@ src/
                  operators; the coset class they cannot leave)
   causal.rs      backward cones, causal diamonds, dual-time resolution
   bundle.rs      fibered re-orderable journalled polarity co-bundle:
-                 entanglement as a budgeted, auditable resource
+                 entanglement as a budgeted, auditable resource, with
+                 native graph-state measurement (collapse in the
+                 description, O(deg^2) rather than O(2^n))
   closure.rs     journalled history + geometric closure: loops as
                  undeclared checks, retrodiction by bisecting stamps
   selfhost.rs    the self-computing object: a stack of E8 volumes whose
@@ -1493,7 +1704,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           forty-four integration suites (see Testing)
+tests/           forty-seven integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -1525,7 +1736,11 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  census, perf envelope, and the measured answer to
                  whether computing across a set of E8s pays),
                  selfhosted_stack (one layer per degree, the diagonal
-                 linearized, and what the trade costs)
+                 linearized, and what the trade costs),
+                 gate_memoization (entry reuse, the fusion dial, and
+                 branch re-exploration over a shared prefix),
+                 phase_degree (the degree law, the Clifford hierarchy
+                 rediscovered, and the sqrt(2) identified)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at
