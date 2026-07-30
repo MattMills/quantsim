@@ -504,6 +504,59 @@ Next rungs:
   time. What a *sequence* of native operations reaches — and whether the
   linear-per-copy advantage compounds or saturates — is unmeasured.
 
+## Progressive gate-result memoization — SHIPPED (core)
+
+`memo` treats qubit operations as `n`-wide operation objects over a shared,
+content-addressed entry table, holds the whole computational path at once,
+and journals the state so branches can be re-explored.
+
+- **The geometry is memoized away by content addressing.** A fused operator
+  over an ascending support is indexed by position within that support, so
+  it carries no absolute qubit information: identical structure anywhere in
+  the circuit is the identical matrix and therefore one entry. The key is
+  every coefficient's exact bit pattern (`Scalar::coeffs`), so a hit is an
+  identity rather than a hash guess, and the mechanism is generic over the
+  amplitude algebra (verified over ℍ as well as ℂ).
+- **Fusion sound by disjointness.** Open supports are disjoint; touched
+  groups merge when their union fits, because disjoint operators commute.
+  Operations are emitted in **commit order** — a valid linearization
+  because a qubit has at most one open owner and ownership transfers only
+  at commit.
+- **Measured reuse.** A rainbow collapses to one entry; `brickwork-10x6`
+  runs 81 gates as 16 operations over 8 entries; a random circuit reuses
+  almost nothing, which is the honest signal that it has no structure to
+  exploit. `max_fuse` is a monotone dial trading operations (61 → 9) for
+  entry bytes (448 → 169 216).
+- **Journalled unwind/rewind.** `Explorer` snapshots on a stride and
+  rewinds to any earlier step, landing exactly on the fresh-run state
+  (asserted at every step). `explore` shares a prefix across variants:
+  counted work 288 → 32 at sixteen variants (9.00×), measured 3.82×, with
+  the deviation against from-scratch runs reported alongside so a speedup
+  can never hide a changed answer.
+- **A real bug found and pinned.** Emitting in opening rather than commit
+  order let a still-open group acquire a qubit an already-committed group
+  had used, applying gates out of order for a measured 1.408-amplitude
+  error. The minimized nine-gate case is a regression test.
+
+Next rungs:
+
+- **Persist the entry table across circuits.** The table is currently
+  per-plan. A table shared across a whole study would make the second
+  circuit of a family cheaper than the first, which is where "progressive"
+  should really pay.
+- **Commutation-aware grouping.** Fusion is deliberately restricted to the
+  disjointness argument, so it will not reorder a gate past a
+  non-overlapping-but-commuting neighbour. A Pauli-frame or
+  diagonal-commutation pass would widen the groups without weakening the
+  soundness argument.
+- **A rewind-cost law.** The checkpoint stride trades journal bytes against
+  replay work; the crossover is currently a knob rather than a measured
+  law, and `bounds`-style law fitting would make it one.
+- **Content-addressed states, not just operators.** The same key idea
+  applied to the state at a path node would let two branches that
+  reconverge share their continuation — the natural next step for holding
+  the whole path at once.
+
 ## The self-computing object — SHIPPED (core)
 
 A geometric object that is computationally active as a feedback system

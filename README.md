@@ -753,7 +753,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 494 tests (67 unit + 420 across forty-four
+`cargo test` runs 510 tests (67 unit + 436 across forty-five
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1078,6 +1078,23 @@ entirely trivial accessors and defensive guards:
   and the envelope separates the representations by *measured* bytes per
   stored amplitude — dense ≫ 10× the sparse maps, an eight-coordinate
   lattice key strictly above a `u64` one.
+- **memo** — progressive gate-result memoization. The whole **registry**
+  survives it: 24 circuits drawn from the registry's own gates (aliases and
+  parametric gates at random angles included) at three fusion widths, every
+  deviation under 1e-12, and exactness holds on dense, sparse and adaptive
+  and over ℍ as well as ℂ — the content key is `Scalar::coeffs`, so it is
+  not a ℂ-only trick. Repeated geometry collapses to one entry regardless
+  of absolute position while qubit *order* within a support stays part of
+  the identity. `max_fuse` is monotone in both directions (operations never
+  increase, entry bytes never decrease). A lone diagonal stays diagonal;
+  fusing onto it promotes it; a gate wider than the limit keeps its own
+  support and is still memoized. The accounting must add up —
+  hits + misses = operations, entries = misses, and the `fused_from` counts
+  sum to the source gate count. The journal rewinds to states exactly equal
+  to a fresh run at every step, and refuses to advance backwards or rewind
+  ahead of the cursor. **The commit-order regression is pinned** by the
+  minimized nine-gate circuit that gave a 1.408 deviation under
+  opening-order emission.
 - **selfhost** — the self-computing object: **each layer of E8 volumes
   buys exactly one degree** (depth = degree − 1, verified for degrees 2
   through 6, every route exact at deviation `0.0`), and the linearized
@@ -1389,6 +1406,80 @@ of native operators can. Full quantum computing on the constellation is
 real, and it is bought entirely on the qubit path — which prices as
 sparse with a bigger key.
 
+## Progressive gate-result memoization
+
+```sh
+cargo run --release --example gate_memoization
+```
+
+`memo` treats qubit operations as **`n`-wide operation objects** rather
+than "this gate, on those qubits". `MemoPlan` rewrites a circuit into
+operations over a *support*, fusing consecutive gates while they fit inside
+`max_fuse`, and stores each distinct operator once in a shared entry table.
+
+The table is **content-addressed on exact coefficient bits** (via
+`Scalar::coeffs`), which is what memoizes the geometry away: a fused
+operator over a sorted support is indexed by position *within* that
+support, so it does not know which qubits it sits on. A `cx` on `(0, 1)`
+and a `cx` on `(7, 8)` are the same matrix and therefore the same entry —
+nothing is canonicalized by hand, and because the key is the bit pattern
+rather than a hash, a hit is an identity, never a guess. Qubit *order*
+within a support stays part of the identity: `cx(0,1)` and `cx(3,2)` are
+correctly distinct.
+
+| circuit | gates | ops | entries | reuse | hit rate | fusion | entry bytes |
+|---|---|---|---|---|---|---|---|
+| `ghz-12` | 12 | 4 | 3 | 1.33 | 25% | 3.00 | 9 216 |
+| `qft-8` | 40 | 15 | 10 | 1.50 | 33% | 2.67 | 20 224 |
+| `brickwork-10x6` | 81 | 16 | 8 | 2.00 | 50% | 5.06 | 11 072 |
+| `rainbow-10` | 10 | 5 | **1** | 5.00 | 80% | 2.00 | 256 |
+| `random-10x120` | 120 | 21 | 18 | 1.17 | 14% | 5.71 | 40 704 |
+
+Structure shows up as reuse and its absence shows up too: a rainbow
+collapses to a single entry, a random circuit to almost none. `max_fuse` is
+a measured dial trading operations for entry bytes, on `brickwork-10x6`:
+
+```
+max_fuse=1  ops=61  entries=4  widest=2  bytes=448      max_fuse=4  ops=16  entries=8  widest=4  bytes=11072
+max_fuse=2  ops=44  entries=5  widest=2  bytes=1088     max_fuse=5  ops=10  entries=8  widest=5  bytes=58880
+max_fuse=3  ops=16  entries=8  widest=3  bytes=5888     max_fuse=6  ops=9   entries=7  widest=6  bytes=169216
+```
+
+**Fusion is sound by disjointness.** Open supports are disjoint; a gate
+merges the groups it touches when their union fits (disjoint operators
+commute, so the merged operator is their product in any order), otherwise
+those groups commit and the gate opens a fresh one. Operations are emitted
+in **commit order**, which is a valid linearization because a qubit is
+owned by at most one open group and ownership transfers only at commit.
+
+Emitting in *opening* order is not valid, and that is not a hypothetical:
+a still-open group can acquire a qubit an already-committed group used, at
+which point its opening position predates gates it does not contain. That
+produced a **1.408-amplitude** error on a random circuit. `tests/memo.rs`
+pins the minimized nine-gate case.
+
+### Unwinding and rewinding to re-explore
+
+`Explorer` runs a plan while journalling state snapshots at a configurable
+stride; `rewind` restores the nearest snapshot and replays forward, landing
+on states indistinguishable from a fresh run (asserted exactly, at every
+step, in both directions). `explore` uses that to run variants over a
+shared prefix — evolved once instead of per variant:
+
+```
+variants   prefix   operations applied        wall clock (ns)          deviation
+2              16    36 -> 18   2.00x      567807 -> 295553   1.92x     2.8e-17
+4              16    72 -> 20   3.60x      925004 -> 391940   2.36x     2.8e-17
+8              16   144 -> 24   6.00x     1956374 -> 486516   4.02x     2.8e-17
+16             16   288 -> 32   9.00x     3959034 -> 1036463  3.82x     2.8e-17
+```
+
+The sharing is verified rather than assumed: the deviation column is the
+worst amplitude difference against running every variant from scratch. The
+naive route deliberately gets the *better* plan — it may fuse across the
+prefix/variant boundary, which the shared route cannot, since the combined
+plan's operation boundary is not a valid cut — and still loses.
+
 ## Research mode: verify, then measure
 
 The workflow for a new gate set or a new backend (an MPS, a p-adic
@@ -1448,6 +1539,9 @@ src/
                  polarity<N> (N twisted polarities per amplitude),
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
+  memo.rs        progressive gate-result memoization: operations as n-wide
+                 objects over a content-addressed entry table, with a
+                 journal that unwinds and rewinds to re-explore branches
   bounds.rs      boundary atlas: measured growth laws, advantage scan
   characterize.rs full per-backend characterization: construction and
                  per-family width ceilings (carrying the library's own
@@ -1493,7 +1587,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           forty-four integration suites (see Testing)
+tests/           forty-five integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -1525,7 +1619,9 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  census, perf envelope, and the measured answer to
                  whether computing across a set of E8s pays),
                  selfhosted_stack (one layer per degree, the diagonal
-                 linearized, and what the trade costs)
+                 linearized, and what the trade costs),
+                 gate_memoization (entry reuse, the fusion dial, and
+                 branch re-exploration over a shared prefix)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at
