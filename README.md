@@ -753,7 +753,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 464 tests (67 unit + 390 across forty-one
+`cargo test` runs 483 tests (67 unit + 409 across forty-three
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1065,6 +1065,37 @@ entirely trivial accessors and defensive guards:
   depth 2 as readily as depth 1, with the critical coupling
   `0.267675` bisected and both unbracketed directions refused by
   message.
+- **characterize** — the characterization harness measures what it
+  claims: the census covers every registry name (dense bit-exact against
+  itself, sparse bit-exact against dense on all 39); a construction
+  ceiling is the backend's own refusal (`e8-rep` at 8, carrying its
+  message) while a sweep stopping short reports no refusal at all; a
+  family ceiling is allowed to be far narrower than the constructor's
+  (GHZ vs an H-layer on the constellation, the latter walling on a
+  measured operation refusal); a walled width contributes **no**
+  fabricated cost to the fitted laws (the sweep past `e8-rep`'s ceiling
+  records nothing, and dense still fits base ≈ 2 over widths that fit);
+  and the envelope separates the representations by *measured* bytes per
+  stored amplitude — dense ≫ 10× the sparse maps, an eight-coordinate
+  lattice key strictly above a `u64` one.
+- **e8_across** — computing *across* a set of E8 volumes, measured: one
+  finest-scale translation carries into **every** copy (touching
+  `8m − 7` qubits, support-preserving), while a single copy has no
+  carries at all (`E8/2E8 ≅ F₂⁸` is linear, so the operation is a
+  bitwise XOR needing zero two-qubit gates) — the cross-scale reach is
+  created by having more than one copy. The carry ties the whole register
+  into one influence component, so the measured two-qubit lower bound is
+  `n − 1`, and the advantage over the qubit path is **linear**: exactly
+  8 qubits and 8 gates per added copy, fitted degree 1.04, subexponential.
+  The native direct DFT is the honest limit — support exactly
+  `2^m` (fitted base 2.0) and a cost law that is *not* subexponential.
+  And the class: every native operator (translate, modulate, reflect,
+  permute, Fourier) stays inside coset-with-linear-character, verified on
+  a genuinely spread state, while a `t` through the qubit path keeps the
+  coset and breaks the character (residual 1.41) — so the qubit path
+  reaches states no sequence of native operators can. A pair whose
+  difference has order four is measured *not* a coset, and a partial
+  8-qubit block is refused rather than silently embedded.
 - **e8_cube** — the twelve edges as three axis matchings; the parity
   law over all 240 roots (112 + 128 by sector, every root summing to a
   multiple of four, mixed parities in neither sector); the symmetry
@@ -1186,6 +1217,83 @@ qubits       estimate      RSS delta      (dense C64)
 algebra (dense, n=16):  R 512 KiB · C 1 MiB · H 2 MiB · O 4 MiB · S 8 MiB
 ```
 
+## Characterizing a representation fully
+
+```sh
+cargo run --release --example e8_characterization
+```
+
+`characterize` produces the numbers you ask of a new representation
+before anything else — the maximum width, how much of the gate set it
+actually reproduces, and its best and worst cases — and every one of
+them comes from a run. A ceiling is the width at which a real
+construction or a real gate application refused, carrying the library's
+own message; a fidelity count is a gate-by-gate comparison against the
+reference; an envelope is wall-clock timing and reported footprint at the
+widths that ran. A walled width contributes **nothing** to the fitted
+laws rather than a fabricated cost.
+
+Measured on this machine (widths 4…24, 8 s armed budget):
+
+| backend | constructs to | registry match | GHZ ceiling | H-layer ceiling | ns/gate @ n=8 | B/amplitude |
+|---|---|---|---|---|---|---|
+| `dense` | 24+ | 39/39 bit-exact | 24 (268 MiB) | 24 (268 MiB) | 593 – 2860 | 2064 – 4128 |
+| `sparse` | 24+ | 39/39 bit-exact | 24 (**125 B**) | 24 (800 MiB) | 11379 – 14416 | 62.5 – 125 |
+| `e8-rep` | **8, declared** | 39/39 bit-exact | 8 (168 B) | 8 (14 KiB) | 226 – 385 | 84 – 112 |
+| `e8-constellation` | 24+ (u64 wall at 63) | 39/39 bit-exact | 24 (**224 B**) | 20, then time-walled | 8726 – 24539 | 112 – 144 |
+
+Both E8 backends reproduce the **entire 39-gate registry bit-exactly**,
+so universality on them is not in question. What the characterization
+adds is the price: `e8-rep` is eight qubits by construction, and the
+constellation's per-gate cost is 10–30× dense because every gate
+converts through the tower bijection — its clifford-brickwork ceiling is
+set by *time*, not memory, at a support of only 2048. The honest summary
+is that the constellation's cost tracks the lattice↔bits conversion
+rather than how much state it holds.
+
+### Does computing *across* a set of E8 volumes pay?
+
+`e8::across` measures it instead of arguing it. One native finest-scale
+translation carries into **every** copy in the tower, and its influence
+graph is a single connected component, so the measured two-qubit lower
+bound for any circuit realizing the same permutation is `n − 1`:
+
+```
+op           qubits  touched  involved  copies  comps  2q-min     nanos
+translate         8        1         8     1/1      8       0       250
+translate        24       17        24     3/3      1      23       404
+translate        40       33        40     5/5      1      39       586
+fourier[0]       40       33         —     5/5      —       —     27401
+
+copies      [1, 2, 3, 4, 5, 6]
+touched     [1, 9, 17, 25, 33, 41]
+2q-min      [0, 15, 23, 31, 39, 47]
+per extra copy: 8 qubits touched, 8 two-qubit gates replaced
+advantage law over copies: Polynomial { degree: 1.04 }
+```
+
+At **one** copy there are no carries at all — `E8/2E8 ≅ F₂⁸` and the
+class map is linear, so the translation is a bitwise XOR needing zero
+two-qubit gates. The cross-scale reach is created by having more than one
+copy, which is the "across" effect, measured. But it is **linear**: 8
+qubits and 8 gates per added copy, exactly, fitted degree 1.04. One
+native operation replaces `Θ(n)` two-qubit gates — a real
+constant-factor-per-copy win, not a non-linear advantage.
+
+The native direct DFT is the ceiling on that side: support exactly `2^m`
+(fitted base 2.0) with a cost law that is *not* subexponential. The one
+native operation that creates superposition pays exponentially for it.
+
+And the reachable class is closed: every native operator — translate,
+modulate, reflect, permute, Fourier — maps a coset carrying a linear
+character to another one (verified on a genuinely spread state, since a
+size-1 support satisfies the class trivially and proves nothing). A `t`
+driven through `Backend::apply` keeps the coset and **breaks the
+character** (residual 1.4), so the qubit path reaches states no sequence
+of native operators can. Full quantum computing on the constellation is
+real, and it is bought entirely on the qubit path — which prices as
+sparse with a bigger key.
+
 ## Research mode: verify, then measure
 
 The workflow for a new gate set or a new backend (an MPS, a p-adic
@@ -1246,10 +1354,15 @@ src/
                  Ball (certified midpoint ± radius, quantize dial)
   math.rs        GateMatrix<S>: matmul, dagger, controlled, kron, unitarity
   bounds.rs      boundary atlas: measured growth laws, advantage scan
+  characterize.rs full per-backend characterization: construction and
+                 per-family width ceilings (carrying the library's own
+                 refusal), gate-fidelity census, min/max perf envelope
   sampling.rs    sampling-task hardness: XEB, spoof curves, exact refs
   mixed.rs       mixed-arity compound qudits: volumes, fabric, flow, backend
   e8.rs          E8 roots built+verified; chains, rep, constellation,
-                 cube (the 2x2x2 volume, inward/outward interaction)
+                 cube (the 2x2x2 volume, inward/outward interaction),
+                 across (reach per unit cost of the native cross-scale
+                 operators; the coset class they cannot leave)
   causal.rs      backward cones, causal diamonds, dual-time resolution
   bundle.rs      fibered re-orderable journalled polarity co-bundle:
                  entanglement as a budgeted, auditable resource
@@ -1281,7 +1394,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           forty-one integration suites (see Testing)
+tests/           forty-three integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -1308,7 +1421,10 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  e8_constellation (the coset tower + n-qubit backend),
                  e8_weyl (the dual cross-scale Weyl pair, W(E8) Clifford),
                  e8_dual_scale (scale operad, cross-scale QEC, folding),
-                 e8_comb_noise (logical-vs-physical error curves)
+                 e8_comb_noise (logical-vs-physical error curves),
+                 e8_characterization (width ceilings, gate-fidelity
+                 census, perf envelope, and the measured answer to
+                 whether computing across a set of E8s pays)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

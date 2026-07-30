@@ -66,6 +66,7 @@ pub mod backend;
 pub mod bounds;
 pub mod bundle;
 pub mod causal;
+pub mod characterize;
 pub mod circuit;
 pub mod closure;
 pub mod conformance;
@@ -115,6 +116,11 @@ pub mod prelude {
     };
     pub use crate::causal::{
         backward_cone, causal_diamond, dual_time_amplitude, DiamondReport, DualTimeResolution,
+    };
+    pub use crate::characterize::{
+        characterize, construction_ceiling, family_laws, fidelity_census, perf_envelope,
+        width_ceiling, Characterization, CharacterizeConfig, ConstructionCeiling, Family,
+        FamilyLaws, FidelityCensus, GateCost, PerfEnvelope, Wall, WidthCeiling,
     };
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
     pub use crate::conformance::{

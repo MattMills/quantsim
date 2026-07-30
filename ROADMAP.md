@@ -389,6 +389,121 @@ Next rungs:
   classified by the same law machinery as state costs (per-shot time
   vs width per family).
 
+## Backend characterization — SHIPPED (core)
+
+`bounds` answers *how does this family scale across every
+representation*; `conformance` answers *is this representation
+correct*. `characterize` answers the question you ask of a new
+representation first, and the one this repository was missing for the
+E8 backends: **how wide does it go, how much of the gate set does it
+reproduce, and what are its best and worst cases.**
+
+- **ceilings, from real refusals.** `construction_ceiling` walks widths
+  until the constructor refuses and keeps the refusal's own message;
+  `width_ceiling` runs a whole circuit family per width and reports the
+  widest that finished, so a backend that constructs 63 qubits and then
+  refuses the first Hadamard layer at 21 says so with the guard's text.
+  `Wall` distinguishes a construction refusal, an operation refusal, and
+  a sweep that simply stopped short — never an absence dressed as a
+  limit.
+- **fidelity as a count.** `fidelity_census` turns a `ConformanceReport`
+  into the number a table wants: gates bit-exact, gates within
+  tolerance, gates outside, gates not swept, worst gate and its
+  deviation. Bit-exact is tracked apart from within-tolerance on
+  purpose — the shipped backends share dense's accumulation order and
+  should agree to the last bit, so a gate drifting to 1e-12 is a
+  finding, not a pass.
+- **min/max envelope.** `perf_envelope` times every registry gate on a
+  fresh register, median of repetitions, and reports the cheapest and
+  most expensive gate, the support range, and **bytes per stored
+  amplitude measured** rather than computed from `size_of`. That last
+  number is the one that separates representations at a glance: dense
+  2064–4128 B/amplitude at width 8, sparse 62.5–125, the constellation's
+  eight-coordinate lattice key 112–144.
+- **laws over the widths that ran.** `family_laws` fits memory and time
+  laws and stops at the first refusal, so a walled width contributes
+  nothing rather than a fabricated cost.
+
+Measured on the E8 backends, which is what prompted it:
+
+- `e8-rep` is **8 qubits, hard** — the spinor representation's own
+  ceiling — and reproduces all 39 registry gates bit-exactly.
+- `e8-constellation` reproduces all 39 bit-exactly at any width and
+  walls on the trait's u64 index, but its **per-gate cost is 10–30×
+  dense** (8.7–24.5 µs vs 0.6–3.1 µs at width 8) because every gate
+  converts through the tower bijection. Its clifford-brickwork ceiling
+  is set by *time*, not memory, at a support of only 2048 — the honest
+  statement being that the constellation's cost is dominated by the
+  lattice↔bits conversion rather than by how much state it holds.
+
+Next rungs:
+
+- **characterize every shipped backend in CI**, as a table checked
+  against a stored baseline, so a per-gate cost regression is a test
+  failure rather than folklore.
+- **a native-operator cost axis**, so the constellation's group
+  operations are priced by the same machinery as its qubit path (they
+  are two very different cost regimes sharing one backend name).
+
+## Computing across a set of E8 volumes — SHIPPED (measured, negative)
+
+The question was whether a set of E8 volumes, interacted through the
+scale tower, buys a non-linear computational advantage, and whether the
+structure could carry full quantum computing. `e8::across` answers both
+by running it, and the answers are worth having even though one is no.
+
+- **Reach.** One native finest-scale translation carries into **every**
+  copy in the tower: at `m` copies it moves `8m − 7` qubits and its
+  influence graph is a single connected component, so the measured
+  two-qubit lower bound for any circuit realizing the same permutation
+  is `n − 1`. The bound is derived, not asserted: an output bit that
+  depends on a different input bit forces a path of gates between them,
+  and a graph on `k` vertices with `c` components has at least `k − c`
+  edges. Under-sampling the probes can only *drop* edges, so the bound
+  is conservative by construction.
+- **Where the reach comes from.** At **one** copy there are no carries
+  at all — `E8/2E8 ≅ F₂⁸` and the class map is linear, so the
+  translation is a bitwise XOR needing zero two-qubit gates. The
+  cross-scale coupling is created by having more than one copy, which is
+  exactly the "across" effect and is now measured rather than argued.
+- **But the advantage is linear.** Each added copy adds exactly 8 to the
+  reach and exactly 8 to the lower bound (finite differences, no fit),
+  and the fitted law over copies is `Polynomial { degree: 1.04 }` —
+  subexponential. One native operation replaces `Θ(n)` two-qubit gates.
+  That is a real and useful constant-factor-per-copy win for those
+  operations; it is not a non-linear advantage, and the measurement is
+  what says so.
+- **The native DFT is the limit.** `coordinate_fourier` is a *direct*
+  transform: its support grows as exactly `2^m` (fitted base 2.0) and
+  its cost law is not subexponential. The one native operation that
+  creates superposition is the one that pays exponentially for it.
+- **Full quantum computing: through the qubit path only.** Every native
+  operator — translate, modulate, reflect, permute, Fourier — maps a
+  coset carrying a linear character to another one, verified on a
+  genuinely spread state (a size-1 support satisfies the class for
+  trivial reasons and proves nothing, so the check prepares spread state
+  first). A `t` driven through `Backend::apply` keeps the coset and
+  breaks the character (residual 1.41), so the qubit path reaches states
+  no sequence of native operators can. Universality on the
+  constellation is therefore real but bought entirely on the qubit path,
+  which prices as sparse with a larger key — precisely the 112–144
+  bytes per amplitude the envelope measures.
+
+Next rungs:
+
+- **A quadratic phase operator.** The native set has linear characters
+  and no quadratic ones; whether a well-defined quadratic phase exists
+  on `E8/2^m E8` is the sharpest open question here, because it is the
+  operator that would move the native class from "affine + linear
+  character" toward something strictly larger.
+- **A fast native transform.** The `2^m` direct DFT is the current
+  ceiling on the native side; a scale-recursive factorization would make
+  the tower's self-similarity pay in the transform the way it already
+  pays in the storage.
+- **Native-operator circuits.** Reach is measured one operation at a
+  time. What a *sequence* of native operations reaches — and whether the
+  linear-per-copy advantage compounds or saturates — is unmeasured.
+
 ## Mixed-arity compound qudits — SHIPPED (core)
 
 `mixed::CompoundRegister` + `e8`: the representation/interaction/flow

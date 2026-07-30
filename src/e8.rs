@@ -2163,6 +2163,684 @@ pub mod cube {
     }
 }
 
+/// Computing **across** a set of E8 volumes rather than inside one: what
+/// a single native constellation operation reaches, which states the
+/// native operator set can reach at all, and how both scale with the
+/// number of E8 copies in the tower.
+///
+/// The constellation stacks `m = ⌈n/8⌉` E8 copies, one per scale level,
+/// and its native operators
+/// ([`translate`](constellation::E8ConstellationState::translate),
+/// [`modulate`](constellation::E8ConstellationState::modulate),
+/// [`reflect`](constellation::E8ConstellationState::reflect),
+/// [`permute_coordinates`](constellation::E8ConstellationState::permute_coordinates),
+/// [`coordinate_fourier`](constellation::E8ConstellationState::coordinate_fourier))
+/// act on the residue *group*, so one of them can move every level at
+/// once. That raises two questions this module answers by running the
+/// thing rather than by argument:
+///
+/// 1. **Reach per unit cost.** One native op costs `O(support)`. How
+///    many qubits does it actually move, and how many two-qubit gates
+///    would a circuit need to move them? [`reach`](across::reach) measures the touched
+///    set and the *influence graph* between input and output bits, and
+///    reports the resulting lower bound (each two-qubit gate can merge
+///    at most two influence components, so a connected influence
+///    pattern over `k` bits needs at least `k − 1` of them).
+///    [`across_scaling`](across::across_scaling) fits that bound against the number of copies.
+///
+/// 2. **What the native set can reach.** [`support_class`](across::support_class) measures
+///    whether a state's support is an affine coset of a subgroup and
+///    whether its phase is a linear character of that coset — the class
+///    the native operators live in. [`class_preservation`](across::class_preservation) applies each
+///    native op and re-measures; [`qubit_gate_class`](across::qubit_gate_class) does the same for
+///    a gate driven through the qubit [`Backend`](crate::backend::Backend)
+///    path. The difference
+///    between the two is the answer to "is this universal".
+pub mod across {
+    use super::constellation::{basis, class_of, compose, E8ConstellationState, Point};
+    use super::Root;
+    use crate::backend::Backend;
+    use crate::bounds::{fit_law, Law};
+    use crate::error::{Error, Result};
+    use crate::rng::Prng;
+    use crate::scalar::C64;
+    use std::collections::HashSet;
+    use std::time::Instant;
+
+    /// One native constellation operation, as a label a measurement can
+    /// apply to a state.
+    #[derive(Debug, Clone)]
+    pub enum Native {
+        /// Position-side Weyl translation by a lattice point.
+        Translate(Point),
+        /// Momentum-side Weyl modulation by a lattice point.
+        Modulate(Point),
+        /// Weyl-group reflection through a root's hyperplane.
+        Reflect(Root),
+        /// Relabelling of the eight ambient coordinates.
+        Permute([usize; 8]),
+        /// Direct DFT along one coordinate direction.
+        Fourier(usize),
+    }
+
+    impl Native {
+        /// A short label for reports.
+        pub fn label(&self) -> String {
+            match self {
+                Native::Translate(_) => "translate".into(),
+                Native::Modulate(_) => "modulate".into(),
+                Native::Reflect(_) => "reflect".into(),
+                Native::Permute(_) => "permute".into(),
+                Native::Fourier(d) => format!("fourier[{d}]"),
+            }
+        }
+
+        /// Whether the operation is a basis permutation — support size
+        /// is preserved and each basis state maps to exactly one other,
+        /// which is what makes an influence graph well defined.
+        pub fn is_permutation(&self) -> bool {
+            matches!(
+                self,
+                Native::Translate(_) | Native::Reflect(_) | Native::Permute(_)
+            )
+        }
+
+        /// Apply to a state through the constellation's own API.
+        pub fn apply(&self, state: &mut E8ConstellationState) -> Result<()> {
+            match self {
+                Native::Translate(v) => state.translate(v),
+                Native::Modulate(q) => state.modulate(q),
+                Native::Reflect(a) => state.reflect(a),
+                Native::Permute(p) => state.permute_coordinates(p),
+                Native::Fourier(d) => state.coordinate_fourier(*d),
+            }
+        }
+    }
+
+    /// The bits a single basis state maps onto under an operation.
+    fn image_bits(num_qubits: usize, op: &Native, bits: u64) -> Result<Vec<u64>> {
+        let mut state = E8ConstellationState::new(num_qubits)?;
+        state.load(&[(bits, C64::new(1.0, 0.0))])?;
+        op.apply(&mut state)?;
+        let mut out = Vec::new();
+        state.for_each_nonzero(&mut |b, _| out.push(b));
+        out.sort_unstable();
+        Ok(out)
+    }
+
+    /// The probe basis states a reach measurement uses.
+    ///
+    /// One E8 copy is swept exhaustively — all 256 residues. Beyond
+    /// that, the finest digit is still swept exhaustively, because the
+    /// lattice carries that make an operation cross scales are driven by
+    /// the whole of digit 0; the higher levels get structured patterns
+    /// (all-zero, all-ones, alternating) and a deterministic
+    /// pseudo-random sample on top.
+    ///
+    /// A larger probe set can only *add* influence edges, which can only
+    /// merge components and raise
+    /// [`Reach::two_qubit_lower_bound`] — so an under-sampled sweep
+    /// understates the reach rather than overstating it.
+    fn probes(num_qubits: usize, extra_patterns: usize) -> (Vec<u64>, bool) {
+        let levels = num_qubits.div_ceil(8);
+        if levels == 1 {
+            return ((0..256u64).collect(), true);
+        }
+        let mut highs: Vec<u64> = vec![0];
+        for pattern in [0x01u64, 0x55, 0xff] {
+            highs.push((1..levels).fold(0u64, |acc, level| acc | (pattern << (8 * level))));
+        }
+        let mut rng = Prng::new(0xE8_AC_05);
+        while highs.len() < 4 + extra_patterns {
+            let bits = (1..levels).fold(0u64, |acc, level| {
+                acc | ((rng.next_u64() & 0xff) << (8 * level))
+            });
+            if !highs.contains(&bits) {
+                highs.push(bits);
+            }
+        }
+        let mut set: HashSet<u64> = HashSet::new();
+        for &high in &highs {
+            for digit in 0..256u64 {
+                set.insert(high | digit);
+            }
+        }
+        let mut list: Vec<u64> = set.into_iter().collect();
+        list.sort_unstable();
+        (list, false)
+    }
+
+    /// What one native operation reaches, measured on probe states.
+    #[derive(Debug, Clone)]
+    pub struct Reach {
+        /// Operation label.
+        pub op: String,
+        /// Register width.
+        pub num_qubits: usize,
+        /// E8 copies in the tower (`⌈n/8⌉`).
+        pub copies: usize,
+        /// Probe basis states used.
+        pub probes: usize,
+        /// Whether the probe set was every residue (`copies == 1`).
+        pub exhaustive: bool,
+        /// Largest support any single basis state expanded to.
+        pub max_support_out: usize,
+        /// Qubits whose value changed for some probe — the operation's
+        /// measured footprint on the register.
+        pub qubits_touched: usize,
+        /// Distinct 8-qubit blocks (E8 copies) the touched qubits span.
+        pub copies_touched: usize,
+        /// Qubits appearing anywhere in the influence relation — every
+        /// touched output bit together with every input bit that some
+        /// output depends on. A carry's *source* bits belong here even
+        /// when their own value is unchanged. `None` for
+        /// non-permutations.
+        pub qubits_involved: Option<usize>,
+        /// Connected components of the influence graph on the involved
+        /// qubits (`None` for non-permutations, where a single output bit
+        /// pattern is not defined).
+        pub influence_components: Option<usize>,
+        /// Two-qubit gates any circuit realizing the same permutation
+        /// must contain, at minimum: `involved − components`.
+        ///
+        /// In a circuit of one- and two-qubit gates, an output bit that
+        /// depends on a different input bit forces a path of gates
+        /// between them, so every influence edge lies inside one
+        /// connected component of the gate graph. A graph on `k`
+        /// vertices with `c` components has at least `k − c` edges, and
+        /// only two-qubit gates contribute edges.
+        pub two_qubit_lower_bound: Option<usize>,
+        /// Median nanoseconds for one native application on a
+        /// single-point state.
+        pub native_nanos: u128,
+    }
+
+    impl Reach {
+        /// Reach per unit cost against the qubit path: how many
+        /// two-qubit gates one native operation replaces. `None` when
+        /// the operation is not a permutation.
+        pub fn advantage_factor(&self) -> Option<usize> {
+            self.two_qubit_lower_bound
+        }
+    }
+
+    /// Measure what `op` reaches on an `num_qubits`-wide register.
+    ///
+    /// `num_qubits` must be a multiple of 8: the native operators act on
+    /// the residue group, which the register *is* only when every
+    /// 8-qubit block is full (a partial block embeds a subset, and the
+    /// group operation could carry out of it — the constellation refuses
+    /// that case rather than silently truncating).
+    pub fn reach(num_qubits: usize, op: &Native) -> Result<Reach> {
+        if num_qubits == 0 || num_qubits % 8 != 0 {
+            return Err(Error::InvalidState(format!(
+                "reach needs full 8-qubit blocks; {num_qubits} is not a positive multiple of 8"
+            )));
+        }
+        let (probe_list, exhaustive) = probes(num_qubits, 4);
+        let mut touched = 0u64;
+        let mut max_support_out = 0usize;
+        // Influence: bit i of the input influences bit j of the output.
+        let mut influence = vec![0u64; num_qubits];
+        for &b in &probe_list {
+            let out = image_bits(num_qubits, op, b)?;
+            max_support_out = max_support_out.max(out.len());
+            for &o in &out {
+                touched |= o ^ b;
+            }
+            if !op.is_permutation() {
+                continue;
+            }
+            let base = out[0];
+            for (i, slot) in influence.iter_mut().enumerate() {
+                let flipped = image_bits(num_qubits, op, b ^ (1 << i))?;
+                *slot |= base ^ flipped[0];
+            }
+        }
+        let touched_bits: Vec<usize> = (0..num_qubits).filter(|&i| touched >> i & 1 == 1).collect();
+        let qubits_touched = touched_bits.len();
+        let copies_touched = touched_bits
+            .iter()
+            .map(|&i| i / 8)
+            .collect::<HashSet<usize>>()
+            .len();
+        // Every qubit the influence relation mentions, on either side:
+        // a carry's source bit belongs in the circuit even when its own
+        // value never changes.
+        let involved_bits: Vec<usize> = if op.is_permutation() {
+            let mut set: HashSet<usize> = touched_bits.iter().copied().collect();
+            for (i, &out) in influence.iter().enumerate() {
+                if out != 0 {
+                    set.insert(i);
+                    set.extend((0..num_qubits).filter(|&j| out >> j & 1 == 1));
+                }
+            }
+            let mut list: Vec<usize> = set.into_iter().collect();
+            list.sort_unstable();
+            list
+        } else {
+            Vec::new()
+        };
+        let influence_components = op
+            .is_permutation()
+            .then(|| components(&involved_bits, &influence));
+        let qubits_involved = op.is_permutation().then_some(involved_bits.len());
+        let mut samples = Vec::with_capacity(5);
+        for _ in 0..5 {
+            let mut state = E8ConstellationState::new(num_qubits)?;
+            state.load(&[(probe_list[probe_list.len() / 2], C64::new(1.0, 0.0))])?;
+            let start = Instant::now();
+            op.apply(&mut state)?;
+            samples.push(start.elapsed().as_nanos());
+        }
+        samples.sort_unstable();
+        Ok(Reach {
+            op: op.label(),
+            num_qubits,
+            copies: num_qubits / 8,
+            probes: probe_list.len(),
+            exhaustive,
+            max_support_out,
+            qubits_touched,
+            copies_touched,
+            qubits_involved,
+            influence_components,
+            two_qubit_lower_bound: match (qubits_involved, influence_components) {
+                (Some(v), Some(c)) => Some(v.saturating_sub(c)),
+                _ => None,
+            },
+            native_nanos: samples[2],
+        })
+    }
+
+    /// Connected components of the undirected graph on `vertices` where
+    /// `i ~ j` when input bit `i` influences output bit `j`.
+    fn components(vertices: &[usize], influence: &[u64]) -> usize {
+        let index: std::collections::HashMap<usize, usize> =
+            vertices.iter().enumerate().map(|(k, &b)| (b, k)).collect();
+        let mut parent: Vec<usize> = (0..vertices.len()).collect();
+        fn find(parent: &mut [usize], mut x: usize) -> usize {
+            while parent[x] != x {
+                parent[x] = parent[parent[x]];
+                x = parent[x];
+            }
+            x
+        }
+        for &i in vertices {
+            for &j in vertices {
+                if influence[i] >> j & 1 == 1 {
+                    let (a, b) = (index[&i], index[&j]);
+                    let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+                    if ra != rb {
+                        parent[ra] = rb;
+                    }
+                }
+            }
+        }
+        (0..vertices.len())
+            .map(|k| find(&mut parent, k))
+            .collect::<HashSet<usize>>()
+            .len()
+    }
+
+    /// The measured class of a state's support and phase.
+    ///
+    /// The native operator set is a Weyl-Heisenberg group (translations
+    /// and modulations) extended by lattice automorphisms and the
+    /// coordinate DFT. Each of those maps an affine coset carrying a
+    /// linear character to another one, so this is the class to measure:
+    /// if the native set never leaves it, the native set cannot be
+    /// universal, because a universal gate set reaches states that are
+    /// not of this form.
+    #[derive(Debug, Clone)]
+    pub struct SupportClass {
+        /// Stored amplitude count.
+        pub size: usize,
+        /// Whether `support − s₀` is closed under addition in the
+        /// residue group — i.e. the support is an affine coset.
+        pub is_coset: bool,
+        /// `log₂|support|` when the coset difference set is an
+        /// elementary 2-group (every element its own inverse).
+        pub elementary_rank: Option<usize>,
+        /// Whether every stored amplitude has the same modulus.
+        pub uniform_modulus: bool,
+        /// Worst violation of `φ(d₁+d₂) = φ(d₁)·φ(d₂)` over the coset —
+        /// zero when the phase is a linear character.
+        pub character_residual: f64,
+        /// Whether the state is a coset with a linear character, to
+        /// `1e-9`.
+        pub in_class: bool,
+    }
+
+    /// Measure the class of a constellation state.
+    ///
+    /// `O(size²)` in the stored support, so intended for the small
+    /// supports the native operators actually produce.
+    pub fn support_class(state: &E8ConstellationState) -> SupportClass {
+        let levels = state.num_qubits().div_ceil(8);
+        let mut points: Vec<(u64, C64)> = Vec::new();
+        state.for_each_nonzero(&mut |b, a| points.push((b, a)));
+        points.sort_by_key(|&(b, _)| b);
+        let size = points.len();
+        if size == 0 {
+            return SupportClass {
+                size: 0,
+                is_coset: false,
+                elementary_rank: None,
+                uniform_modulus: true,
+                character_residual: 0.0,
+                in_class: false,
+            };
+        }
+        let modulus = 1i64 << levels;
+        let key = |bits: u64| -> Point {
+            let digits: Vec<u8> = (0..levels)
+                .map(|k| ((bits >> (8 * k)) & 0xff) as u8)
+                .collect();
+            compose(&digits)
+        };
+        let reduce = |p: Point| -> Point { std::array::from_fn(|k| p[k].rem_euclid(4 * modulus)) };
+        let bits_of = |p: &Point| -> Option<u64> {
+            let mut x = *p;
+            let mut bits = 0u64;
+            for k in 0..levels {
+                let c = class_of(&x)?;
+                bits |= u64::from(c) << (8 * k);
+                let rep = super::constellation::representative(c);
+                for (slot, &r) in x.iter_mut().zip(&rep) {
+                    *slot = (*slot - r) / 2;
+                }
+            }
+            Some(bits)
+        };
+        let base = points[0];
+        let origin = key(base.0);
+        // Difference set, in residue coordinates.
+        let diffs: Vec<Point> = points
+            .iter()
+            .map(|&(b, _)| reduce(std::array::from_fn(|k| key(b)[k] - origin[k])))
+            .collect();
+        let members: HashSet<u64> = points.iter().map(|&(b, _)| b).collect();
+        let phase_of: std::collections::HashMap<u64, C64> =
+            points.iter().map(|&(b, a)| (b, a / base.1)).collect();
+        let mut is_coset = true;
+        let mut character_residual = 0.0f64;
+        let mut elementary = true;
+        for (i, di) in diffs.iter().enumerate() {
+            let doubled = reduce(std::array::from_fn(|k| 2 * di[k]));
+            if doubled != [0i64; 8] {
+                elementary = false;
+            }
+            for (j, dj) in diffs.iter().enumerate() {
+                let sum = reduce(std::array::from_fn(|k| origin[k] + di[k] + dj[k]));
+                let Some(sum_bits) = bits_of(&sum) else {
+                    is_coset = false;
+                    continue;
+                };
+                if !members.contains(&sum_bits) {
+                    is_coset = false;
+                    continue;
+                }
+                let (pi, pj) = (phase_of[&points[i].0], phase_of[&points[j].0]);
+                let expected = pi * pj;
+                let got = phase_of[&sum_bits];
+                character_residual = character_residual.max((got - expected).norm());
+            }
+        }
+        let moduli: Vec<f64> = points.iter().map(|&(_, a)| a.norm()).collect();
+        let uniform_modulus = moduli
+            .iter()
+            .all(|m| (m - moduli[0]).abs() <= 1e-9 * moduli[0].max(1.0));
+        let elementary_rank = (is_coset && elementary && size.is_power_of_two())
+            .then(|| size.trailing_zeros() as usize);
+        SupportClass {
+            size,
+            is_coset,
+            elementary_rank,
+            uniform_modulus,
+            character_residual,
+            in_class: is_coset && uniform_modulus && character_residual <= 1e-9,
+        }
+    }
+
+    /// A native operation measured against the class invariant.
+    #[derive(Debug, Clone)]
+    pub struct ClassPreservation {
+        /// Operation label.
+        pub op: String,
+        /// Class before the operation.
+        pub before: SupportClass,
+        /// Class after the operation.
+        pub after: SupportClass,
+    }
+
+    impl ClassPreservation {
+        /// Whether the operation started in the class and stayed in it.
+        pub fn preserved(&self) -> bool {
+            self.before.in_class && self.after.in_class
+        }
+    }
+
+    /// Prepare a state with `prep`, measure its class, apply `op`, and
+    /// measure again.
+    pub fn class_preservation(
+        num_qubits: usize,
+        prep: &[Native],
+        op: &Native,
+    ) -> Result<ClassPreservation> {
+        let mut state = E8ConstellationState::new(num_qubits)?;
+        for step in prep {
+            step.apply(&mut state)?;
+        }
+        let before = support_class(&state);
+        op.apply(&mut state)?;
+        let after = support_class(&state);
+        Ok(ClassPreservation {
+            op: op.label(),
+            before,
+            after,
+        })
+    }
+
+    /// The class of a state after `prep` and then one *qubit-path* gate
+    /// applied through [`Backend::apply`] — the comparison that shows
+    /// whether the qubit path leaves the native class.
+    pub fn qubit_gate_class(
+        num_qubits: usize,
+        prep: &[Native],
+        gate: &str,
+        params: &[f64],
+        qubits: &[usize],
+    ) -> Result<SupportClass> {
+        let registry = crate::registry::GateRegistry::<C64>::standard();
+        let def = registry.resolve(gate)?;
+        let matrix = def.matrix(params)?;
+        let mut state = E8ConstellationState::new(num_qubits)?;
+        for step in prep {
+            step.apply(&mut state)?;
+        }
+        <E8ConstellationState as Backend<C64>>::apply(&mut state, &matrix, qubits)?;
+        Ok(support_class(&state))
+    }
+
+    /// How reach and cost scale with the number of E8 copies.
+    #[derive(Debug, Clone)]
+    pub struct AcrossScaling {
+        /// Operation label.
+        pub op: String,
+        /// Copies swept (`m`, so widths `8m`).
+        pub copies: Vec<usize>,
+        /// Qubits touched at each size.
+        pub qubits_touched: Vec<usize>,
+        /// Two-qubit-gate lower bound at each size.
+        pub two_qubit_lower_bound: Vec<usize>,
+        /// Median native nanoseconds at each size.
+        pub native_nanos: Vec<usize>,
+        /// Fitted law of the touched-qubit count against the number of
+        /// copies — the operation's reach across the tower.
+        ///
+        /// The fits below are power laws with no intercept, so an affine
+        /// series like `8m − 7` reads back with an exponent above one.
+        /// [`AcrossScaling::per_copy_reach`] and
+        /// [`AcrossScaling::per_copy_advantage`] are the finite
+        /// differences, which carry no such artifact — read those for
+        /// the slope and the laws for the shape.
+        pub reach_law: Option<Law>,
+        /// Fitted law of the two-qubit lower bound against the number of
+        /// copies, over the sizes where the bound is nonzero — the law of
+        /// the advantage the native operator has over the qubit path.
+        pub advantage_law: Option<Law>,
+        /// Fitted law of the native operation's own wall-clock cost
+        /// against the number of copies.
+        pub cost_law: Option<Law>,
+        /// Touched qubits added per extra E8 copy, as a finite
+        /// difference over the swept range.
+        pub per_copy_reach: f64,
+        /// Two-qubit gates added to the lower bound per extra E8 copy,
+        /// as a finite difference over the swept range — the rate at
+        /// which one native operation outruns the qubit path as copies
+        /// are added.
+        pub per_copy_advantage: f64,
+    }
+
+    /// Sweep a native operation over towers of `1..=max_copies` E8
+    /// copies and fit the laws of its reach and its cost.
+    ///
+    /// The laws are fitted against the number of **copies**, not the
+    /// width: a quantity like `2^m` over `m` copies is exponential in
+    /// the tower, and expressing it per qubit (`2^{n/8}`, base 1.09)
+    /// would hide that under the law fit's polynomial floor.
+    ///
+    /// The natural operation to pass is
+    /// [`cross_scale_translation`] — a translation by the first basis
+    /// vector at the finest scale, whose lattice carries propagate all
+    /// the way up the tower. That is "computing across the set" rather
+    /// than inside one copy.
+    pub fn across_scaling(max_copies: usize, op: &Native) -> Result<AcrossScaling> {
+        let mut out = AcrossScaling {
+            op: op.label(),
+            copies: Vec::new(),
+            qubits_touched: Vec::new(),
+            two_qubit_lower_bound: Vec::new(),
+            native_nanos: Vec::new(),
+            reach_law: None,
+            advantage_law: None,
+            cost_law: None,
+            per_copy_reach: 0.0,
+            per_copy_advantage: 0.0,
+        };
+        for m in 1..=max_copies {
+            let r = reach(8 * m, op)?;
+            out.copies.push(m);
+            out.qubits_touched.push(r.qubits_touched);
+            out.two_qubit_lower_bound
+                .push(r.two_qubit_lower_bound.unwrap_or(0));
+            out.native_nanos.push((r.native_nanos as usize).max(1));
+        }
+        if out.copies.len() >= 3 {
+            if out.qubits_touched.iter().all(|&t| t > 0) {
+                out.reach_law = Some(fit_law(&out.copies, &out.qubits_touched).law);
+            }
+            // A single copy has no carries at all, so its bound is
+            // legitimately zero; fit over the sizes that have a bound.
+            let sized: Vec<(usize, usize)> = out
+                .copies
+                .iter()
+                .zip(&out.two_qubit_lower_bound)
+                .filter(|&(_, &b)| b > 0)
+                .map(|(&m, &b)| (m, b))
+                .collect();
+            if sized.len() >= 3 {
+                let ms: Vec<usize> = sized.iter().map(|&(m, _)| m).collect();
+                let bs: Vec<usize> = sized.iter().map(|&(_, b)| b).collect();
+                out.advantage_law = Some(fit_law(&ms, &bs).law);
+            }
+            out.cost_law = Some(fit_law(&out.copies, &out.native_nanos).law);
+        }
+        // Finite differences over the widest span measured: no fit, so
+        // no power-law artifact from the affine intercept.
+        if let (Some(&first), Some(&last)) = (out.copies.first(), out.copies.last()) {
+            let span = (last - first) as f64;
+            if span > 0.0 {
+                let touched = &out.qubits_touched;
+                out.per_copy_reach = (touched[touched.len() - 1] as f64 - touched[0] as f64) / span;
+            }
+            // A single copy has no carries, so its bound is zero and
+            // belongs to a different regime; difference over the sizes
+            // that have a bound.
+            let bounded: Vec<(usize, usize)> = out
+                .copies
+                .iter()
+                .zip(&out.two_qubit_lower_bound)
+                .filter(|&(_, &b)| b > 0)
+                .map(|(&m, &b)| (m, b))
+                .collect();
+            if let (Some(&(lo_m, lo_b)), Some(&(hi_m, hi_b))) = (bounded.first(), bounded.last()) {
+                if hi_m > lo_m {
+                    out.per_copy_advantage = (hi_b as f64 - lo_b as f64) / (hi_m - lo_m) as f64;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The default cross-scale probe: translation by the finest-scale
+    /// first basis vector, whose carries reach every level.
+    pub fn cross_scale_translation() -> Native {
+        Native::Translate(basis(0))
+    }
+
+    /// The native direct DFT's measured cost against tower depth — the
+    /// one native operation whose support growth is `2^m`, so its own
+    /// scaling is the honest limit of the native set.
+    #[derive(Debug, Clone)]
+    pub struct FourierCost {
+        /// Copies swept.
+        pub copies: Vec<usize>,
+        /// Support after the transform at each size.
+        pub support: Vec<usize>,
+        /// Median nanoseconds at each size.
+        pub nanos: Vec<usize>,
+        /// Fitted law of the support growth against the number of copies.
+        pub support_law: Option<Law>,
+        /// Fitted law of the wall-clock cost against the number of
+        /// copies.
+        pub cost_law: Option<Law>,
+    }
+
+    /// Measure `coordinate_fourier` on the origin state over towers of
+    /// `1..=max_copies` copies.
+    pub fn fourier_cost(max_copies: usize, dir: usize) -> Result<FourierCost> {
+        let mut out = FourierCost {
+            copies: Vec::new(),
+            support: Vec::new(),
+            nanos: Vec::new(),
+            support_law: None,
+            cost_law: None,
+        };
+        for m in 1..=max_copies {
+            let mut samples = Vec::with_capacity(3);
+            let mut support = 0;
+            for _ in 0..3 {
+                let mut state = E8ConstellationState::new(8 * m)?;
+                let start = Instant::now();
+                state.coordinate_fourier(dir)?;
+                samples.push(start.elapsed().as_nanos() as usize);
+                support = state.nonzero_count();
+            }
+            samples.sort_unstable();
+            out.copies.push(m);
+            out.support.push(support.max(1));
+            out.nanos.push(samples[1].max(1));
+        }
+        if out.copies.len() >= 3 {
+            out.support_law = Some(fit_law(&out.copies, &out.support).law);
+            out.cost_law = Some(fit_law(&out.copies, &out.nanos).law);
+        }
+        Ok(out)
+    }
+}
+
 /// An embedding of the four arity chains (`A₁ … A₄`, i.e. the su(2),
 /// su(3), su(4), su(5) frames of binary/ternary/quaternary/quintary
 /// sub-qudits) into the one E8 root system, with the measured overlap
