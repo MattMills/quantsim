@@ -82,6 +82,7 @@ pub mod lift;
 pub mod math;
 pub mod memo;
 pub mod mixed;
+pub mod padic;
 pub mod phase;
 pub mod polarity;
 pub mod qudit;
