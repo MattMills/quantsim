@@ -33,6 +33,28 @@
 //!   error ledger, because removing it costs nothing at all — verified
 //!   bit-identical against the unexcluded walk.
 //!
+//! * **Freezing was the obvious next exclusion, and it does not pay.**
+//!   A term that commutes with *every* remaining axis can never change
+//!   again, so it is settled exactly: coefficient into the answer if its
+//!   `X`-mask is already zero, dropped otherwise. That is a GF(2)
+//!   condition — symplectic orthogonality to the span of the remaining
+//!   axes ([`AxisSpan`]) — and unlike reachability it *could* fire
+//!   mid-walk, which is where the peak lives. It is implemented,
+//!   verified not to change any answer, and **measured to buy nothing**:
+//!   peak 1947 → 1947 on TFIM, 16384 → 16383 on IQP, at 20–60% more
+//!   time for the `O(rank)` test per term per step. Even on a staged
+//!   circuit built to favour it, six terms retired and the peak did not
+//!   move — because reachability-exclusion had already removed 681 of
+//!   them first. Freezing demands orthogonality to the whole remaining
+//!   span, which is far rarer than merely falling outside it.
+//!   [`Config::retire_frozen`] therefore defaults to `false`.
+//!
+//!   One thing this rules out, worth recording: a magnitude bound
+//!   discounted by how far a term is from reachable is **not sound**.
+//!   `|⟨ψ|P|ψ⟩| ≤ 1` for any Pauli, so `|c|` is already the correct
+//!   bound on a term's contribution and no reachability argument
+//!   sharpens it.
+//!
 //!   Where it fires is structural and worth stating, because it is not
 //!   where one would hope. The span of gates `0..g` *shrinks* as `g → 0`,
 //!   and a backward walk reaches small `g` **last** — so exclusion
@@ -435,6 +457,9 @@ struct Checkpoint {
     step: usize,
     sum: PauliSum,
     cumulative_l1: f64,
+    /// The answer already settled by retirement before this point — it
+    /// is not in `sum`, so refinement must carry it or lose it.
+    retired_value: C64,
 }
 
 /// The record of a backward walk, and the instrument for asking where
@@ -577,6 +602,75 @@ impl XSpan {
     }
 }
 
+/// A GF(2) basis of the remaining **axes**, in symplectic coordinates,
+/// with the same prefix filtration as [`XSpan`].
+///
+/// A term commutes with a whole span iff it commutes with a basis of it,
+/// because the symplectic form is bilinear — so one `O(rank)` test says
+/// whether the remaining circuit can touch a term **at all**.
+#[derive(Debug, Clone, Default)]
+pub struct AxisSpan {
+    /// `(pivot, x-mask, z-mask)`, pivots distinct, insertion order.
+    vectors: Vec<(u32, u64, u64)>,
+    counts: Vec<usize>,
+}
+
+impl AxisSpan {
+    /// Build the filtration over a rotation list, in forward gate order.
+    pub fn of(rotations: &[Rotation]) -> Self {
+        let mut span = AxisSpan {
+            vectors: Vec::new(),
+            counts: Vec::with_capacity(rotations.len() + 1),
+        };
+        span.counts.push(0);
+        for r in rotations {
+            span.insert(r.axis);
+            span.counts.push(span.vectors.len());
+        }
+        span
+    }
+
+    fn insert(&mut self, axis: PauliKey) {
+        let (mut x, mut z) = axis;
+        for &(pivot, bx, bz) in &self.vectors {
+            let bit = if pivot < 64 {
+                x >> pivot & 1
+            } else {
+                z >> (pivot - 64) & 1
+            };
+            if bit == 1 {
+                x ^= bx;
+                z ^= bz;
+            }
+        }
+        if x != 0 {
+            self.vectors.push((63 - x.leading_zeros(), x, z));
+        } else if z != 0 {
+            self.vectors.push((127 - z.leading_zeros(), x, z));
+        }
+    }
+
+    /// Whether the remaining `gates` can move this term at all: `false`
+    /// means the term commutes with every one of them, so its masks are
+    /// **frozen** for the rest of the walk.
+    pub fn can_touch(&self, term: PauliKey, gates: usize) -> bool {
+        let take = self.counts[gates.min(self.counts.len() - 1)];
+        self.vectors[..take]
+            .iter()
+            .any(|&(_, ax, az)| !commutes(term, (ax, az)))
+    }
+
+    /// Rank of the full span.
+    pub fn rank(&self) -> usize {
+        self.vectors.len()
+    }
+
+    /// Approximate stored bytes.
+    pub fn memory_bytes(&self) -> usize {
+        self.vectors.len() * 20 + self.counts.len() * 8 + std::mem::size_of::<Self>()
+    }
+}
+
 // ── configuration and the walk ───────────────────────────────────────
 
 /// How much to keep, and how much to remember.
@@ -596,6 +690,16 @@ pub struct Config {
     /// `X`-free sector. That is exact and free of error, so it is asked
     /// before truncation is.
     pub exclusion: bool,
+    /// **Retire frozen terms.** A term commuting with every remaining
+    /// axis can never change again, so it is settled: if its `X`-mask is
+    /// zero its coefficient joins the answer and it leaves the working
+    /// set; if not, it contributes nothing and is dropped. Both are
+    /// exact.
+    ///
+    /// **Default off, because it was measured not to pay** — see the
+    /// module docs. It is kept because it is exact and because the
+    /// measurement is worth being able to repeat, not because it helps.
+    pub retire_frozen: bool,
 }
 
 impl Default for Config {
@@ -605,6 +709,9 @@ impl Default for Config {
             max_terms: None,
             checkpoint_every: 64,
             exclusion: true,
+            // Off by default: exact, correct, and measured not to pay.
+            // See the module docs.
+            retire_frozen: false,
         }
     }
 }
@@ -638,12 +745,18 @@ pub struct Propagation {
     /// `Σ|c|` carried by the excluded terms. This is *not* error: those
     /// terms contribute exactly zero.
     pub excluded_l1: f64,
+    /// Terms retired early because the remaining circuit could no longer
+    /// touch them — settled exactly, and removed from the working set.
+    pub retired_terms: usize,
+    /// The contribution those retired terms already made to the answer.
+    pub retired_value: C64,
 }
 
 impl Propagation {
-    /// `⟨0…0|U†PU|0…0⟩` under the retained terms.
+    /// `⟨0…0|U†PU|0…0⟩` under the retained terms, plus whatever was
+    /// already settled by early retirement.
     pub fn expectation(&self) -> f64 {
-        self.sum.expectation_on_zero_state().re
+        (self.sum.expectation_on_zero_state() + self.retired_value).re
     }
 
     /// The certified error bar on [`Propagation::expectation`].
@@ -730,10 +843,16 @@ pub fn propagate(
     let mut peak = sum.len();
     let mut hit_cap = false;
     let (mut excluded_terms, mut excluded_l1) = (0usize, 0.0f64);
+    let (mut retired_terms, mut retired_value) = (0usize, C64::new(0.0, 0.0));
     // The exclusion filtration is over the whole rotation list; building
     // it is one forward pass and one shared basis.
     let span = if cfg.exclusion {
         Some(XSpan::of(rotations))
+    } else {
+        None
+    };
+    let axes = if cfg.retire_frozen {
+        Some(AxisSpan::of(rotations))
     } else {
         None
     };
@@ -743,6 +862,7 @@ pub fn propagate(
             step: 0,
             sum: sum.clone(),
             cumulative_l1: 0.0,
+            retired_value: C64::new(0.0, 0.0),
         });
     }
 
@@ -774,6 +894,28 @@ pub fn propagate(
                 l2 += b;
             }
         }
+        // RETIREMENT. A term the remaining circuit can no longer touch
+        // is settled: it either already sits in the X-free sector and
+        // its coefficient is part of the answer, or it never will and it
+        // contributes nothing. Either way it leaves the working set, and
+        // unlike reachability-exclusion this can fire mid-walk.
+        if let Some(ax) = &axes {
+            let mut settled = C64::new(0.0, 0.0);
+            let mut retired = 0usize;
+            sum.retain(|&key, c| {
+                if ax.can_touch(key, gate_index) {
+                    return true;
+                }
+                retired += 1;
+                if key.0 == 0 {
+                    settled += *c;
+                }
+                false
+            });
+            retired_terms += retired;
+            retired_value += settled;
+        }
+
         disc_l1 += l1;
         disc_l2 += l2;
         peak = peak.max(sum.len());
@@ -793,6 +935,7 @@ pub fn propagate(
                 step: step + 1,
                 sum: sum.clone(),
                 cumulative_l1: disc_l1,
+                retired_value,
             });
         }
     }
@@ -808,6 +951,8 @@ pub fn propagate(
         hit_cap,
         excluded_terms,
         excluded_l1,
+        retired_terms,
+        retired_value,
     })
 }
 
@@ -827,12 +972,26 @@ impl Propagation {
     ) -> Result<(Propagation, usize)> {
         let Some(cp) = self.journal.checkpoint_at_or_before(step) else {
             // no checkpoint: an honest full re-run
-            let p = propagate_from_state(&self.observable_seed(), rotations, 0, 0.0, cfg)?;
+            let p = propagate_from_state(
+                &self.observable_seed(),
+                rotations,
+                0,
+                0.0,
+                C64::new(0.0, 0.0),
+                cfg,
+            )?;
             let walked = rotations.len();
             return Ok((p, walked));
         };
         let walked = rotations.len() - cp.step;
-        let p = propagate_from_state(&cp.sum, rotations, cp.step, cp.cumulative_l1, cfg)?;
+        let p = propagate_from_state(
+            &cp.sum,
+            rotations,
+            cp.step,
+            cp.cumulative_l1,
+            cp.retired_value,
+            cfg,
+        )?;
         Ok((p, walked))
     }
 
@@ -848,17 +1007,20 @@ impl Propagation {
 
 /// Continue a walk from a checkpointed sum at `start_step`, carrying the
 /// error already accounted for.
+#[allow(clippy::too_many_arguments)]
 fn propagate_from_state(
     sum0: &PauliSum,
     rotations: &[Rotation],
     start_step: usize,
     carried_l1: f64,
+    carried_retired: C64,
     cfg: &Config,
 ) -> Result<Propagation> {
     let remaining = rotations.len().saturating_sub(start_step);
     let tail: Vec<Rotation> = rotations[..remaining].to_vec();
     let mut p = propagate(sum0, &tail, cfg)?;
     p.discarded_l1 += carried_l1;
+    p.retired_value += carried_retired;
     for s in p.journal.steps.iter_mut() {
         s.cumulative_l1 += carried_l1;
     }
@@ -1033,8 +1195,9 @@ mod tests {
                 threshold: 0.0,
                 max_terms: None,
                 checkpoint_every: 0,
-                // exclusion off: this test is about the branch itself
+                // both prunings off: this test is about the branch itself
                 exclusion: false,
+                retire_frozen: false,
             },
         )
         .unwrap();
@@ -1061,6 +1224,7 @@ mod tests {
             max_terms: None,
             checkpoint_every: 0,
             exclusion: true,
+            retire_frozen: false,
         };
         let p = propagate(&PauliSum::z(0), &[Rotation::rz(0, 0.5)], &cfg).unwrap();
         assert_eq!(p.sum.len(), 1);

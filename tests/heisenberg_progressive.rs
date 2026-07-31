@@ -12,6 +12,7 @@ fn exact_cfg() -> Config {
         max_terms: None,
         checkpoint_every: 0,
         exclusion: true,
+        retire_frozen: true,
     }
 }
 
@@ -20,6 +21,7 @@ fn exact_cfg() -> Config {
 fn no_exclusion_cfg() -> Config {
     Config {
         exclusion: false,
+        retire_frozen: false,
         ..exact_cfg()
     }
 }
@@ -241,6 +243,7 @@ fn the_error_bound_actually_bounds_the_error() {
                 max_terms: None,
                 checkpoint_every: 0,
         exclusion: true,
+        retire_frozen: true,
             };
             let p = propagate(&PauliSum::z(q), &rots, &cfg).unwrap();
             let error = (p.expectation() - reference).abs();
@@ -277,6 +280,7 @@ fn the_term_cap_is_respected_and_reported() {
         max_terms: Some(200),
         checkpoint_every: 0,
         exclusion: true,
+        retire_frozen: true,
     };
     let p = propagate(&PauliSum::z(8), &rots, &cfg).unwrap();
     assert!(p.hit_cap, "the cap should have bound");
@@ -296,6 +300,7 @@ fn the_journal_is_monotone_and_retrodiction_matches_a_linear_scan() {
         max_terms: None,
         checkpoint_every: 16,
         exclusion: true,
+        retire_frozen: true,
     };
     let p = propagate(&PauliSum::z(7), &rots, &cfg).unwrap();
     assert_eq!(p.journal.steps().len(), rots.len());
@@ -351,6 +356,7 @@ fn refinement_restarts_from_a_checkpoint_and_improves_the_answer() {
         max_terms: None,
         checkpoint_every: 8,
         exclusion: true,
+        retire_frozen: true,
     };
     let p = propagate(&PauliSum::z(6), &rots, &coarse).unwrap();
     assert!(p.journal.checkpoint_count() > 1);
@@ -363,6 +369,7 @@ fn refinement_restarts_from_a_checkpoint_and_improves_the_answer() {
         max_terms: None,
         checkpoint_every: 8,
         exclusion: true,
+        retire_frozen: true,
     };
     let (full, walked_full) = p.refine_from(&rots, 0, &fine).unwrap();
     assert_eq!(walked_full, rots.len());
@@ -405,6 +412,7 @@ fn the_shared_walk_matches_the_sum_of_separate_walks_and_costs_less() {
         max_terms: None,
         checkpoint_every: 0,
         exclusion: true,
+        retire_frozen: true,
     };
     let r = propagate_basis(&obs, &w, &rots, &cfg, true).unwrap();
 

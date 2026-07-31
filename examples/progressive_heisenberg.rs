@@ -44,7 +44,7 @@ fn main() -> Result<()> {
     println!("  (dense would need {} bytes)\n", (1u128 << n) * 16);
     println!("  threshold   terms    skips   <Z>             bound      time");
     for &th in &[1e-1f64, 1e-3, 1e-5, 1e-7] {
-        let cfg = Config { threshold: th, max_terms: None, checkpoint_every: 64, exclusion: true };
+        let cfg = Config { threshold: th, max_terms: None, checkpoint_every: 64, exclusion: true, retire_frozen: true };
         let t0 = Instant::now();
         let p = propagate(&PauliSum::z(q), &rots, &cfg)?;
         println!(
@@ -56,7 +56,7 @@ fn main() -> Result<()> {
     println!("  rather than computed beforehand.");
 
     println!("\n== retrodiction: which gate spent my precision ==\n");
-    let cfg = Config { threshold: 1e-6, max_terms: None, checkpoint_every: 32, exclusion: true };
+    let cfg = Config { threshold: 1e-6, max_terms: None, checkpoint_every: 32, exclusion: true, retire_frozen: true };
     let p = propagate(&PauliSum::z(q), &rots, &cfg)?;
     println!("  {} steps journalled, {} checkpoints, {} KiB",
         p.journal.steps().len(), p.journal.checkpoint_count(), p.journal.memory_bytes() / 1024);
@@ -73,7 +73,7 @@ fn main() -> Result<()> {
     for n in [20usize, 40, 60] {
         let rots = tfim_trotter(n, 1.0, 0.7, 0.25, 6);
         let (obs, w) = tfim_energy_basis(n, 1.0, 0.7);
-        let cfg = Config { threshold: 1e-5, max_terms: None, checkpoint_every: 0, exclusion: true };
+        let cfg = Config { threshold: 1e-5, max_terms: None, checkpoint_every: 0, exclusion: true, retire_frozen: true };
         let r = propagate_basis(&obs, &w, &rots, &cfg, true)?;
         println!("  {n:2}   E={:+9.4}   {:11}   {:11}   {:13}   {:.1}×",
             r.total, obs.len(), r.peak_terms, r.separate_peak_total.unwrap(),
@@ -97,7 +97,7 @@ fn main() -> Result<()> {
         println!("  mps χ={bond:<11}  {v:+.9}   {:.2e}   {:?}", (v - truth).abs(), t0.elapsed());
     }
     for &th in &[1e-4f64, 1e-6] {
-        let cfg = Config { threshold: th, max_terms: None, checkpoint_every: 0, exclusion: true };
+        let cfg = Config { threshold: th, max_terms: None, checkpoint_every: 0, exclusion: true, retire_frozen: true };
         let t0 = Instant::now();
         let p = propagate(&PauliSum::z(q), &rots, &cfg)?;
         println!("  heisenberg {th:.0e}  {:+.9}   {:.2e}   {:?}",
