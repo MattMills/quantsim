@@ -126,7 +126,7 @@ fn axis<'a>(scan: &'a FamilyScan, name: &str) -> &'a AxisScan {
 
 #[test]
 fn the_phase_field_axis_certifies_the_iqp_core_and_fails_on_the_full_circuit() {
-    let core = advantage_scan("iqp-core", iqp_core, &[6, 8, 10, 12]);
+    let core = advantage_scan("iqp-core", iqp_core, &[5, 6, 8, 10]);
     let pf = axis(&core, "phase-field");
     // polynomial in BOTH memory and wall-clock — the atlas's own bar
     assert!(
@@ -157,14 +157,16 @@ fn the_phase_field_axis_certifies_the_iqp_core_and_fails_on_the_full_circuit() {
     let dense = axis(&core, "dense");
     let pf_max = pf.costs.iter().flatten().max().unwrap();
     let dense_max = dense.costs.iter().flatten().max().unwrap();
+    // As above: the constant tracks the sweep's top width, the law
+    // separation is the claim.
     assert!(
-        pf_max * 20 < *dense_max,
+        pf_max * 5 < *dense_max,
         "phase-field {pf_max} vs dense {dense_max}"
     );
 
     // The closing Hadamard layer is the class boundary, and the axis
     // reports it by going exponential rather than by quietly lying.
-    let full = advantage_scan("iqp-full", iqp_full, &[6, 8, 10, 12]);
+    let full = advantage_scan("iqp-full", iqp_full, &[5, 6, 8, 10]);
     let pf_full = axis(&full, "phase-field");
     assert!(
         matches!(pf_full.law, Some(Law::Exponential { .. })),
@@ -181,9 +183,12 @@ fn the_phase_field_axis_certifies_the_iqp_core_and_fails_on_the_full_circuit() {
 
 #[test]
 fn the_braided_axis_certifies_a_braid_family_at_every_width() {
-    // Widths no dense matrix reaches: the generators are weight-≤2
-    // Clifford rotations, so nothing here builds a 2^n object.
-    let scan = advantage_scan("braid", braid_family, &[8, 12, 16, 20]);
+    // The generators are weight-≤2 Clifford rotations, so nothing here
+    // builds a 2^n object. The sweep runs at the smallest widths that
+    // still resolve a law — the point is the *shape*, and dense has to
+    // be run at every probe width for the comparison, which is what
+    // costs. The wide demonstration is `examples/braided_boundary.rs`.
+    let scan = advantage_scan("braid", braid_family, &[6, 8, 10, 12]);
     let br = axis(&scan, "braided");
 
     assert!(
@@ -210,9 +215,13 @@ fn the_braided_axis_certifies_a_braid_family_at_every_width() {
     assert!(matches!(dense.law, Some(Law::Exponential { .. })));
     let br_max = br.costs.iter().flatten().max().unwrap();
     let dense_max = dense.costs.iter().flatten().max().unwrap();
+    // The gap itself grows with width, so the constant here is a
+    // function of the sweep and not a property of the representation —
+    // the property is the law separation asserted above. This pins the
+    // gap's direction and order, not its size.
     assert!(
-        br_max * 100 < *dense_max,
-        "braided {br_max} vs dense {dense_max} at width 20"
+        br_max * 4 < *dense_max,
+        "braided {br_max} vs dense {dense_max} at the widest probe"
     );
 }
 

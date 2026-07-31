@@ -189,6 +189,16 @@ fn main() -> Result<()> {
         Err(e) => println!("  mera ghz-30 under the guard (2 s budget armed): {e}"),
         Ok(_) => println!("  mera ghz-30 under the guard (2 s budget armed): finished"),
     }
+    // A profile RECORDS a wall instead of failing on it — the measurement
+    // the atlas is built on, and too slow to belong in the test suite.
+    let profile = resource_profile(&library::ghz(34));
+    for a in &profile.axes {
+        match (&a.cost, &a.note) {
+            (Some(c), _) => println!("  ghz-34 profile: {:<10} {c} ({})", a.axis, a.parameter),
+            (None, Some(n)) => println!("  ghz-34 profile: {:<10} walled — {n}", a.axis),
+            (None, None) => println!("  ghz-34 profile: {:<10} walled", a.axis),
+        }
+    }
     println!("  (whichever wall arrives first — the measured memory refusal or the");
     println!("  armed deadline — is the one reported; nothing is skipped on arithmetic.)");
     println!("  (the hierarchical register clears the indexing wall: 67 logical qubits,");

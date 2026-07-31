@@ -613,6 +613,12 @@ fn the_exclusions_are_boundary_conditions_and_are_switched_off_mid_walk() {
 
 #[test]
 fn the_meeting_cost_has_an_interior_minimum_when_the_resources_differ() {
+    // The MPS side probes fewer cuts at a bond of 32 rather than 64:
+    // eleven qubits have Schmidt rank at most 2^5 across any cut, so 32
+    // is already lossless and the extra headroom bought nothing but
+    // Jacobi-SVD time. The claim is that the optimum is INTERIOR, which
+    // is a shape and not a resolution. The wide sweep is printed by
+    // `examples/progressive_heisenberg.rs`.
     let n = 11;
     let rots = split_resource_circuit(n);
     let cfg = Config {
@@ -629,13 +635,13 @@ fn the_meeting_cost_has_an_interior_minimum_when_the_resources_differ() {
     assert_eq!(sparse.cut, 0, "sparse forward should not want an interior cut");
 
     // MPS forward: a genuine interior optimum, well below either end.
-    let cuts: Vec<usize> = (0..=6).map(|i| i * rots.len() / 6).collect();
+    let cuts: Vec<usize> = (0..=4).map(|i| i * rots.len() / 4).collect();
     let sweep = cut_sweep(
         &PauliSum::z(n / 2),
         &rots,
         n,
         &cuts,
-        Forward::Mps { max_bond: 64 },
+        Forward::Mps { max_bond: 32 },
         &cfg,
     )
     .unwrap();
@@ -643,8 +649,8 @@ fn the_meeting_cost_has_an_interior_minimum_when_the_resources_differ() {
         &PauliSum::z(n / 2),
         &rots,
         n,
-        6,
-        Forward::Mps { max_bond: 64 },
+        4,
+        Forward::Mps { max_bond: 32 },
         &cfg,
     )
     .unwrap();

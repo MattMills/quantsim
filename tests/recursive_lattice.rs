@@ -301,8 +301,13 @@ fn a_phonon_walks_the_recursive_lattice_on_a_real_backend() {
 
 #[test]
 fn the_walks_substitution_error_is_second_order_too() {
-    let strong = phonon_walk(Shape::SQUARE, 1.0, 0.1, 0.05, 400).unwrap();
-    let weak = phonon_walk(Shape::SQUARE, 1.0, 0.01, 0.05, 400).unwrap();
+    // Same total walk time (20.0) as the sibling test, in 40 coarse
+    // steps rather than 400 fine ones: the substitution deviation is
+    // step-independent — that test pins it to 1e-9 across a 4x change
+    // in dt — so the coarse walk measures the same quantity for a
+    // tenth of the arithmetic.
+    let strong = phonon_walk(Shape::SQUARE, 1.0, 0.1, 0.5, 40).unwrap();
+    let weak = phonon_walk(Shape::SQUARE, 1.0, 0.01, 0.5, 40).unwrap();
     let ratio = strong.substitution_deviation / weak.substitution_deviation;
     assert!(ratio > 50.0 && ratio < 200.0, "ratio {ratio}");
 }

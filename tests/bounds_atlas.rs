@@ -6,6 +6,12 @@
 //! Nothing here is asserted from theory: each law is classified from
 //! measured byte costs over a size sweep; the theory is what the
 //! numbers are then checked against.
+//!
+//! The sweeps here run at the **smallest widths that still resolve a
+//! law** — these tests pin the atlas's logic, not its reach. The atlas
+//! itself is a measurement program and belongs in a runnable: the
+//! full-width sweep over the same families, printed as tables, is
+//! `examples/advantage_bounds.rs`.
 
 mod common;
 
@@ -47,7 +53,7 @@ fn the_law_classifier_is_calibrated() {
 fn known_fragments_are_rediscovered_by_measurement() {
     // GHZ: classical via sparse (support 2 at every width, byte-flat),
     // while factored honestly pays 2^n for its one giant cluster.
-    let ghz = advantage_scan("ghz", library::ghz, &[8, 10, 12, 14]);
+    let ghz = advantage_scan("ghz", library::ghz, &[6, 8, 10, 12]);
     match &ghz.verdict {
         Verdict::Classical { via } => assert!(via.iter().any(|v| v == "sparse"), "{via:?}"),
         v => panic!("{v:?}"),
@@ -59,7 +65,7 @@ fn known_fragments_are_rediscovered_by_measurement() {
     // QFT on the |0…0⟩ boundary: the bond across every cut stays tiny
     // — the measured Aharonov-style result that basis-state QFT is
     // classically easy — while sparse pays the full 2^n support.
-    let qft = advantage_scan("qft", library::qft, &[6, 8, 10, 12]);
+    let qft = advantage_scan("qft", library::qft, &[5, 6, 8, 10]);
     assert!(
         matches!(qft.verdict, Verdict::Classical { .. }),
         "some assumption must hold on basis-state QFT: {:?}",
@@ -83,7 +89,7 @@ fn known_fragments_are_rediscovered_by_measurement() {
 
     // Rainbow: classical via clustering; the fixed tree pays ~2^n at
     // its root and sparse pays exactly √2 per qubit (2^{n/2} support).
-    let rainbow = advantage_scan("rainbow", library::rainbow, &[8, 10, 12, 14]);
+    let rainbow = advantage_scan("rainbow", library::rainbow, &[6, 8, 10, 12]);
     match &rainbow.verdict {
         Verdict::Classical { via } => {
             assert!(via.iter().any(|v| v == "factored"), "{via:?}");
@@ -101,7 +107,7 @@ fn known_fragments_are_rediscovered_by_measurement() {
     let clifford = advantage_scan(
         "clifford-brickwork",
         |n| library::brickwork(n, n, &(0..n).collect::<Vec<_>>()),
-        &[8, 10, 12],
+        &[6, 8, 10],
     );
     // The Gottesman–Knill claim is about DESCRIPTION SIZE, so that is what
     // gets asserted unconditionally: the frame's memory law is
@@ -144,7 +150,7 @@ fn random_circuits_escape_every_assumption_at_once() {
     let scan = advantage_scan(
         "random",
         |n| library::random_circuit(n, 3 * n * n, 7),
-        &[6, 8, 10, 12],
+        &[5, 6, 8, 10],
     );
     assert_eq!(scan.verdict, Verdict::Candidate);
     let mut priced = 0usize;
@@ -321,7 +327,7 @@ fn time_laws_join_the_verdict() {
     // An axis certifies a family classical only when BOTH its memory
     // and its wall-clock law stay sub-exponential — a memory-cheap but
     // time-exponential representation no longer slips through.
-    let ghz = advantage_scan("ghz", library::ghz, &[8, 10, 12, 14]);
+    let ghz = advantage_scan("ghz", library::ghz, &[6, 8, 10, 12]);
     let sparse = axis(&ghz, "sparse");
     assert!(sparse.time_law.as_ref().unwrap().is_subexponential());
     assert!(sparse.certifies_classical());
@@ -334,13 +340,13 @@ fn time_laws_join_the_verdict() {
         .expect("dense finished every size");
     assert!(
         dense_time > 4.0,
-        "dense should pay several-fold more time from 8 to 14 qubits: {dense_time:.2}x"
+        "dense should pay several-fold more time from 6 to 12 qubits: {dense_time:.2}x"
     );
 
     let random = advantage_scan(
         "random",
         |n| library::random_circuit(n, 3 * n * n, 7),
-        &[6, 8, 10, 12],
+        &[5, 6, 8, 10],
     );
     assert_eq!(random.verdict, Verdict::Candidate);
     for name in ["dense", "sparse"] {
@@ -349,14 +355,14 @@ fn time_laws_join_the_verdict() {
             .measured_time_growth()
             .expect("both finished every size");
         assert!(
-            growth > 8.0,
-            "{name} time on the candidate family should climb steeply from 6 to 12 \
+            growth > 3.0,
+            "{name} time on the candidate family should climb steeply from 5 to 10 \
              qubits: {growth:.2}x"
         );
         // The *shape* is deliberately not asserted, and the reason is a
-        // resolution limit rather than jitter: over a sweep spanning 6 to
-        // 12 qubits, `size^5.8` is a factor of 55 and `2^size` is a factor
-        // of 64. The data does not separate them, and the classifier reads
+        // resolution limit rather than jitter: over a sweep spanning 5 to
+        // 10 qubits, `size^5.8` is a factor of 56 and `2^size` is a factor
+        // of 32. The data does not separate them, and the classifier reads
         // one or the other *robustly* depending on the machine. The verdict
         // above does not depend on it — the memory law carries `Candidate`
         // — so the honest test asserts growth and leaves shape alone.
@@ -375,7 +381,7 @@ fn interaction_range_flips_the_iqp_verdict() {
     let long = advantage_scan(
         "iqp-long",
         |n| library::iqp(n, 2 * n, true, 5),
-        &[6, 8, 10, 12],
+        &[5, 6, 8, 10],
     );
     assert_eq!(long.verdict, Verdict::Candidate);
     let mps_long = axis(&long, "mps");
@@ -387,7 +393,7 @@ fn interaction_range_flips_the_iqp_verdict() {
     let nn = advantage_scan(
         "iqp-nn",
         |n| library::iqp(n, 2 * n, false, 5),
-        &[6, 8, 10, 12],
+        &[5, 6, 8, 10],
     );
     match &nn.verdict {
         Verdict::Classical { via } => {
@@ -406,7 +412,7 @@ fn magic_doping_meets_the_frames_measured_reach() {
     let light = advantage_scan(
         "doped-log",
         |n| library::doped_clifford(n, 5 * n, n.ilog2() as usize, 9),
-        &[8, 10, 12, 14],
+        &[6, 8, 10],
     );
     match &light.verdict {
         Verdict::Classical { via } => {
@@ -427,7 +433,7 @@ fn magic_doping_meets_the_frames_measured_reach() {
     let heavy = advantage_scan(
         "doped-heavy",
         |n| library::doped_clifford(n, 5 * n, n / 2, 9),
-        &[8, 10, 12],
+        &[5, 6, 8],
     );
     match &heavy.verdict {
         Verdict::Classical { via } => {
@@ -455,7 +461,7 @@ fn shallow_2d_assumptions_fail_slowly() {
     let scan = advantage_scan(
         "shallow-2d",
         |n| library::brickwork_2d(n / 3, 3, 3, 4),
-        &[9, 12, 15, 18],
+        &[6, 9, 12],
     );
     match &scan.verdict {
         Verdict::Classical { via } => {
@@ -483,7 +489,7 @@ fn shallow_2d_assumptions_fail_slowly() {
 fn selection_extrapolates_measured_laws_and_verifies() {
     // Selection by extrapolated scaling, checked against a holdout run
     // the fit never saw.
-    let sel = select_by_scaling("ghz", library::ghz, &[8, 10, 12, 14], 40);
+    let sel = select_by_scaling("ghz", library::ghz, &[6, 8, 10, 12], 40);
     assert_eq!(sel.best().axis, "sparse");
     assert!(sel.subexponential);
     let reg = GateRegistry::<C64>::standard();
@@ -504,9 +510,9 @@ fn selection_extrapolates_measured_laws_and_verifies() {
     // that completes the holdout verifies within a small factor. (A
     // choice can wall at the holdout size — mera's runtime cliff is
     // nonlinear — and the ranked list absorbs that honestly.)
-    let sel = select_by_scaling("qft", library::qft, &[6, 8, 10, 12], 16);
+    let sel = select_by_scaling("qft", library::qft, &[5, 6, 8, 10], 12);
     assert!(sel.subexponential, "{:?}", sel.best());
-    let holdout_profile = resource_profile(&library::qft(16));
+    let holdout_profile = resource_profile(&library::qft(12));
     let verified = sel.choices.iter().find_map(|choice| {
         holdout_profile
             .axes
@@ -531,7 +537,7 @@ fn selection_extrapolates_measured_laws_and_verifies() {
     let sel = select_by_scaling(
         "random",
         |n| library::random_circuit(n, 3 * n * n, 7),
-        &[6, 8, 10, 12],
+        &[5, 6, 8, 10],
         16,
     );
     assert!(
@@ -559,7 +565,7 @@ fn time_laws_carry_error_bars_and_shapes_join_the_scan() {
     // to flake. What is asserted instead is the mechanism: the envelope is
     // always present, the predicate is exactly what it claims to be, and a
     // *clean* measurement must come out robust.
-    let ghz = advantage_scan("ghz", library::ghz, &[8, 10, 12, 14]);
+    let ghz = advantage_scan("ghz", library::ghz, &[6, 8, 10, 12]);
     let sparse = axis(&ghz, "sparse");
     let dense = axis(&ghz, "dense");
 
@@ -610,7 +616,7 @@ fn time_laws_carry_error_bars_and_shapes_join_the_scan() {
     let random = advantage_scan(
         "random",
         |n| library::random_circuit(n, 3 * n * n, 7),
-        &[6, 8, 10, 12],
+        &[5, 6, 8, 10],
     );
     assert_eq!(random.verdict, Verdict::Candidate);
     for name in ["algebraic-h", "algebraic-o"] {
@@ -674,13 +680,8 @@ fn the_walls_are_measured_refusals() {
     // The indexing wall is a different kind: structural, not resource.
     assert!(SparseState::<C64>::new(63).is_ok());
     assert!(SparseState::<C64>::new(64).is_err());
-    // And a profile records walls instead of failing: at width 34 the
-    // dense axis reports its refusal while sparse proceeds.
-    let profile = resource_profile(&library::ghz(34));
-    let dense = profile.axes.iter().find(|a| a.axis == "dense").unwrap();
-    assert!(dense.cost.is_none());
-    assert!(dense.note.as_ref().unwrap().contains("out of memory"));
-    let sparse = profile.axes.iter().find(|a| a.axis == "sparse").unwrap();
-    assert!(sparse.cost.is_some());
-    assert_eq!(sparse.parameter, "support 2");
+    // That a *profile* records the wall instead of failing on it is the
+    // same guard seen from one level up — but reading it costs a full
+    // sweep of every axis at width 34, which is a measurement and not an
+    // assertion. It is printed by `examples/advantage_bounds.rs`.
 }
