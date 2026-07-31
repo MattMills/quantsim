@@ -78,6 +78,7 @@ pub mod exact;
 pub mod gates;
 pub mod guard;
 pub mod harness;
+pub mod heisenberg;
 pub mod library;
 pub mod lift;
 pub mod math;
@@ -151,6 +152,10 @@ pub mod prelude {
     pub use crate::harness::{
         compare_backends, select_backend, BenchConfig, BenchmarkReport, SelectionCriterion,
         SelectionReport, Workload,
+    };
+    pub use crate::heisenberg::{
+        propagate, propagate_basis, tfim_energy_basis, tfim_trotter, BasisReport, Journal,
+        PauliSum, Propagation, Rotation, Step,
     };
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};

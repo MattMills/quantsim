@@ -1,0 +1,910 @@
+//! **Progressive stateless computation**: an observable propagated
+//! backwards through a circuit as a sum of Paulis, pruned by what the
+//! question needs, with a journal that says — retrodictively — where the
+//! precision went.
+//!
+//! # The mechanism
+//!
+//! The Heisenberg query is `⟨0|U†PU|0⟩`. Writing `U = g_L ⋯ g_1`, the
+//! conjugation `U†PU = g_1† ⋯ g_L† P g_L ⋯ g_1` is evaluated **from the
+//! observable backwards to the input** — the walk is retrodictive by
+//! construction, which is what makes the journal below a diagnostic
+//! instrument rather than a log.
+//!
+//! Each gate is a Pauli rotation `R = exp(−iθQ/2)`, and conjugating one
+//! Pauli term through it does exactly one of two things:
+//!
+//! ```text
+//! [P,Q] = 0   →   R† P R = P                             (free)
+//! {P,Q} = 0   →   R† P R = cos θ · P  −  i sin θ · PQ     (splits)
+//! ```
+//!
+//! So the observable becomes a [`PauliSum`], branching only where a gate
+//! genuinely anticommutes with a term it meets. Three consequences carry
+//! the method:
+//!
+//! * **The causal cone is free and needs no separate pass.** A rotation
+//!   whose axis commutes with every term costs one popcount and changes
+//!   nothing. [`Propagation::commuting_skips`] counts them — that is the
+//!   backward light cone, measured while walking rather than computed
+//!   beforehand.
+//! * **The error is certified, not estimated.** `Σ|c|²` is invariant
+//!   under the conjugation, so dropping the terms below a threshold has
+//!   an *exactly known* cost. [`Propagation::discarded_l2`] is that
+//!   number, and it is a bound on the expectation error, not a guess.
+//! * **The cost tracks the question, not the circuit.** Ask for three
+//!   digits and you pay for the terms above `1e-3`; ask for machine
+//!   precision and you pay for all of them.
+//!
+//! # The journal, read backwards
+//!
+//! Every step records how many terms survived, how much weight was
+//! dropped, and the running total. The running total is **monotone**, so
+//! the journal is binary-searchable: [`Journal::retrodict`] answers *at
+//! which gate did my error budget get spent* in `O(log L)` without
+//! re-running anything. That is the retrodiction pattern
+//! [`closure`](crate::closure) uses for errors, applied to precision.
+//!
+//! Because the walk is backwards, the answer is a **circuit position** —
+//! "your third digit died at gate 847" — which is actionable in a way a
+//! final error bar is not. [`Propagation::refine_from`] then re-runs from
+//! the nearest checkpoint with a tighter threshold. Checkpoints are the
+//! *partial state*: the space–time dial between storing everything and
+//! recomputing everything.
+//!
+//! One limit of that, stated because it is easy to assume otherwise: a
+//! checkpoint holds the sum **as it was already truncated**, so refining
+//! from it recovers only the error incurred *after* it. Refining from
+//! step 0 — where the checkpoint is the pristine observable — is a full
+//! re-run and recovers everything. The useful pattern is therefore to
+//! retrodict the blame gate first and then re-walk with a threshold that
+//! is tight only near it, rather than to expect a late checkpoint to
+//! undo an early loss.
+//!
+//! # What this is, honestly
+//!
+//! The propagation mechanism is **sparse Pauli dynamics** (Pauli path
+//! integrals), the method that classically reproduced IBM's 127-qubit
+//! utility experiment. It is not new here and this module does not claim
+//! it. What is assembled here is the *control structure* around it: the
+//! retrodictive journal, checkpointed refinement, and — the reason to
+//! bother — [`propagate_basis`], which shares one walk across a whole
+//! observable **basis** rather than re-walking per observable. An energy
+//! `H = Σ cᵢPᵢ` has `O(n²)`–`O(n⁴)` terms whose cones overlap almost
+//! entirely; sharing the walk is close to the cost of the worst single
+//! term.
+//!
+//! And the limit, stated up front: for anti-concentrated circuits the
+//! coefficients flatten, no threshold helps, and the term count is
+//! exponential. That is the same wall as everywhere else. The method
+//! wins where structure or damping makes the coefficient distribution
+//! decay — which notably includes *noisy* circuits, so it is strongest
+//! exactly where hardware is weakest.
+
+use rustc_hash::FxHashMap;
+
+use crate::error::{Error, Result};
+use crate::math::GateMatrix;
+use crate::scalar::C64;
+
+/// Largest register width: Pauli support is carried in `u64` masks.
+pub const MAX_QUBITS: usize = 64;
+
+/// Coefficients below this are dropped **regardless of the configured
+/// threshold**, because they are below double precision's ability to
+/// mean anything.
+///
+/// This is not a tuning knob, it is a correctness fix. At an exact
+/// Clifford angle `cos(−π/2)` evaluates to `6.1e−17` rather than `0`, so
+/// an "exact" walk with `threshold = 0` would branch on that dust and
+/// reach millions of terms where the true answer is one term. The floor
+/// is what makes the Clifford point actually free.
+pub const COEFF_FLOOR: f64 = 1e-15;
+
+// ── the Pauli algebra, in the X^x Z^z basis ──────────────────────────
+
+/// A Pauli basis element `X^x Z^z`, as a pair of support masks.
+///
+/// This basis is used rather than the Hermitian `{I,X,Y,Z}` one because
+/// multiplication is a XOR plus one sign — no `i` bookkeeping in the hot
+/// loop. Hermiticity is restored where it matters: a rotation *axis* is
+/// interpreted as `i^{|x&z|} X^x Z^z` (see [`axis_operator_phase`]),
+/// which is Hermitian and squares to the identity.
+pub type PauliKey = (u64, u64);
+
+/// Sign from commuting `Z^b` past `X^c`: `Z^b X^c = (−1)^{|b∧c|} X^c Z^b`.
+#[inline]
+fn reorder_sign(b: u64, c: u64) -> f64 {
+    if (b & c).count_ones() % 2 == 0 {
+        1.0
+    } else {
+        -1.0
+    }
+}
+
+/// Whether `X^a Z^b` and `X^c Z^d` commute — the symplectic form.
+#[inline]
+pub fn commutes(p: PauliKey, q: PauliKey) -> bool {
+    ((p.1 & q.0).count_ones() + (p.0 & q.1).count_ones()) % 2 == 0
+}
+
+/// Product `(X^a Z^b)(X^c Z^d) = sign · X^{a⊕c} Z^{b⊕d}`.
+#[inline]
+pub fn pauli_mul(p: PauliKey, q: PauliKey) -> (PauliKey, f64) {
+    ((p.0 ^ q.0, p.1 ^ q.1), reorder_sign(p.1, q.0))
+}
+
+/// The phase making an axis Hermitian: the rotation axis for masks
+/// `(x, z)` is `i^{|x∧z|} X^x Z^z`, which is Hermitian and squares to
+/// `I` (e.g. `(1,1) ↦ i·XZ = Y`).
+#[inline]
+pub fn axis_operator_phase(axis: PauliKey) -> C64 {
+    match (axis.0 & axis.1).count_ones() % 4 {
+        0 => C64::new(1.0, 0.0),
+        1 => C64::new(0.0, 1.0),
+        2 => C64::new(-1.0, 0.0),
+        _ => C64::new(0.0, -1.0),
+    }
+}
+
+/// A weighted sum of Pauli basis elements.
+#[derive(Debug, Clone, Default)]
+pub struct PauliSum {
+    terms: FxHashMap<PauliKey, C64>,
+}
+
+impl PauliSum {
+    /// The empty (zero) sum.
+    pub fn zero() -> Self {
+        PauliSum::default()
+    }
+
+    /// A single Pauli with unit coefficient.
+    pub fn from_key(key: PauliKey) -> Self {
+        let mut s = PauliSum::zero();
+        s.add(key, C64::new(1.0, 0.0));
+        s
+    }
+
+    /// `Z` on one qubit.
+    pub fn z(qubit: usize) -> Self {
+        PauliSum::from_key((0, 1u64 << qubit))
+    }
+
+    /// `X` on one qubit.
+    pub fn x(qubit: usize) -> Self {
+        PauliSum::from_key((1u64 << qubit, 0))
+    }
+
+    /// `Y` on one qubit — `i·XZ` in this basis.
+    pub fn y(qubit: usize) -> Self {
+        let mut s = PauliSum::zero();
+        s.add((1u64 << qubit, 1u64 << qubit), C64::new(0.0, 1.0));
+        s
+    }
+
+    /// `Z_a Z_b`.
+    pub fn zz(a: usize, b: usize) -> Self {
+        PauliSum::from_key((0, (1u64 << a) | (1u64 << b)))
+    }
+
+    /// Add a term, merging with any like term and dropping exact zeros.
+    pub fn add(&mut self, key: PauliKey, coeff: C64) {
+        if coeff.norm() == 0.0 {
+            return;
+        }
+        let e = self.terms.entry(key).or_insert(C64::new(0.0, 0.0));
+        *e += coeff;
+        if e.norm() == 0.0 {
+            self.terms.remove(&key);
+        }
+    }
+
+    /// Number of distinct Pauli terms.
+    pub fn len(&self) -> usize {
+        self.terms.len()
+    }
+
+    /// Whether the sum is empty.
+    pub fn is_empty(&self) -> bool {
+        self.terms.is_empty()
+    }
+
+    /// The terms.
+    pub fn terms(&self) -> impl Iterator<Item = (PauliKey, C64)> + '_ {
+        self.terms.iter().map(|(&k, &c)| (k, c))
+    }
+
+    /// `Σ|c|²` — invariant under conjugation, so it is the yardstick the
+    /// discarded weight is measured against.
+    pub fn l2_squared(&self) -> f64 {
+        self.terms.values().map(|c| c.norm_sqr()).sum()
+    }
+
+    /// `Σ|c|` — the bound on how much a truncation can move an
+    /// expectation value.
+    pub fn l1(&self) -> f64 {
+        self.terms.values().map(|c| c.norm()).sum()
+    }
+
+    /// Largest support of any term — how far the observable has spread.
+    pub fn max_weight(&self) -> usize {
+        self.terms
+            .keys()
+            .map(|&(x, z)| (x | z).count_ones() as usize)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Drop every term with `|c| < threshold`; returns the discarded
+    /// `Σ|c|` and `Σ|c|²`.
+    ///
+    /// The `Σ|c|` figure is the one that bounds the expectation error:
+    /// `|⟨P⟩ − ⟨P_truncated⟩| ≤ Σ_{dropped}|c|`, because every Pauli has
+    /// operator norm 1.
+    pub fn truncate(&mut self, threshold: f64) -> (f64, f64) {
+        if threshold <= 0.0 {
+            return (0.0, 0.0);
+        }
+        let mut l1 = 0.0;
+        let mut l2 = 0.0;
+        self.terms.retain(|_, c| {
+            let m = c.norm();
+            if m < threshold {
+                l1 += m;
+                l2 += m * m;
+                false
+            } else {
+                true
+            }
+        });
+        (l1, l2)
+    }
+
+    /// `⟨0…0| Σ c_k X^{a_k} Z^{b_k} |0…0⟩` — the sum of the coefficients
+    /// of the terms with no `X` support, since `Z^b|0⟩ = |0⟩` and
+    /// `X^a|0⟩ = |a⟩` is orthogonal to `|0⟩` unless `a = 0`.
+    pub fn expectation_on_zero_state(&self) -> C64 {
+        self.terms
+            .iter()
+            .filter(|(&(x, _), _)| x == 0)
+            .map(|(_, &c)| c)
+            .fold(C64::new(0.0, 0.0), |a, b| a + b)
+    }
+
+    /// Approximate stored bytes.
+    pub fn memory_bytes(&self) -> usize {
+        self.terms.capacity() * (2 * 8 + 16 + 1) * 8 / 7 + std::mem::size_of::<Self>()
+    }
+}
+
+// ── the circuit, as Pauli rotations ──────────────────────────────────
+
+/// One gate: `exp(−iθ Q / 2)` about the Hermitian Pauli
+/// `Q = i^{|x∧z|} X^x Z^z`.
+///
+/// Every unitary decomposes into these, and the physics circuits this
+/// module targets are written in them natively (a Trotter step *is* a
+/// list of Pauli rotations). `θ = ±π/2` is Clifford and never branches
+/// the sum by more than a relabelling; `θ` elsewhere is where the tree
+/// grows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rotation {
+    /// Rotation angle.
+    pub theta: f64,
+    /// Axis masks `(x, z)`.
+    pub axis: PauliKey,
+}
+
+impl Rotation {
+    /// A rotation about `Z_q`.
+    pub fn rz(qubit: usize, theta: f64) -> Self {
+        Rotation {
+            theta,
+            axis: (0, 1u64 << qubit),
+        }
+    }
+
+    /// A rotation about `X_q`.
+    pub fn rx(qubit: usize, theta: f64) -> Self {
+        Rotation {
+            theta,
+            axis: (1u64 << qubit, 0),
+        }
+    }
+
+    /// A rotation about `Z_a Z_b`.
+    pub fn rzz(a: usize, b: usize, theta: f64) -> Self {
+        Rotation {
+            theta,
+            axis: (0, (1u64 << a) | (1u64 << b)),
+        }
+    }
+
+    /// A rotation about `X_a X_b`.
+    pub fn rxx(a: usize, b: usize, theta: f64) -> Self {
+        Rotation {
+            theta,
+            axis: ((1u64 << a) | (1u64 << b), 0),
+        }
+    }
+
+    /// Support size of the axis.
+    pub fn weight(&self) -> usize {
+        (self.axis.0 | self.axis.1).count_ones() as usize
+    }
+
+    /// The qubits the axis acts on, ascending.
+    pub fn support(&self) -> Vec<usize> {
+        let mask = self.axis.0 | self.axis.1;
+        (0..MAX_QUBITS).filter(|&q| mask >> q & 1 == 1).collect()
+    }
+
+    /// `exp(−iθQ/2)` as a gate matrix on [`Rotation::support`], so the
+    /// same rotation can be handed to any [`Backend`](crate::Backend) —
+    /// which is how the propagation is checked against dense.
+    pub fn gate(&self) -> Result<(GateMatrix<C64>, Vec<usize>)> {
+        let support = self.support();
+        let dim = 1usize << support.len();
+        if support.is_empty() {
+            return Err(Error::InvalidState("rotation with empty axis".into()));
+        }
+        let phase = axis_operator_phase(self.axis);
+        // Q = phase · X^x Z^z restricted to the support
+        let mut q = GateMatrix::<C64>::zeros(dim)?;
+        for col in 0..dim {
+            let (mut row, mut sign) = (0usize, 1.0f64);
+            for (b, &site) in support.iter().enumerate() {
+                let bit = (col >> b) & 1;
+                if (self.axis.1 >> site) & 1 == 1 && bit == 1 {
+                    sign = -sign; // Z acts first
+                }
+                row |= (bit ^ (((self.axis.0 >> site) & 1) as usize)) << b;
+            }
+            q.set(row, col, phase * C64::new(sign, 0.0));
+        }
+        let (c, s) = ((self.theta / 2.0).cos(), (self.theta / 2.0).sin());
+        let mut m = GateMatrix::<C64>::zeros(dim)?;
+        for r in 0..dim {
+            for cc in 0..dim {
+                let id = if r == cc {
+                    C64::new(c, 0.0)
+                } else {
+                    C64::new(0.0, 0.0)
+                };
+                m.set(r, cc, id + q.get(r, cc) * C64::new(0.0, -s));
+            }
+        }
+        Ok((m, support))
+    }
+}
+
+// ── the journal ──────────────────────────────────────────────────────
+
+/// One backward step's accounting.
+#[derive(Debug, Clone)]
+pub struct Step {
+    /// Position of the gate in the original (forward) circuit.
+    pub gate_index: usize,
+    /// Terms in the sum after this step.
+    pub terms: usize,
+    /// `Σ|c|` discarded at this step.
+    pub discarded_l1: f64,
+    /// Running `Σ|c|` discarded from the start of the walk — **monotone
+    /// non-decreasing**, which is what makes [`Journal::retrodict`] a
+    /// binary search.
+    pub cumulative_l1: f64,
+    /// `Σ|c|²` remaining.
+    pub l2_squared: f64,
+    /// Largest term support after this step.
+    pub max_weight: usize,
+    /// Whether the gate commuted with everything and cost nothing.
+    pub skipped: bool,
+}
+
+/// A checkpoint: the partial state at a step, so refinement need not
+/// restart the walk.
+#[derive(Debug, Clone)]
+struct Checkpoint {
+    step: usize,
+    sum: PauliSum,
+    cumulative_l1: f64,
+}
+
+/// The record of a backward walk, and the instrument for asking where
+/// the precision went.
+#[derive(Debug, Clone, Default)]
+pub struct Journal {
+    steps: Vec<Step>,
+    checkpoints: Vec<Checkpoint>,
+}
+
+impl Journal {
+    /// Every step, in walk order (which is reverse circuit order).
+    pub fn steps(&self) -> &[Step] {
+        &self.steps
+    }
+
+    /// Checkpoints retained.
+    pub fn checkpoint_count(&self) -> usize {
+        self.checkpoints.len()
+    }
+
+    /// **Retrodiction.** The first walk step at which the cumulative
+    /// discarded weight exceeded `budget`, found by binary search on the
+    /// monotone running total — `O(log L)`, with nothing re-run.
+    ///
+    /// `None` means the budget was never exceeded: the answer is good to
+    /// `budget` and no refinement is needed.
+    pub fn retrodict(&self, budget: f64) -> Option<usize> {
+        if self.steps.is_empty() || self.steps.last().unwrap().cumulative_l1 <= budget {
+            return None;
+        }
+        let (mut lo, mut hi) = (0usize, self.steps.len() - 1);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if self.steps[mid].cumulative_l1 > budget {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        Some(lo)
+    }
+
+    /// The **circuit position** where the budget was spent — the
+    /// actionable form of [`Journal::retrodict`], since the walk runs
+    /// backwards and a step index is not a gate index.
+    pub fn blame_gate(&self, budget: f64) -> Option<usize> {
+        self.retrodict(budget).map(|s| self.steps[s].gate_index)
+    }
+
+    /// The latest checkpoint at or before `step`.
+    fn checkpoint_at_or_before(&self, step: usize) -> Option<&Checkpoint> {
+        self.checkpoints
+            .iter()
+            .rev()
+            .find(|c| c.step <= step)
+    }
+
+    /// Approximate stored bytes, checkpoints included — the space half of
+    /// the space–time dial.
+    pub fn memory_bytes(&self) -> usize {
+        self.steps.len() * std::mem::size_of::<Step>()
+            + self
+                .checkpoints
+                .iter()
+                .map(|c| c.sum.memory_bytes())
+                .sum::<usize>()
+    }
+}
+
+// ── configuration and the walk ───────────────────────────────────────
+
+/// How much to keep, and how much to remember.
+#[derive(Debug, Clone)]
+pub struct Config {
+    /// Terms with `|c|` below this are dropped, and their weight is
+    /// accounted. `0.0` is exact.
+    pub threshold: f64,
+    /// Hard cap on the term count; the walk truncates upward to respect
+    /// it and reports having done so. `None` is uncapped.
+    pub max_terms: Option<usize>,
+    /// Store a checkpoint every this many steps. `0` disables them —
+    /// minimum memory, no cheap refinement.
+    pub checkpoint_every: usize,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            threshold: 1e-8,
+            max_terms: None,
+            checkpoint_every: 64,
+        }
+    }
+}
+
+/// A completed (or partial) propagation.
+#[derive(Debug, Clone)]
+pub struct Propagation {
+    /// The conjugated observable.
+    pub sum: PauliSum,
+    /// The record of the walk.
+    pub journal: Journal,
+    /// Gates that commuted with every term and cost nothing — the
+    /// backward light cone, measured.
+    pub commuting_skips: usize,
+    /// Gates that actually branched the sum.
+    pub branchings: usize,
+    /// Total `Σ|c|` discarded: a **bound** on the expectation error,
+    /// since every Pauli has operator norm 1.
+    pub discarded_l1: f64,
+    /// Total `Σ|c|²` discarded.
+    pub discarded_l2: f64,
+    /// Peak term count during the walk.
+    pub peak_terms: usize,
+    /// Whether the term cap was ever hit.
+    pub hit_cap: bool,
+}
+
+impl Propagation {
+    /// `⟨0…0|U†PU|0…0⟩` under the retained terms.
+    pub fn expectation(&self) -> f64 {
+        self.sum.expectation_on_zero_state().re
+    }
+
+    /// The certified error bar on [`Propagation::expectation`].
+    pub fn error_bound(&self) -> f64 {
+        self.discarded_l1
+    }
+}
+
+/// Conjugate one Pauli sum backwards through one rotation.
+fn step_through(sum: &PauliSum, rot: &Rotation) -> (PauliSum, bool) {
+    let (c, s) = ((rot.theta).cos(), (rot.theta).sin());
+    let phase = axis_operator_phase(rot.axis);
+    let mut out = PauliSum::zero();
+    let mut branched = false;
+    for (key, coeff) in sum.terms() {
+        if commutes(key, rot.axis) {
+            out.add(key, coeff);
+            continue;
+        }
+        // R† P R = cos θ · P − i sin θ · P Q, with both branches held to
+        // the floor so a numerically-zero one does not survive.
+        let keep = coeff * C64::new(c, 0.0);
+        if keep.norm() >= COEFF_FLOOR {
+            out.add(key, keep);
+        }
+        let (prod, sign) = pauli_mul(key, rot.axis);
+        let split = coeff * (C64::new(0.0, -s * sign) * phase);
+        if split.norm() >= COEFF_FLOOR {
+            out.add(prod, split);
+            branched = true;
+        }
+    }
+    (out, branched)
+}
+
+/// Propagate an observable backwards through a rotation sequence.
+///
+/// `rotations` is in **forward circuit order**; the walk runs from the
+/// last to the first, which is what makes the journal retrodictive.
+pub fn propagate(
+    observable: &PauliSum,
+    rotations: &[Rotation],
+    cfg: &Config,
+) -> Result<Propagation> {
+    if rotations.len() > usize::MAX - 1 {
+        return Err(Error::InvalidState("rotation list too long".into()));
+    }
+    let mut sum = observable.clone();
+    let mut journal = Journal::default();
+    let (mut skips, mut branchings) = (0usize, 0usize);
+    let (mut disc_l1, mut disc_l2) = (0.0f64, 0.0f64);
+    let mut peak = sum.len();
+    let mut hit_cap = false;
+
+    if cfg.checkpoint_every > 0 {
+        journal.checkpoints.push(Checkpoint {
+            step: 0,
+            sum: sum.clone(),
+            cumulative_l1: 0.0,
+        });
+    }
+
+    for (step, gate_index) in (0..rotations.len()).rev().enumerate() {
+        let rot = &rotations[gate_index];
+        let (next, branched) = step_through(&sum, rot);
+        sum = next;
+        if branched {
+            branchings += 1;
+        } else {
+            skips += 1;
+        }
+
+        let (mut l1, mut l2) = sum.truncate(cfg.threshold);
+        if let Some(cap) = cfg.max_terms {
+            if sum.len() > cap {
+                hit_cap = true;
+                // raise the threshold until the cap is met, accounting
+                // everything dropped on the way
+                let mut mags: Vec<f64> = sum.terms().map(|(_, c)| c.norm()).collect();
+                mags.sort_by(|a, b| b.partial_cmp(a).unwrap());
+                let cut = mags[cap];
+                let (a, b) = sum.truncate(cut * (1.0 + 1e-12));
+                l1 += a;
+                l2 += b;
+            }
+        }
+        disc_l1 += l1;
+        disc_l2 += l2;
+        peak = peak.max(sum.len());
+
+        journal.steps.push(Step {
+            gate_index,
+            terms: sum.len(),
+            discarded_l1: l1,
+            cumulative_l1: disc_l1,
+            l2_squared: sum.l2_squared(),
+            max_weight: sum.max_weight(),
+            skipped: !branched,
+        });
+
+        if cfg.checkpoint_every > 0 && (step + 1) % cfg.checkpoint_every == 0 {
+            journal.checkpoints.push(Checkpoint {
+                step: step + 1,
+                sum: sum.clone(),
+                cumulative_l1: disc_l1,
+            });
+        }
+    }
+
+    Ok(Propagation {
+        sum,
+        journal,
+        commuting_skips: skips,
+        branchings,
+        discarded_l1: disc_l1,
+        discarded_l2: disc_l2,
+        peak_terms: peak,
+        hit_cap,
+    })
+}
+
+impl Propagation {
+    /// Re-run from the latest checkpoint at or before the step the
+    /// budget was blown at, with a tighter threshold — the progressive
+    /// half of the method.
+    ///
+    /// The prefix of the walk before that checkpoint is not repeated, so
+    /// a sharper answer costs only the tail. Returns the refined
+    /// propagation and the number of steps actually re-walked.
+    pub fn refine_from(
+        &self,
+        rotations: &[Rotation],
+        step: usize,
+        cfg: &Config,
+    ) -> Result<(Propagation, usize)> {
+        let Some(cp) = self.journal.checkpoint_at_or_before(step) else {
+            // no checkpoint: an honest full re-run
+            let p = propagate_from_state(&self.observable_seed(), rotations, 0, 0.0, cfg)?;
+            let walked = rotations.len();
+            return Ok((p, walked));
+        };
+        let walked = rotations.len() - cp.step;
+        let p = propagate_from_state(&cp.sum, rotations, cp.step, cp.cumulative_l1, cfg)?;
+        Ok((p, walked))
+    }
+
+    /// The sum as it stood at walk step 0, if a checkpoint held it.
+    fn observable_seed(&self) -> PauliSum {
+        self.journal
+            .checkpoints
+            .first()
+            .map(|c| c.sum.clone())
+            .unwrap_or_else(PauliSum::zero)
+    }
+}
+
+/// Continue a walk from a checkpointed sum at `start_step`, carrying the
+/// error already accounted for.
+fn propagate_from_state(
+    sum0: &PauliSum,
+    rotations: &[Rotation],
+    start_step: usize,
+    carried_l1: f64,
+    cfg: &Config,
+) -> Result<Propagation> {
+    let remaining = rotations.len().saturating_sub(start_step);
+    let tail: Vec<Rotation> = rotations[..remaining].to_vec();
+    let mut p = propagate(sum0, &tail, cfg)?;
+    p.discarded_l1 += carried_l1;
+    for s in p.journal.steps.iter_mut() {
+        s.cumulative_l1 += carried_l1;
+    }
+    Ok(p)
+}
+
+// ── sharing one walk across an observable basis ──────────────────────
+
+/// What [`propagate_basis`] measured.
+#[derive(Debug, Clone)]
+pub struct BasisReport {
+    /// `Σ wᵢ⟨Pᵢ⟩` from the **single** shared walk — the quantity an
+    /// energy or a structure factor actually is.
+    pub total: f64,
+    /// The certified bound on `total`.
+    pub error_bound: f64,
+    /// Per-observable values, only when asked for: each costs its own
+    /// walk, so the default is not to.
+    pub breakdown: Option<Vec<f64>>,
+    /// Terms at the end of the shared walk.
+    pub terms: usize,
+    /// Peak terms during the shared walk.
+    pub peak_terms: usize,
+    /// Peak terms summed over separate per-observable walks — the cost
+    /// the sharing avoids.
+    pub separate_peak_total: Option<usize>,
+    /// Gates the shared walk skipped as commuting.
+    pub commuting_skips: usize,
+    /// The shared walk's journal.
+    pub journal: Journal,
+}
+
+impl BasisReport {
+    /// How much the shared walk saved over walking each observable
+    /// separately, in peak terms. `None` unless the breakdown was
+    /// computed (there is nothing to compare against otherwise).
+    pub fn sharing_factor(&self) -> Option<f64> {
+        self.separate_peak_total
+            .map(|sep| sep as f64 / self.peak_terms.max(1) as f64)
+    }
+}
+
+/// Propagate a whole weighted observable basis through **one** walk.
+///
+/// Conjugation is linear, so `Σ wᵢPᵢ` propagates as a single sum and the
+/// like terms produced by different observables **merge**. That merging
+/// is the saving, and it is large precisely when the observables overlap
+/// — which is the normal case: an energy `H = Σ cᵢPᵢ` is a sum of local
+/// terms on the same lattice, and their backward cones are nearly the
+/// same cone.
+///
+/// `breakdown` costs one extra walk per observable and is off by
+/// default; the total is what a shared walk is for.
+pub fn propagate_basis(
+    observables: &[PauliSum],
+    weights: &[f64],
+    rotations: &[Rotation],
+    cfg: &Config,
+    breakdown: bool,
+) -> Result<BasisReport> {
+    if observables.len() != weights.len() {
+        return Err(Error::InvalidState(format!(
+            "{} observables but {} weights",
+            observables.len(),
+            weights.len()
+        )));
+    }
+    if observables.is_empty() {
+        return Err(Error::InvalidState("no observables".into()));
+    }
+    let mut combined = PauliSum::zero();
+    for (o, &w) in observables.iter().zip(weights) {
+        for (k, c) in o.terms() {
+            combined.add(k, c * C64::new(w, 0.0));
+        }
+    }
+    let shared = propagate(&combined, rotations, cfg)?;
+
+    let (values, separate_peak) = if breakdown {
+        let mut vals = Vec::with_capacity(observables.len());
+        let mut peak_total = 0usize;
+        for (o, &w) in observables.iter().zip(weights) {
+            let p = propagate(o, rotations, cfg)?;
+            vals.push(w * p.expectation());
+            peak_total += p.peak_terms;
+        }
+        (Some(vals), Some(peak_total))
+    } else {
+        (None, None)
+    };
+
+    Ok(BasisReport {
+        total: shared.expectation(),
+        error_bound: shared.error_bound(),
+        breakdown: values,
+        terms: shared.sum.len(),
+        peak_terms: shared.peak_terms,
+        separate_peak_total: separate_peak,
+        commuting_skips: shared.commuting_skips,
+        journal: shared.journal,
+    })
+}
+
+/// The transverse-field Ising energy `H = −J Σ Z_k Z_{k+1} − h Σ X_k` as
+/// a weighted observable basis: `2n − 1` local terms sharing one lattice.
+pub fn tfim_energy_basis(n: usize, j: f64, h: f64) -> (Vec<PauliSum>, Vec<f64>) {
+    let mut obs = Vec::new();
+    let mut w = Vec::new();
+    for k in 0..n.saturating_sub(1) {
+        obs.push(PauliSum::zz(k, k + 1));
+        w.push(-j);
+    }
+    for k in 0..n {
+        obs.push(PauliSum::x(k));
+        w.push(-h);
+    }
+    (obs, w)
+}
+
+// ── a circuit family worth pointing it at ────────────────────────────
+
+/// One Trotter step of the transverse-field Ising model
+/// `H = −J Σ Z_k Z_{k+1} − h Σ X_k`, as Pauli rotations.
+///
+/// At `dt·J = dt·h = π/4` every rotation is Clifford and the sum never
+/// branches; anywhere else it does, which makes this the natural family
+/// for measuring how the cost tracks non-Cliffordness.
+pub fn tfim_trotter(n: usize, j: f64, h: f64, dt: f64, steps: usize) -> Vec<Rotation> {
+    let mut out = Vec::with_capacity(steps * (2 * n));
+    for _ in 0..steps {
+        for k in 0..n.saturating_sub(1) {
+            out.push(Rotation::rzz(k, k + 1, -2.0 * j * dt));
+        }
+        for k in 0..n {
+            out.push(Rotation::rx(k, -2.0 * h * dt));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_pauli_algebra_is_right() {
+        let x = (1u64, 0u64);
+        let z = (0u64, 1u64);
+        assert!(!commutes(x, z));
+        assert!(commutes(x, x));
+        assert!(commutes((1, 0), (2, 0)));
+        // X·Z = XZ with sign +1 in this basis
+        let (k, s) = pauli_mul(x, z);
+        assert_eq!(k, (1, 1));
+        assert_eq!(s, 1.0);
+        // Z·X = -XZ
+        let (k, s) = pauli_mul(z, x);
+        assert_eq!(k, (1, 1));
+        assert_eq!(s, -1.0);
+        // the Hermitian axis for (1,1) is i·XZ = Y
+        assert_eq!(axis_operator_phase((1, 1)), C64::new(0.0, 1.0));
+    }
+
+    #[test]
+    fn rz_rotates_x_into_minus_y() {
+        // R† X R = cos θ X − sin θ Y for R = exp(−iθZ/2)
+        let theta = 0.37;
+        let p = propagate(
+            &PauliSum::x(0),
+            &[Rotation::rz(0, theta)],
+            &Config {
+                threshold: 0.0,
+                max_terms: None,
+                checkpoint_every: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(p.sum.len(), 2);
+        let mut got_x = C64::new(0.0, 0.0);
+        let mut got_xz = C64::new(0.0, 0.0);
+        for (k, c) in p.sum.terms() {
+            if k == (1, 0) {
+                got_x = c;
+            }
+            if k == (1, 1) {
+                got_xz = c;
+            }
+        }
+        assert!((got_x.re - theta.cos()).abs() < 1e-14);
+        // −sin θ · Y = −sin θ · i·XZ, so the XZ coefficient is −i sin θ
+        assert!((got_xz - C64::new(0.0, -theta.sin())).norm() < 1e-14);
+    }
+
+    #[test]
+    fn a_commuting_gate_is_free() {
+        let cfg = Config {
+            threshold: 0.0,
+            max_terms: None,
+            checkpoint_every: 0,
+        };
+        let p = propagate(&PauliSum::z(0), &[Rotation::rz(0, 0.5)], &cfg).unwrap();
+        assert_eq!(p.sum.len(), 1);
+        assert_eq!(p.commuting_skips, 1);
+        assert_eq!(p.branchings, 0);
+        assert!((p.expectation() - 1.0).abs() < 1e-15);
+    }
+}
