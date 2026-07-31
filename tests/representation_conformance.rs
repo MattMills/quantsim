@@ -64,7 +64,14 @@ fn braided_conforms_over_the_whole_registry() {
     );
     assert_eq!(report.sampling_mismatches, 0);
     assert_eq!(report.collapse_violations, 0);
-    assert_eq!(report.max_amplitude_deviation, 0.0);
+    // Not exactly 0.0 like phase-field: braided now evolves through the
+    // Clifford frame's tableau + sparse arithmetic rather than replaying
+    // exact matrices, so it carries the frame's numerics.
+    assert!(
+        report.max_amplitude_deviation < 1e-14,
+        "braided deviation {:.3e}",
+        report.max_amplitude_deviation
+    );
 }
 
 // ── the families that hold each assumption, and the ones that break it ──
@@ -99,16 +106,13 @@ fn iqp_full(n: usize) -> Circuit {
 }
 
 /// A pure braid family: nothing but Majorana generators, at fixed depth.
+/// Each is a weight-≤2 local Clifford gate, at any width.
 fn braid_family(n: usize) -> Circuit {
-    let gens = Realization::Majorana.generators(n).unwrap();
-    let all: Vec<usize> = (0..n).collect();
+    let count = Realization::Majorana.generator_count(n);
     let mut c: Circuit = Circuit::new(n);
     for k in 0..40 {
-        c.raw(
-            format!("sigma{}", k % gens.len()),
-            gens[k % gens.len()].clone(),
-            all.clone(),
-        );
+        let (g, t) = Realization::Majorana.local_gate(k % count, n).unwrap();
+        c.raw(format!("sigma{}", k % count), g, t);
     }
     c
 }
@@ -176,45 +180,78 @@ fn the_phase_field_axis_certifies_the_iqp_core_and_fails_on_the_full_circuit() {
 }
 
 #[test]
-fn the_braided_axis_is_flat_in_memory_and_exponential_in_time() {
-    let scan = advantage_scan("braid", braid_family, &[4, 5, 6, 7]);
+fn the_braided_axis_certifies_a_braid_family_at_every_width() {
+    // Widths no dense matrix reaches: the generators are weight-≤2
+    // Clifford rotations, so nothing here builds a 2^n object.
+    let scan = advantage_scan("braid", braid_family, &[8, 12, 16, 20]);
     let br = axis(&scan, "braided");
-    // the word is the storage, and it does not grow with the width
+
     assert!(
-        matches!(br.law, Some(Law::Constant)),
+        matches!(br.law, Some(Law::Constant) | Some(Law::Polynomial { .. })),
         "braided memory on a braid family: {:?}",
         br.law
     );
-    let costs: Vec<usize> = br.costs.iter().flatten().copied().collect();
-    assert_eq!(costs.len(), 4, "braided hit a wall: {:?}", br.costs);
     assert!(
-        costs.iter().all(|&c| c == costs[0]),
-        "braided costs should be identical across widths: {costs:?}"
-    );
-    // but replaying the word to read an amplitude is exponential, so the
-    // atlas must NOT certify it
-    assert!(
-        matches!(br.time_law, Some(Law::Exponential { .. })),
+        matches!(br.time_law, Some(Law::Constant) | Some(Law::Polynomial { .. })),
         "braided time on a braid family: {:?}",
         br.time_law
     );
-    if let Verdict::Classical { via } = &scan.verdict {
-        assert!(
-            !via.iter().any(|v| v == "braided"),
-            "braided must not certify: it is memory-flat but time-exponential"
-        );
+    // both sub-exponential while exact ⇒ the atlas certifies it
+    match &scan.verdict {
+        Verdict::Classical { via } => assert!(
+            via.iter().any(|v| v == "braided"),
+            "braided should certify a braid family, verdict via {via:?}"
+        ),
+        other => panic!("a Clifford braid family should be classical, got {other:?}"),
     }
 
-    // the shared alphabet is exponential and is reported, not hidden
-    let mut alphabet = Vec::new();
-    for n in [4usize, 5, 6] {
-        let s = BraidedState::new(n).unwrap();
-        assert!(s.memory_bytes() < 200, "empty word should be tiny");
-        alphabet.push(s.alphabet_bytes());
+    // and it is vastly below dense, which is exponential on the same family
+    let dense = axis(&scan, "dense");
+    assert!(matches!(dense.law, Some(Law::Exponential { .. })));
+    let br_max = br.costs.iter().flatten().max().unwrap();
+    let dense_max = dense.costs.iter().flatten().max().unwrap();
+    assert!(
+        br_max * 100 < *dense_max,
+        "braided {br_max} vs dense {dense_max} at width 20"
+    );
+}
+
+#[test]
+fn the_braided_footprint_is_flat_in_width_and_the_support_stays_one() {
+    let run = |qubits: usize, steps: usize| {
+        let mut s = BraidedState::new(qubits).unwrap();
+        let count = Realization::Majorana.generator_count(qubits);
+        for k in 0..steps {
+            let (g, t) = Realization::Majorana.local_gate(k % count, qubits).unwrap();
+            s.apply(&g, &t).unwrap();
+        }
+        s
+    };
+    // A 7.9× wider register for a few percent more memory, with the
+    // stored support pinned at 1 and no flush anywhere.
+    let narrow = run(8, 200);
+    let wide = run(63, 200);
+    for s in [&narrow, &wide] {
+        assert_eq!(s.stored_support(), 1);
+        assert_eq!(s.frame_stats().flushes, 0);
+        assert!(s.is_pure_braid());
     }
-    for w in alphabet.windows(2) {
-        assert!(w[1] > 4 * w[0], "alphabet must grow ~4^n: {alphabet:?}");
+    assert!(
+        (wide.memory_bytes() as f64) < 1.3 * narrow.memory_bytes() as f64,
+        "width 8 → 63: {} → {} bytes",
+        narrow.memory_bytes(),
+        wide.memory_bytes()
+    );
+
+    // The Fibonacci realization is universal, so the frame cannot absorb
+    // it — the Gottesman–Knill boundary, from the braid-group side.
+    let mut fib = BraidedState::with_realization(1, Realization::Fibonacci).unwrap();
+    let (g, t) = Realization::Fibonacci.local_gate(0, 1).unwrap();
+    for _ in 0..20 {
+        fib.apply(&g, &t).unwrap();
     }
+    assert!(fib.is_pure_braid(), "Fibonacci generators are still generators");
+    assert!(BraidedState::with_realization(3, Realization::Fibonacci).is_err());
 }
 
 // ── the class boundaries, stated as behaviour ────────────────────────
@@ -266,44 +303,42 @@ fn the_phase_field_class_is_exactly_where_it_says_it_is() {
 
 #[test]
 fn the_braided_class_is_exactly_the_realization_generators() {
-    let n = 3;
-    let gens = Realization::Majorana.generators(n).unwrap();
-    let all: Vec<usize> = (0..n).collect();
+    let n = 12;
+    let count = Realization::Majorana.generator_count(n);
+    assert_eq!(count, 2 * n - 1);
     let mut s = BraidedState::new(n).unwrap();
     assert_eq!(s.realization(), Realization::Majorana);
 
-    for k in 0..100 {
-        s.apply(&gens[k % gens.len()], &all).unwrap();
-    }
-    assert!(s.is_word());
-    assert_eq!(s.word().unwrap().len(), 100);
-    assert!(!s.is_materialized(), "no amplitude was asked for");
-
-    // the word replays to exactly the dense evolution
+    // 300 generators at width 12 — no dense matrix exists anywhere here
     let mut d = DenseState::<C64>::new(n).unwrap();
-    for k in 0..100 {
-        d.apply(&gens[k % gens.len()], &all).unwrap();
+    for k in 0..300 {
+        let (g, t) = Realization::Majorana.local_gate(k % count, n).unwrap();
+        s.apply(&g, &t).unwrap();
+        d.apply(&g, &t).unwrap();
     }
+    assert!(s.is_pure_braid());
+    assert_eq!(s.word().len(), 300);
+    assert_eq!(s.stored_support(), 1);
+
     let dev = max_amplitude_deviation(&s as &dyn Backend<C64>, &d as &dyn Backend<C64>);
     assert!(dev < 1e-12, "braided word vs dense: {dev:.3e}");
-    assert!(s.is_materialized(), "reading amplitudes materializes");
 
-    // dropping the cache returns to word-only storage
-    s.forget_amplitudes();
-    assert!(!s.is_materialized());
+    // canonicalizing drops the word; the tableau still holds the element
+    s.canonicalize();
+    assert!(s.word().is_empty());
+    let dev = max_amplitude_deviation(&s as &dyn Backend<C64>, &d as &dyn Backend<C64>);
+    assert!(dev < 1e-12, "canonicalized braided vs dense: {dev:.3e}");
 
-    // anything outside the generator set leaves the class
-    let mut t = BraidedState::new(n).unwrap();
+    // anything outside the generator set is recorded as an escape, and
+    // the frame still evolves it correctly
+    let mut t = BraidedState::new(4).unwrap();
     let reg = GateRegistry::<C64>::standard();
-    let mut c: Circuit = Circuit::new(n);
-    c.h(0);
+    let mut c: Circuit = Circuit::new(4);
+    c.h(0).t(1).cx(0, 2);
     c.bind(&reg).unwrap().run(&mut t).unwrap();
-    assert!(!t.is_word());
-    assert_eq!(t.escapes(), 1);
+    assert_eq!(t.escapes(), 3);
+    assert!(!t.is_pure_braid());
 
-    // the Fibonacci realization exists only at its native width
-    assert!(BraidedState::with_realization(1, Realization::Fibonacci).is_ok());
-    assert!(BraidedState::with_realization(3, Realization::Fibonacci).is_err());
     assert!(BraidedState::new(0).is_err());
 }
 
@@ -343,10 +378,9 @@ fn the_new_representations_take_part_in_backend_selection() {
         de.memory_bytes
     );
 
-    // Past its structural width the braided realization refuses, and the
-    // harness records the refusal instead of a wrong answer — the same
-    // contract every other representation's wall has.
-    let wide = Workload::new("iqp-core-10", || iqp_core(10));
+    // No structural width limit any more: the generators are weight-≤2
+    // Clifford rotations, so the wider workload runs on every backend.
+    let wide = Workload::new("iqp-core-14", || iqp_core(14));
     let wide_report = compare_backends(
         &sim,
         &[wide],
@@ -354,15 +388,17 @@ fn the_new_representations_take_part_in_backend_selection() {
         &BenchConfig::default(),
     )
     .unwrap();
-    let br = wide_report.record("iqp-core-10", "braided").unwrap();
-    assert!(
-        br.error.is_some(),
-        "braided should refuse 20 strands, not answer"
-    );
-    assert!(br.error.as_ref().unwrap().contains("strand"));
-    // while the others answer normally
-    for name in ["dense", "phase-field"] {
-        let r = wide_report.record("iqp-core-10", name).unwrap();
+    for name in ["dense", "phase-field", "braided"] {
+        let r = wide_report.record("iqp-core-14", name).unwrap();
         assert!(r.error.is_none(), "{name} errored: {:?}", r.error);
     }
+    // and at width 14 the phase field is still tiny where dense is not
+    let pf14 = wide_report.record("iqp-core-14", "phase-field").unwrap();
+    let de14 = wide_report.record("iqp-core-14", "dense").unwrap();
+    assert!(
+        pf14.memory_bytes * 50 < de14.memory_bytes,
+        "phase-field {} vs dense {} at width 14",
+        pf14.memory_bytes,
+        de14.memory_bytes
+    );
 }

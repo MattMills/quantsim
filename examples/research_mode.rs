@@ -76,6 +76,10 @@ fn main() -> Result<()> {
         .register("phase-field", |n| Ok(Box::new(PhaseFieldState::new(n)?)))?;
     sim.backends_mut()
         .register("braided", |n| Ok(Box::new(BraidedState::new(n)?)))?;
+    sim.backends_mut()
+        .register("clifford-framed", |n| {
+            Ok(Box::new(CliffordFramedState::<C64>::new(n)?))
+        })?;
 
     // ── Step 1: conformance before benchmarks ─────────────────────────────
     // Every standard representation must pass the registry-wide sweep —
@@ -128,8 +132,7 @@ fn main() -> Result<()> {
     // ── The two research representations, on the families they assume ─────
     // phase-field's assumption is a diagonal core over an affine subcube;
     // braided's is that the circuit is a word in the realization's
-    // generators. Both are priced here against dense on a width all of
-    // them can hold (braided derives 2n Majorana strands, capped at 16).
+    // generators, which are weight-≤2 Clifford rotations at any width.
     let iqp_core = |n: usize| {
         let mut c: Circuit = Circuit::new(n);
         for q in 0..n {
@@ -145,39 +148,46 @@ fn main() -> Result<()> {
         }
         c
     };
+    // Every Majorana braid generator is a weight-≤2 local Clifford gate,
+    // so this family runs at any width.
     let braid = |n: usize| {
-        let gens = Realization::Majorana.generators(n).unwrap();
-        let all: Vec<usize> = (0..n).collect();
+        let count = Realization::Majorana.generator_count(n);
         let mut c: Circuit = Circuit::new(n);
         for k in 0..40 {
-            c.raw(
-                format!("sigma{}", k % gens.len()),
-                gens[k % gens.len()].clone(),
-                all.clone(),
-            );
+            let (g, t) = Realization::Majorana.local_gate(k % count, n).unwrap();
+            c.raw(format!("sigma{}", k % count), g, t);
         }
         c
     };
     let research = compare_backends(
         &sim,
         &[
-            Workload::from_circuit("iqp-core-8", iqp_core(8)),
-            Workload::from_circuit("iqp-full-8", {
-                let mut c = iqp_core(8);
-                for q in 0..8 {
+            Workload::from_circuit("iqp-core-14", iqp_core(14)),
+            Workload::from_circuit("iqp-full-14", {
+                let mut c = iqp_core(14);
+                for q in 0..14 {
                     c.h(q);
                 }
                 c
             }),
-            Workload::from_circuit("braid-word-8", braid(8)),
+            Workload::from_circuit("braid-word-20", braid(20)),
         ],
-        &["dense", "sparse", "mps", "phase-field", "braided"],
+        &["dense", "sparse", "mps", "phase-field", "braided", "clifford-framed"],
         &BenchConfig::default(),
     )?;
     println!("\n{research}");
     println!(
         "(iqp-core holds phase-field's assumption; iqp-full breaks it with the\n \
-         closing Hadamard layer; braid-word-8 is a word in braided's generators)"
+         closing Hadamard layer; braid-word-20 is a word in braided's\n \
+         generators, every one of them a weight-≤2 Clifford rotation)"
+    );
+    println!(
+        "(read the memory column here with its cause in mind: verifying against\n \
+         the dense reference extracts ALL 2^n amplitudes, which flushes a\n \
+         stabilizer frame — braided and clifford-framed are priced AFTER that\n \
+         flush. The atlas, which does not extract, measures braided at 8 KiB\n \
+         flat from width 8 to 20. Extracting 2^n numbers was never a\n \
+         Gottesman-Knill capability; the time column is the honest gain.)"
     );
     println!(
         "(mera skips ghz-20: a root-crossing chain pays the 2^20 block — the\n rung-1 cost path updates on the roadmap remove; see examples/coarse_register)"

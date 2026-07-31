@@ -982,25 +982,26 @@ bracket's order from measurement, `realized_rank` measuring the collapse
 onto `so(6)`, and `RecursionLedger` with `projective_order` as the
 decisive per-path closure test. Remaining work:
 
-- **A boundary-atlas axis — SHIPPED.** `BraidedState`
-  (`src/backend/braided_state.rs`) stores the word and materializes on
-  demand; it is registered, passes `verify_backend` at 0.0 deviation,
-  and appears in `resource_profile`. The measurement came out as the
-  split rather than the win: memory Constant on a pure-braid family,
-  wall-clock exponential, so the atlas correctly declines to certify it.
-  What is still open is the *closed-orbit* form — for a finite image
-  (Ising) the state is one of `k` group elements, so an enumerated
-  orbit table would make amplitude lookup `O(1)` and put the time axis
-  inside the bound too. That needs the group enumeration
-  `orbit_closure` already performs to be cached and keyed, and it only
-  helps where the orbit closes, which is exactly the measured
-  distinction.
-- **Larger strand counts.** `MAX_STRANDS = 12` is structural (the
-  Majorana matrices are `2^{strands/2}`), and `orbit_closure` at 8
-  strands is a BFS over a group whose order grows fast. Walking the
-  closure with a Clifford tableau instead of dense matrices would lift
-  it — the Ising image *is* inside the Clifford group, which the crate
-  already represents in `size²`.
+- **A boundary-atlas axis — SHIPPED, and it certifies.** `BraidedState`
+  (`src/backend/braided_state.rs`) holds the word as the address and a
+  Clifford frame as the state, because every Majorana generator is a
+  weight-≤2 Pauli rotation (`majorana_local_gate`, verified against the
+  dense generators at every width and basis state). It is registered,
+  conforms at 8.0e-16, and on a braid family the atlas reads it
+  `mem Constant, time Constant` and names it in the verdict. What is
+  still open: the footprint is linear in *depth* because the frame keeps
+  a replay log. The tableau alone determines the state, so a frame
+  variant that discards the log — accepting that it can no longer flush
+  by replay — would make the representation depth-independent as well as
+  width-flat. That is a change to `CliffordFramedState`, not to this
+  backend.
+- **Larger strand counts for the group-theory measurements.**
+  `MAX_STRANDS = 16` bounds only `majorana_generators`, the dense
+  matrices `orbit_closure` and `realized_rank` walk — the *backend* has
+  no such limit and runs at 63 qubits (126 strands). Walking the closure
+  with a Clifford tableau instead of dense matrices would lift the
+  measurement side too, using exactly the local-gate form the backend
+  already has.
 - **The Artin action's cost.** `BraidWord::equals` compares free-group
   images, which grow with the word; it is exact and it is not cheap.
   Bringing in a normal form (Garside, or the handle reduction the

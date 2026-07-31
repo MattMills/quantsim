@@ -354,19 +354,24 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
         },
     ));
 
-    // The braided representation: cost is the braid word's length while
-    // the circuit stays inside the realization's generators. Its wall is
-    // the *time* axis, not memory — reading an amplitude replays the
-    // word — and the atlas certifying only when both are sub-exponential
-    // is exactly what should refuse it.
+    // The braided representation: the word names the state and a
+    // stabilizer frame holds it, because every Majorana braid generator
+    // is a weight-≤2 Clifford rotation. Cost is the tableau plus the
+    // word, at any width.
     axes.push(probe(
         "braided",
         crate::backend::BraidedState::new,
         circuit,
         &reg,
-        |s: &crate::backend::BraidedState| match s.word() {
-            Some(w) => (format!("word length {}", w.len()), true),
-            None => (format!("materialized ({} escapes)", s.escapes()), true),
+        |s: &crate::backend::BraidedState| {
+            (
+                format!(
+                    "word {}, stored support {}",
+                    s.word().len(),
+                    s.stored_support()
+                ),
+                true,
+            )
         },
     ));
 

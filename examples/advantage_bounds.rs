@@ -72,8 +72,10 @@ fn main() -> Result<()> {
                    over an affine subcube (an IQP *core*; the closing
                    Hadamard layer is exactly where the bet fails)
   braided          the circuit is a word in a braid realization's
-                   generators — flat in memory, but replaying the word to
-                   read an amplitude is exponential, so it never certifies");
+                   generators. Every Majorana generator is a weight-≤2
+                   Clifford rotation (γ_2k γ_2k+1 = iZ_k,
+                   γ_2k+1 γ_2k+2 = iX_k X_k+1), so the frame absorbs it:
+                   flat in BOTH memory and time on a braid family");
     println!("  each is efficient exactly while its bet holds; the scan below measures");
     println!("  which bet holds per family, and classifies every axis's growth law.\n");
 

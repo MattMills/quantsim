@@ -759,26 +759,35 @@ measure rather than hide.
   exponential (base 1.96) and drops out of the verdict, because `h` on an
   already-free qubit is the interference step. An eighth-turn `rz` stays
   in class; `rz(0.371)` does not.
-  **`braided`** holds the state as a braid word over a realization's
-  generators and materializes only when an amplitude is asked for. It
-  also conforms at **0.0** deviation, and on a pure-braid family the
-  atlas measures the split the module predicted: memory **Constant** —
-  280 bytes at every width — and time **Exponential** at base 5.6. Since
-  the atlas certifies only when both are sub-exponential, it correctly
-  refuses to certify: the representation trades one exponential for
-  another, and saying so is the point of putting it in. Two further
-  honest costs are reported rather than buried — the generator alphabet
-  is `(strands−1)·4^n` (28 KiB at 4 qubits, 15 MiB at 8), which is why it
-  is derived lazily and never charged to `memory_bytes`; and past 16
-  strands the realization **refuses**, which `compare_backends` records
-  as a measured error instead of a wrong answer.
-  One thing the measurement contradicted: the Majorana generators are
-  Clifford, so `clifford-framed` ought to hold these circuits cheaply,
-  and on this family it reads exponential too (base 1.69). The frame's
-  assumption is about the **gate set**, not the unitary — generators
-  arriving as raw matrices are outside what it can exploit. That is a
-  limitation of the frame surfaced by adding the axis, not a point in
-  the braided representation's favour.
+  **`braided`** holds the braid word as the address and a stabilizer
+  frame as the state. The mechanism is one derivation: under
+  Jordan–Wigner the Z-strings cancel inside a neighbouring Majorana pair,
+  so `γ_2k γ_2k+1 = iZ_k` and `γ_2k+1 γ_2k+2 = iX_k X_k+1`, making every
+  generator `σ_i = exp(iπ/4 · P)` for a Pauli `P` of weight **one or
+  two** — verified against the dense generators at every width and basis
+  state. A `±π/2` Pauli rotation is Clifford, so the frame absorbs it
+  with zero amplitude work.
+  It conforms at 8.0e-16, and on a braid family the atlas reads it
+  **`mem Constant, time Constant`** and names it in the verdict —
+  `Classical { via: ["mps", "braided", "clifford-framed"] }` — at 7877 →
+  8453 bytes across widths 8 → 20 where dense runs 4128 → 16777248. Width
+  8 → 63 costs 34837 → 38677 bytes, a 7.9× wider register for 11% more
+  memory, with the stored support pinned at **1** and **zero flushes**.
+  Two honest caveats. The footprint is *linear in the depth* — ~170 bytes
+  per absorbed gate, which is the frame's replay log, not the state;
+  `canonicalize` drops the word (sound, since the tableau already holds
+  the group element it spelled) but the log is the frame's own. And
+  `compare_backends` prices it *after* a flush, because verifying against
+  dense extracts all `2^n` amplitudes — never a Gottesman–Knill
+  capability. The time column is the honest gain there: 1963× faster than
+  dense on braid-word-20.
+  What this says about the representation is the point: the braided
+  encoding **is** efficient, and its efficiency is the Clifford island
+  reached from the braid-group side. The module measures the Majorana
+  image to be finite (192 elements at 4 strands, 23040 at 6, both
+  walked); the backend spends that finiteness. Fibonacci braiding is
+  universal, its generators are not Clifford, and the frame cannot absorb
+  them — the same boundary, stated twice.
 
 - **Interference as a congruence** ([`padic`](src/padic.rs)) — a phase
   lives in `ℤ/M` where `M` is the modulus the source geometry supplies,

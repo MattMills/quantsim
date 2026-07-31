@@ -1003,6 +1003,56 @@ pub fn majorana_bilinears(strands: usize) -> Result<Vec<GateMatrix<C64>>> {
     Ok((0..strands - 1).map(|i| g[i].matmul(&g[i + 1])).collect())
 }
 
+/// One Majorana braid generator as a **local Clifford gate**: the qubits
+/// it acts on and its matrix.
+///
+/// This is the fact that makes the braided representation efficient, and
+/// it is a two-line derivation the tests check against the dense
+/// generators. Under Jordan–Wigner the Z-strings cancel inside a
+/// neighbouring Majorana pair:
+///
+/// ```text
+/// γ_{2k} γ_{2k+1}   = X_k Y_k                  = i Z_k
+/// γ_{2k+1} γ_{2k+2} = Y_k Z_k X_{k+1}          = i X_k X_{k+1}
+/// ```
+///
+/// so `σ_i = (1 + γ_iγ_{i+1})/√2 = exp(iπ/4 · P)` for a Pauli `P` of
+/// weight **1 or 2** — never the `4^n` dense matrix
+/// [`majorana_generators`] builds for the group-theory measurements.
+/// Every generator is therefore describable in `O(1)` and applicable to
+/// a stabilizer tableau in `O(n²)`, at any width.
+pub fn majorana_local_gate(index: usize, qubits: usize) -> Result<(GateMatrix<C64>, Vec<usize>)> {
+    if qubits == 0 || index + 1 >= 2 * qubits {
+        return Err(Error::InvalidState(format!(
+            "generator σ_{index} needs more than {qubits} qubits ({} Majoranas)",
+            2 * qubits
+        )));
+    }
+    let k = index / 2;
+    let r = std::f64::consts::FRAC_1_SQRT_2;
+    if index % 2 == 0 {
+        // exp(iπ/4 Z_k) = diag(e^{iπ/4}, e^{-iπ/4})
+        let m = GateMatrix::<C64>::from_vec(
+            2,
+            vec![
+                C64::new(r, r),
+                C64::new(0.0, 0.0),
+                C64::new(0.0, 0.0),
+                C64::new(r, -r),
+            ],
+        )?;
+        Ok((m, vec![k]))
+    } else {
+        // exp(iπ/4 X_k X_{k+1}) = (I + i X⊗X)/√2
+        let mut m = GateMatrix::<C64>::zeros(4)?;
+        for a in 0..4 {
+            m.set(a, a, C64::new(r, 0.0));
+            m.set(a, 3 - a, m.get(a, 3 - a) + C64::new(0.0, r));
+        }
+        Ok((m, vec![k, k + 1]))
+    }
+}
+
 /// The 2-dimensional Fibonacci-anyon representation of `B_3`:
 /// `σ_1 = diag(e^{−4πi/5}, e^{3πi/5})` and `σ_2 = F σ_1 F†` with the
 /// golden-ratio `F`-matrix. Its image is dense in `PSU(2)` — universal —
@@ -1730,6 +1780,37 @@ mod tests {
                 )
                 .unwrap();
                 assert!(a.equals(&b), "braid relation failed at {i} on {n} strands");
+            }
+        }
+    }
+
+    #[test]
+    fn local_gates_reproduce_the_dense_generators() {
+        for qubits in 1..=4usize {
+            let dense = majorana_generators(2 * qubits).unwrap();
+            for (i, g) in dense.iter().enumerate() {
+                let (local, targets) = majorana_local_gate(i, qubits).unwrap();
+                assert!(
+                    local.is_unitary(1e-14),
+                    "σ_{i} local gate is not unitary at {qubits} qubits"
+                );
+                // embed the local gate on `targets` and compare
+                let mut st = DenseState::<C64>::new(qubits).unwrap();
+                let mut ref_st = DenseState::<C64>::new(qubits).unwrap();
+                let all: Vec<usize> = (0..qubits).collect();
+                for basis in 0..(1u64 << qubits) {
+                    st.load(&[(basis, C64::new(1.0, 0.0))]).unwrap();
+                    ref_st.load(&[(basis, C64::new(1.0, 0.0))]).unwrap();
+                    st.apply(&local, &targets).unwrap();
+                    ref_st.apply(g, &all).unwrap();
+                    for j in 0..(1u64 << qubits) {
+                        let d = (st.amplitude(j) - ref_st.amplitude(j)).norm();
+                        assert!(
+                            d < 1e-13,
+                            "σ_{i} on {qubits} qubits, basis {basis}, entry {j}: {d:.3e}"
+                        );
+                    }
+                }
             }
         }
     }
