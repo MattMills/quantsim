@@ -106,7 +106,7 @@ fn a_family_ceiling_can_be_far_narrower_than_the_construction_ceiling() {
     // refusal in seconds rather than after this machine has tried to
     // store 2^24 lattice points. Nothing global is touched, so the rest
     // of the suite runs unaffected.
-    let layer = guard::with_time_budget(std::time::Duration::from_secs(6), || {
+    let layer = guard::with_time_budget(std::time::Duration::from_secs(3), || {
         width_ceiling(&sim, "e8-constellation", "h-layer", h_layer, &widths)
     });
     assert!(

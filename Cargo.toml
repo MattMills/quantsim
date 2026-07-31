@@ -25,3 +25,14 @@ harness = false
 
 [profile.bench]
 debug = true
+
+# The tests are numerics: an unoptimized build spends its time in float
+# loops inside the library, not in the assertions. Optimizing the dev and
+# test profiles keeps `debug_assert!` and overflow checks on — so nothing
+# a test can catch is switched off — while cutting the suite's wall time
+# by more than an order of magnitude.
+[profile.dev]
+opt-level = 2
+
+[profile.test]
+opt-level = 2

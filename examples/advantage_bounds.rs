@@ -67,7 +67,15 @@ fn main() -> Result<()> {
     println!("  factored         entangled clusters stay small");
     println!("  mps              entanglement across linear cuts stays small");
     println!("  mera             entanglement across tree cuts stays small");
-    println!("  clifford-framed  non-Clifford content stays small");
+    println!("  clifford-framed  non-Clifford content stays small
+  phase-field      the circuit stays diagonal-with-root-of-unity entries
+                   over an affine subcube (an IQP *core*; the closing
+                   Hadamard layer is exactly where the bet fails)
+  braided          the circuit is a word in a braid realization's
+                   generators. Every Majorana generator is a weight-≤2
+                   Clifford rotation (γ_2k γ_2k+1 = iZ_k,
+                   γ_2k+1 γ_2k+2 = iX_k X_k+1), so the frame absorbs it:
+                   flat in BOTH memory and time on a braid family");
     println!("  each is efficient exactly while its bet holds; the scan below measures");
     println!("  which bet holds per family, and classifies every axis's growth law.\n");
 
@@ -180,6 +188,16 @@ fn main() -> Result<()> {
     match slow {
         Err(e) => println!("  mera ghz-30 under the guard (2 s budget armed): {e}"),
         Ok(_) => println!("  mera ghz-30 under the guard (2 s budget armed): finished"),
+    }
+    // A profile RECORDS a wall instead of failing on it — the measurement
+    // the atlas is built on, and too slow to belong in the test suite.
+    let profile = resource_profile(&library::ghz(34));
+    for a in &profile.axes {
+        match (&a.cost, &a.note) {
+            (Some(c), _) => println!("  ghz-34 profile: {:<10} {c} ({})", a.axis, a.parameter),
+            (None, Some(n)) => println!("  ghz-34 profile: {:<10} walled — {n}", a.axis),
+            (None, None) => println!("  ghz-34 profile: {:<10} walled", a.axis),
+        }
     }
     println!("  (whichever wall arrives first — the measured memory refusal or the");
     println!("  armed deadline — is the one reported; nothing is skipped on arithmetic.)");

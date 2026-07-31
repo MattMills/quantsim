@@ -63,13 +63,16 @@
 #![warn(missing_docs)]
 
 pub mod backend;
+pub mod blocks;
 pub mod bounds;
+pub mod braided;
 pub mod bundle;
 pub mod causal;
 pub mod characterize;
 pub mod circuit;
 pub mod closure;
 pub mod conformance;
+pub mod coupling;
 pub mod discovery;
 pub mod e8;
 pub mod error;
@@ -77,11 +80,13 @@ pub mod exact;
 pub mod gates;
 pub mod guard;
 pub mod harness;
+pub mod heisenberg;
 pub mod library;
 pub mod lift;
 pub mod math;
 pub mod memo;
 pub mod mixed;
+pub mod padic;
 pub mod phase;
 pub mod polarity;
 pub mod qudit;
@@ -107,10 +112,22 @@ pub use sim::Simulator;
 pub mod prelude {
     pub use crate::backend::{
         max_amplitude_deviation, pauli_expectation, AdaptiveState, ArityPolicy, Backend,
-        BackendRegistry, CliffordFrameStats, CliffordFramedState, DenseState, DeviceState,
+        BackendRegistry, BraidedState, CliffordFrameStats, CliffordFramedState, DenseState, DeviceState,
         DurationModel, FactoredState, FrameStats, FramedState, InterferenceRecord,
         InterferenceState, LatencyMap, MeraConfig, MeraState, MpsConfig, MpsState, PauliString,
-        PhysicalOp, SparseState, Topology,
+        PhaseFieldState, PhysicalOp, Realization, SparseState, Topology,
+    };
+    pub use crate::braided::{
+        bch_residual, bracket, cayley_ball, commutator_residual, distinct_orbits,
+        fibonacci_generators, free_lie_dim, lyndon_count, lyndon_factorization, majorana_bilinears,
+        majorana_generators, majorana_operators, mat_exp, mutual_encoding, necklace_count,
+        orbit_closure, projective_order, realized_rank, run_path, verify_relations, BraidRelations,
+        BraidWord, FreeWord, LedgerStep, MutualEncoding, OrbitClosure, PeriodicPath,
+        RealizedAlgebra, RecursionLedger, ResidualLaw,
+    };
+    pub use crate::blocks::{
+        preparation, propagate_blocked, propagate_blocked_with, BlockOutcome, BlockSolver,
+        BlockedReport, Preparation,
     };
     pub use crate::bounds::{
         advantage_scan, classify_law, fit_law, resource_profile, select_by_scaling, AxisProbe,
@@ -129,6 +146,10 @@ pub mod prelude {
     pub use crate::conformance::{
         random_registry_circuit, verify_backend, ConformanceConfig, ConformanceReport,
     };
+    pub use crate::coupling::{
+        coupling_of, decoupling_frame, propagate_engineered, scramble, support_blocks, Coupling,
+        DecouplingFrame, EngineeredReport, Stabilizer,
+    };
     pub use crate::discovery::{
         discover_stabilizers, stabilizes_state, state_deviation_up_to_phase, verify_transparent,
         Insertion, StabilizerCheck, TransparencyReport,
@@ -142,6 +163,11 @@ pub mod prelude {
         compare_backends, select_backend, BenchConfig, BenchmarkReport, SelectionCriterion,
         SelectionReport, Workload,
     };
+    pub use crate::heisenberg::{
+        auto_cut, cut_sweep, propagate, propagate_basis, propagate_bidirectional, propagate_factored,
+        tfim_energy_basis, tfim_trotter, AxisSpan, BasisReport, FactoredPauliSum, FactoredReport,
+        Forward, Journal, Meeting, PauliSum, Propagation, Rotation, Step, XSpan,
+    };
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};
@@ -151,6 +177,12 @@ pub mod prelude {
     pub use crate::mixed::{
         clock_d, cshift, fabric, fourier_d, shift_d, swap_dd, CompoundBackend, CompoundRegister,
         FabricReport, Interaction,
+    };
+    pub use crate::padic::{
+        best_rational, character, compare_diagonals, crt_phase_factors, factored_field,
+        fringe_period, geometry_radix, predicted_writes_per_point, resolve, sweep, Character,
+        CrtDiagonal, DiagonalComparison, FactoredField, GeometryRadix, JournalEntry, Order, Radix,
+        Resolution, Sweep, SweepReport, Wave, WaveSystem,
     };
     pub use crate::phase::{
         bit_group_elements, compare_degrees, phase_degree, DegreeComparison, PhaseDegree,

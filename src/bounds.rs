@@ -338,6 +338,43 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
             )
         },
     ));
+    // The phase-field representation: cost is the phase polynomial's
+    // monomial count, and the assumption is that the circuit stays
+    // diagonal-with-root-of-unity-entries over an affine subcube. A gate
+    // that leaves the class materializes and the axis honestly reads
+    // dense from then on.
+    axes.push(probe(
+        "phase-field",
+        crate::backend::PhaseFieldState::new,
+        circuit,
+        &reg,
+        |s: &crate::backend::PhaseFieldState| match s.monomials() {
+            Some(m) => (format!("{m} monomials"), true),
+            None => (format!("materialized ({} escapes)", s.escapes()), true),
+        },
+    ));
+
+    // The braided representation: the word names the state and a
+    // stabilizer frame holds it, because every Majorana braid generator
+    // is a weight-≤2 Clifford rotation. Cost is the tableau plus the
+    // word, at any width.
+    axes.push(probe(
+        "braided",
+        crate::backend::BraidedState::new,
+        circuit,
+        &reg,
+        |s: &crate::backend::BraidedState| {
+            (
+                format!(
+                    "word {}, stored support {}",
+                    s.word().len(),
+                    s.stored_support()
+                ),
+                true,
+            )
+        },
+    ));
+
     axes.push(probe(
         "clifford-framed",
         CliffordFramedState::<C64>::new,
