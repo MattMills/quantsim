@@ -80,6 +80,36 @@ fn main() -> Result<()> {
             r.sharing_factor().unwrap());
     }
 
+    println!("\n== factoring, rather than cutting ==\n");
+    println!("  A cut is positional. Factoring discovers where the circuit does NOT");
+    println!("  couple regions and holds the observable as a product of blocks, so");
+    println!("  k independent blocks cost the SUM of their sizes, not the product.\n");
+    println!("  circuit                blocks  stored  flat terms       merges   saving");
+    {
+        let n = 12;
+        let rots = tfim_trotter(n, 1.0, 0.7, 0.3, 4);
+        let f = propagate_factored((0, 1u64 << 6), &rots)?;
+        println!("  tfim n={n} (all coupled)     {:2}  {:6}  {:14}   {:6}   {:.1}×",
+            f.blocks.len(), f.peak_stored, f.peak_flat, f.merges, f.factor_saving());
+    }
+    for k in 4..=6usize {
+        let (bs, n) = (4usize, k * 4);
+        let mut rots = Vec::new();
+        for _ in 0..4 {
+            for b in 0..k { for q in b*bs..(b+1)*bs-1 { rots.push(Rotation::rzz(q, q+1, 0.3)); } }
+            for q in 0..n { rots.push(Rotation::rx(q, 0.44)); }
+        }
+        let mut z = 0u64;
+        for b in 0..k { z |= 1u64 << (b*bs + 1); }
+        let f = propagate_factored((0, z), &rots)?;
+        println!("  {k} blocks of {bs}, n={n:<2}        {:2}  {:6}  {:14}   {:6}   {:.0}×",
+            f.blocks.len(), f.peak_stored, f.peak_flat, f.merges, f.factor_saving());
+    }
+    println!("\n  Stored grows linearly in the block count, flat grows exponentially,");
+    println!("  and merges stay at 0 because a decoupled circuit never forces the");
+    println!("  partition to break. TFIM collapses to one block at exactly 1.0× —");
+    println!("  there is nothing to factor and the report says so.");
+
     println!("\n== both directions of time, meeting in the middle ==\n");
     let n = 14;
     let mut rots = Vec::new();

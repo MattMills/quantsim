@@ -398,6 +398,130 @@ fn refinement_restarts_from_a_checkpoint_and_improves_the_answer() {
     assert!(partial.discarded_l1 > 0.0, "carried error must be kept");
 }
 
+// ── factoring where the circuit does not couple ──────────────────────
+
+/// `k` decoupled blocks of `bs` qubits each: within a block the gates
+/// couple, between blocks nothing does.
+fn blocked_circuit(n: usize, bs: usize, layers: usize) -> Vec<Rotation> {
+    let mut rots = Vec::new();
+    for _ in 0..layers {
+        for b in 0..n / bs {
+            for k in b * bs..(b + 1) * bs - 1 {
+                rots.push(Rotation::rzz(k, k + 1, 0.3));
+            }
+        }
+        for k in 0..n {
+            rots.push(Rotation::rx(k, 0.44));
+        }
+    }
+    rots
+}
+
+#[test]
+fn the_factored_form_agrees_with_dense_and_with_the_flat_walk() {
+    let mut worst_dense = 0.0f64;
+    let mut worst_flat = 0.0f64;
+    let mut checks = 0usize;
+    for n in 3..=8usize {
+        for &dt in &[0.2f64, 0.5] {
+            let rots = tfim_trotter(n, 1.0, 0.7, dt, 3);
+            let d = dense_run(&rots, n);
+            for q in 0..n {
+                let f = propagate_factored((0, 1u64 << q), &rots).unwrap();
+                let flat = propagate(&PauliSum::z(q), &rots, &no_exclusion_cfg()).unwrap();
+                let reference = pauli_expectation(&d as &dyn Backend<C64>, &[(q, Pauli::Z)])
+                    .unwrap()
+                    .re;
+                worst_dense = worst_dense.max((f.value - reference).abs());
+                worst_flat = worst_flat.max((f.value - flat.expectation()).abs());
+                checks += 1;
+            }
+        }
+    }
+    assert!(checks >= 60, "only {checks} checks");
+    assert!(worst_dense < 1e-13, "factored vs dense: {worst_dense:.3e}");
+    assert!(worst_flat < 1e-13, "factored vs flat walk: {worst_flat:.3e}");
+}
+
+#[test]
+fn a_coupled_circuit_factors_into_nothing_and_says_so() {
+    // Nearest-neighbour TFIM couples the whole register, so there is no
+    // partition to find and the report must not pretend otherwise.
+    let n = 12;
+    let rots = tfim_trotter(n, 1.0, 0.7, 0.3, 4);
+    let f = propagate_factored((0, 1u64 << 6), &rots).unwrap();
+    assert_eq!(f.blocks.len(), 1, "TFIM should collapse to one block");
+    assert_eq!(f.peak_stored as u128, f.peak_flat);
+    assert!((f.factor_saving() - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn decoupled_blocks_cost_the_sum_not_the_product() {
+    // The whole claim: stored terms grow LINEARLY in the number of
+    // independent blocks while the flat sum grows exponentially.
+    let bs = 4usize;
+    let mut stored = Vec::new();
+    let mut flat = Vec::new();
+    for k in 4..=6usize {
+        let n = k * bs;
+        let rots = blocked_circuit(n, bs, 4);
+        let mut z = 0u64;
+        for b in 0..k {
+            z |= 1u64 << (b * bs + 1);
+        }
+        let f = propagate_factored((0, z), &rots).unwrap();
+
+        assert_eq!(f.blocks.len(), k, "expected {k} blocks");
+        // the circuit never couples them, so nothing is ever merged
+        assert_eq!(f.merges, 0, "a decoupled circuit forced a merge");
+        // every block is the same size, so the largest is bounded
+        assert!(f.peak_largest_block <= 64, "block grew to {}", f.peak_largest_block);
+        stored.push(f.peak_stored);
+        flat.push(f.peak_flat);
+    }
+    // linear in k
+    let d1 = stored[1] - stored[0];
+    let d2 = stored[2] - stored[1];
+    assert_eq!(d1, d2, "stored terms are not linear in the block count: {stored:?}");
+    // exponential in k, and enormously larger
+    assert!(flat[2] / flat[1] > 50, "flat count is not exponential: {flat:?}");
+    assert!(
+        flat[2] / stored[2] as u128 > 1_000_000,
+        "saving only {}x",
+        flat[2] / stored[2] as u128
+    );
+}
+
+#[test]
+fn a_straddling_gate_forces_a_merge_and_is_counted() {
+    let n = 8;
+    let bs = 4;
+    let mut rots = blocked_circuit(n, bs, 3);
+    // One gate crossing the boundary, at the FRONT of the circuit — so
+    // the backward walk reaches it last, once the blocks have spread far
+    // enough to actually touch it. Putting it at the back instead is a
+    // no-op, correctly: the observable is still the identity there, so
+    // it commutes and no merge is needed.
+    rots.insert(0, Rotation::rzz(bs - 1, bs, 0.3));
+    let f = propagate_factored((0, (1u64 << 1) | (1u64 << (bs + 1))), &rots).unwrap();
+    assert!(f.merges >= 1, "a straddling gate must merge blocks");
+    assert_eq!(f.blocks.len(), 1, "after merging there is one block");
+
+    // and it still gets the right answer
+    let d = dense_run(&rots, n);
+    let reference = pauli_expectation(
+        &d as &dyn Backend<C64>,
+        &[(1, Pauli::Z), (bs + 1, Pauli::Z)],
+    )
+    .unwrap()
+    .re;
+    assert!(
+        (f.value - reference).abs() < 1e-12,
+        "merged factored walk deviated by {:.3e}",
+        (f.value - reference).abs()
+    );
+}
+
 // ── both directions of time ──────────────────────────────────────────
 
 /// Low-entanglement but non-Clifford prefix, then a strongly entangling

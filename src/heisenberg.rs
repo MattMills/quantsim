@@ -79,6 +79,39 @@
 //!   digits and you pay for the terms above `1e-3`; ask for machine
 //!   precision and you pay for all of them.
 //!
+//! # Factoring, rather than cutting
+//!
+//! A cut is positional and blind to structure. The structural
+//! alternative is to hold the conjugated observable as a **product of
+//! independent blocks** ([`FactoredPauliSum`]) — a single Pauli already
+//! *is* a tensor product of single-site Paulis, and conjugation only
+//! couples two blocks when a gate's axis straddles them. Nothing is
+//! declared in advance: the partition is **discovered** from the gates
+//! as the walk meets them, and merged lazily only where the circuit
+//! genuinely couples regions. It is the operator-side analogue of
+//! [`FactoredState`](crate::backend::FactoredState).
+//!
+//! The arithmetic is the whole point: `k` independent blocks cost the
+//! **sum** of their sizes, not the product. Measured on `k` decoupled
+//! chains of four qubits, with the observable straddling all of them:
+//!
+//! ```text
+//!   blocks   stored terms   flat terms      merges   saving
+//!        4            224      9 834 496         0    43 904×
+//!        5            280    550 731 776         0  1 966 899×
+//!        6            336 30 840 979 456         0 91 788 629×
+//! ```
+//!
+//! Stored grows **linearly** in the block count while the flat sum grows
+//! exponentially, and `merges = 0` because a decoupled circuit never
+//! forces the partition to break. Nearest-neighbour TFIM, by contrast,
+//! collapses to a single block with a saving of exactly `1.0×` — there
+//! is nothing to factor and the report says so rather than pretending.
+//!
+//! Scope: [`propagate_factored`] is **exact only**. A per-block
+//! threshold's error has to be carried across the product, and that
+//! bound is not implemented, so the factored path applies no truncation.
+//!
 //! # Both directions of time
 //!
 //! `⟨0|U†PU|0⟩` with `U = U₂U₁` is `⟨ψ|U₂†PU₂|ψ⟩` for `|ψ⟩ = U₁|0…0⟩`,
@@ -1167,6 +1200,206 @@ pub fn tfim_energy_basis(n: usize, j: f64, h: f64) -> (Vec<PauliSum>, Vec<f64>) 
         w.push(-h);
     }
     (obs, w)
+}
+
+// ── factoring the operator where the circuit does not couple ─────────
+
+/// The conjugated observable held as a **product of independent blocks**
+/// rather than one flat sum.
+///
+/// A cut is positional and blind to structure. This is the structural
+/// alternative: a single Pauli is already a tensor product of
+/// single-site Paulis, and conjugation only ever *couples* two blocks
+/// when a gate's axis straddles them. So the natural representation is
+/// one sum per block, merged lazily on demand — the operator-side
+/// analogue of
+/// [`FactoredState`](crate::backend::FactoredState), and the reason it
+/// helps is arithmetic: `k` independent blocks of size `m` cost `k·m`
+/// stored terms instead of `m^k`.
+///
+/// Nothing is declared in advance. The partition is *discovered* from
+/// the gates as the walk meets them, and
+/// [`FactoredPauliSum::blocks`] is what it found.
+#[derive(Debug, Clone)]
+pub struct FactoredPauliSum {
+    /// `(qubit mask, sum restricted to it)`. Masks are disjoint; qubits
+    /// in no block carry the identity.
+    blocks: Vec<(u64, PauliSum)>,
+    /// Overall scalar, kept out of the blocks so a global phase never
+    /// forces a merge.
+    scale: C64,
+}
+
+impl FactoredPauliSum {
+    /// A single Pauli, blocked by its own support: one block per site,
+    /// which is the finest partition consistent with it.
+    pub fn from_key(key: PauliKey) -> Self {
+        let (x, z) = key;
+        let mut blocks = Vec::new();
+        for q in 0..MAX_QUBITS {
+            let (bx, bz) = (x >> q & 1, z >> q & 1);
+            if bx | bz != 0 {
+                blocks.push((1u64 << q, PauliSum::from_key((bx << q, bz << q))));
+            }
+        }
+        FactoredPauliSum {
+            blocks,
+            scale: C64::new(1.0, 0.0),
+        }
+    }
+
+    /// `Z` on one qubit.
+    pub fn z(qubit: usize) -> Self {
+        FactoredPauliSum::from_key((0, 1u64 << qubit))
+    }
+
+    /// The discovered partition: `(mask, term count)` per block.
+    pub fn blocks(&self) -> Vec<(u64, usize)> {
+        self.blocks.iter().map(|(m, s)| (*m, s.len())).collect()
+    }
+
+    /// Terms actually stored — the **sum** over blocks.
+    pub fn stored_terms(&self) -> usize {
+        self.blocks.iter().map(|(_, s)| s.len()).sum()
+    }
+
+    /// Terms the equivalent flat sum would hold — the **product** over
+    /// blocks. This is the number the factorization avoids.
+    pub fn flat_terms(&self) -> u128 {
+        self.blocks
+            .iter()
+            .map(|(_, s)| s.len() as u128)
+            .product::<u128>()
+            .max(1)
+    }
+
+    /// Largest single block, in terms — what the memory actually tracks.
+    pub fn largest_block(&self) -> usize {
+        self.blocks.iter().map(|(_, s)| s.len()).max().unwrap_or(0)
+    }
+
+    /// `⟨0…0|·|0…0⟩`, which factorizes: `⟨0|A⊗B|0⟩ = ⟨0|A|0⟩⟨0|B|0⟩`.
+    /// The answer is assembled from the blocks and the flat sum is never
+    /// formed.
+    pub fn expectation_on_zero_state(&self) -> C64 {
+        let mut acc = self.scale;
+        for (_, s) in &self.blocks {
+            acc *= s.expectation_on_zero_state();
+        }
+        acc
+    }
+
+    /// Merge every block the mask touches into one, so a straddling gate
+    /// has a single block to act on. This is where the cost is paid, and
+    /// it is paid only when the circuit genuinely couples the regions.
+    fn merge_for(&mut self, mask: u64) -> usize {
+        let hit: Vec<usize> = (0..self.blocks.len())
+            .filter(|&i| self.blocks[i].0 & mask != 0)
+            .collect();
+        if hit.len() <= 1 {
+            return *hit.first().unwrap_or(&usize::MAX);
+        }
+        // tensor the touched blocks together
+        let mut merged_mask = 0u64;
+        let mut merged = PauliSum::from_key((0, 0));
+        for &i in &hit {
+            let (m, s) = &self.blocks[i];
+            merged_mask |= m;
+            let mut next = PauliSum::zero();
+            for (ka, ca) in merged.terms() {
+                for (kb, cb) in s.terms() {
+                    // disjoint supports, so the product carries no sign
+                    next.add((ka.0 | kb.0, ka.1 | kb.1), ca * cb);
+                }
+            }
+            merged = next;
+        }
+        for &i in hit.iter().rev() {
+            self.blocks.remove(i);
+        }
+        self.blocks.push((merged_mask, merged));
+        self.blocks.len() - 1
+    }
+
+    /// Conjugate through one rotation, merging only if it straddles.
+    fn step(&mut self, rot: &Rotation) {
+        let mask = rot.axis.0 | rot.axis.1;
+        let idx = self.merge_for(mask);
+        if idx == usize::MAX {
+            // the observable is the identity everywhere the axis acts,
+            // so it commutes and nothing happens
+            return;
+        }
+        let (bmask, sum) = &self.blocks[idx];
+        let (next, _, _, _) = step_through(sum, rot, None);
+        let new_mask = bmask | mask;
+        self.blocks[idx] = (new_mask, next);
+    }
+}
+
+/// What [`propagate_factored`] measured.
+#[derive(Debug, Clone)]
+pub struct FactoredReport {
+    /// `⟨0…0|U†PU|0…0⟩`, assembled from the blocks.
+    pub value: f64,
+    /// The discovered partition at the end: `(mask, terms)`.
+    pub blocks: Vec<(u64, usize)>,
+    /// Peak stored terms — the sum over blocks.
+    pub peak_stored: usize,
+    /// Peak of the equivalent flat term count — the product over blocks,
+    /// i.e. what a non-factored walk would have carried.
+    pub peak_flat: u128,
+    /// Peak size of the largest single block.
+    pub peak_largest_block: usize,
+    /// Gates that straddled two blocks and forced a merge — the measured
+    /// points where the circuit actually couples regions.
+    pub merges: usize,
+}
+
+impl FactoredReport {
+    /// How much the factorization avoided, at peak.
+    pub fn factor_saving(&self) -> f64 {
+        self.peak_flat as f64 / self.peak_stored.max(1) as f64
+    }
+}
+
+/// Propagate an observable backwards holding it **factored**, merging
+/// blocks only where the circuit couples them.
+///
+/// Exact: no threshold is applied, because a per-block truncation's
+/// error bound has to be carried across the product and that is not
+/// implemented. The point being measured here is structural — how much
+/// of the sum never needed to be formed.
+pub fn propagate_factored(
+    observable: PauliKey,
+    rotations: &[Rotation],
+) -> Result<FactoredReport> {
+    let mut f = FactoredPauliSum::from_key(observable);
+    let mut peak_stored = f.stored_terms();
+    let mut peak_flat = f.flat_terms();
+    let mut peak_largest = f.largest_block();
+    let mut merges = 0usize;
+
+    for rot in rotations.iter().rev() {
+        let mask = rot.axis.0 | rot.axis.1;
+        let touched = f.blocks.iter().filter(|(m, _)| m & mask != 0).count();
+        if touched > 1 {
+            merges += 1;
+        }
+        f.step(rot);
+        peak_stored = peak_stored.max(f.stored_terms());
+        peak_flat = peak_flat.max(f.flat_terms());
+        peak_largest = peak_largest.max(f.largest_block());
+    }
+
+    Ok(FactoredReport {
+        value: f.expectation_on_zero_state().re,
+        blocks: f.blocks(),
+        peak_stored,
+        peak_flat,
+        peak_largest_block: peak_largest,
+        merges,
+    })
 }
 
 // ── meeting in the middle: both directions of time ───────────────────
