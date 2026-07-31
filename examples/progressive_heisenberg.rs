@@ -80,6 +80,40 @@ fn main() -> Result<()> {
             r.sharing_factor().unwrap());
     }
 
+    println!("\n== both directions of time, meeting in the middle ==\n");
+    let n = 14;
+    let mut rots = Vec::new();
+    for _ in 0..6 { for k in 0..n { rots.push(Rotation::rx(k, 0.41)); } }
+    for _ in 0..5 {
+        for k in 0..n - 1 { rots.push(Rotation::rzz(k, k + 1, 0.37)); }
+        for k in 0..n { rots.push(Rotation::rx(k, 0.29)); }
+    }
+    println!("  n={n}, {} rotations: a low-entanglement but NON-Clifford prefix,", rots.len());
+    println!("  then an entangling suffix — the shape where the forward half's");
+    println!("  resource and the backward half's are genuinely different.\n");
+    let cfg = Config { threshold: 1e-7, max_terms: None, checkpoint_every: 0,
+                       exclusion: true, retire_frozen: false };
+    let cuts: Vec<usize> = (0..=8).map(|i| i * rots.len() / 8).collect();
+    for (label, fwd) in [("sparse", Forward::Sparse),
+                         ("mps χ=64", Forward::Mps { max_bond: 64 })] {
+        println!("  forward = {label}");
+        println!("     cut   fwd bytes   back peak   meeting bytes   value");
+        for m in cut_sweep(&PauliSum::z(n / 2), &rots, n, &cuts, fwd, &cfg)? {
+            println!("    {:4}   {:9}   {:9}   {:13}   {:+.9}",
+                m.cut, m.forward_bytes, m.backward_peak, m.meeting_cost, m.value);
+        }
+        let best = auto_cut(&PauliSum::z(n / 2), &rots, n, 8, fwd, &cfg)?;
+        println!("    auto_cut picks {} at {} bytes\n", best.cut, best.meeting_cost);
+    }
+    println!("  Sparse saturates within two layers, so its best cut is 0 and meeting");
+    println!("  in the middle buys nothing. MPS has a genuine interior optimum. The");
+    println!("  saving is real but it is conditional: it exists only because the two");
+    println!("  halves are exponential in DIFFERENT resources.\n");
+    println!("  And a trap worth naming: both exclusions are BOUNDARY conditions, not");
+    println!("  circuit properties — they encode \"this walk ends at |0..0>\". Applying");
+    println!("  them at an interior cut gave 0.18 absolute error before it was caught;");
+    println!("  they are switched off for any cut past zero.");
+
     println!("\n== against the real competitor: MPS, on a ladder it dislikes ==\n");
     let (n, q) = (20usize, 10usize);
     let rots = ladder(n, 5, 0.3, 6);

@@ -154,8 +154,9 @@ pub mod prelude {
         SelectionReport, Workload,
     };
     pub use crate::heisenberg::{
-        propagate, propagate_basis, tfim_energy_basis, tfim_trotter, BasisReport, Journal,
-        PauliSum, Propagation, Rotation, Step,
+        auto_cut, cut_sweep, propagate, propagate_basis, propagate_bidirectional, tfim_energy_basis,
+        tfim_trotter, AxisSpan, BasisReport, Forward, Journal, Meeting, PauliSum, Propagation,
+        Rotation, Step, XSpan,
     };
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};

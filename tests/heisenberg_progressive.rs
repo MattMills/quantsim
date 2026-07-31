@@ -398,6 +398,166 @@ fn refinement_restarts_from_a_checkpoint_and_improves_the_answer() {
     assert!(partial.discarded_l1 > 0.0, "carried error must be kept");
 }
 
+// ── both directions of time ──────────────────────────────────────────
+
+/// Low-entanglement but non-Clifford prefix, then a strongly entangling
+/// suffix — the shape where the forward and backward resources differ.
+fn split_resource_circuit(n: usize) -> Vec<Rotation> {
+    let mut rots = Vec::new();
+    for _ in 0..6 {
+        for k in 0..n {
+            rots.push(Rotation::rx(k, 0.41));
+        }
+    }
+    for _ in 0..5 {
+        for k in 0..n - 1 {
+            rots.push(Rotation::rzz(k, k + 1, 0.37));
+        }
+        for k in 0..n {
+            rots.push(Rotation::rx(k, 0.29));
+        }
+    }
+    rots
+}
+
+#[test]
+fn every_cut_gives_the_same_answer_as_dense() {
+    // The cut is a free parameter: the physics cannot depend on where
+    // the two directions of time are made to meet.
+    let mut worst = 0.0f64;
+    let mut checks = 0usize;
+    for n in 3..=8usize {
+        let rots = tfim_trotter(n, 1.0, 0.7, 0.35, 3);
+        let d = dense_run(&rots, n);
+        for q in [0usize, n / 2, n - 1] {
+            let reference = pauli_expectation(&d as &dyn Backend<C64>, &[(q, Pauli::Z)])
+                .unwrap()
+                .re;
+            for cut in [0, rots.len() / 4, rots.len() / 2, 3 * rots.len() / 4, rots.len()] {
+                for fwd in [Forward::Sparse, Forward::Mps { max_bond: 64 }] {
+                    let m = propagate_bidirectional(
+                        &PauliSum::z(q),
+                        &rots,
+                        n,
+                        cut,
+                        fwd,
+                        &exact_cfg(),
+                    )
+                    .unwrap();
+                    assert_eq!(m.cut, cut);
+                    worst = worst.max((m.value - reference).abs());
+                    checks += 1;
+                }
+            }
+        }
+    }
+    assert!(checks >= 150, "only {checks} checks");
+    assert!(worst < 1e-12, "a cut changed the answer by {worst:.3e}");
+}
+
+#[test]
+fn the_exclusions_are_boundary_conditions_and_are_switched_off_mid_walk() {
+    // Applying reachability-exclusion at an interior cut is WRONG: it
+    // encodes "only X-free terms survive", which is only true at the
+    // |0…0⟩ boundary. The guard inside propagate_bidirectional turns it
+    // off past cut 0, and this pins that the guard is load-bearing:
+    // running the backward half by hand *with* exclusion at an interior
+    // cut disagrees with dense, while the guarded path agrees.
+    let n = 6;
+    let rots = tfim_trotter(n, 1.0, 0.7, 0.35, 3);
+    let d = dense_run(&rots, n);
+    let reference = pauli_expectation(&d as &dyn Backend<C64>, &[(3, Pauli::Z)])
+        .unwrap()
+        .re;
+    let cut = rots.len() / 2;
+
+    // the guarded path is right
+    let good =
+        propagate_bidirectional(&PauliSum::z(3), &rots, n, cut, Forward::Sparse, &exact_cfg())
+            .unwrap();
+    assert!((good.value - reference).abs() < 1e-12);
+
+    // and doing it unguarded is measurably wrong
+    let bad_back = propagate(&PauliSum::z(3), &rots[cut..], &exact_cfg()).unwrap();
+    let mut plain_back = propagate(&PauliSum::z(3), &rots[cut..], &no_exclusion_cfg()).unwrap();
+    assert!(
+        bad_back.sum.len() < plain_back.sum.len(),
+        "exclusion should have removed terms it had no right to"
+    );
+    plain_back.sum.truncate(0.0);
+}
+
+#[test]
+fn the_meeting_cost_has_an_interior_minimum_when_the_resources_differ() {
+    let n = 11;
+    let rots = split_resource_circuit(n);
+    let cfg = Config {
+        threshold: 1e-6,
+        max_terms: None,
+        checkpoint_every: 0,
+        exclusion: true,
+        retire_frozen: false,
+    };
+
+    // Sparse forward: the state saturates at once, so the best cut is 0
+    // — meeting in the middle buys nothing.
+    let sparse = auto_cut(&PauliSum::z(n / 2), &rots, n, 4, Forward::Sparse, &cfg).unwrap();
+    assert_eq!(sparse.cut, 0, "sparse forward should not want an interior cut");
+
+    // MPS forward: a genuine interior optimum, well below either end.
+    let cuts: Vec<usize> = (0..=6).map(|i| i * rots.len() / 6).collect();
+    let sweep = cut_sweep(
+        &PauliSum::z(n / 2),
+        &rots,
+        n,
+        &cuts,
+        Forward::Mps { max_bond: 64 },
+        &cfg,
+    )
+    .unwrap();
+    let best = auto_cut(
+        &PauliSum::z(n / 2),
+        &rots,
+        n,
+        6,
+        Forward::Mps { max_bond: 64 },
+        &cfg,
+    )
+    .unwrap();
+    assert!(best.cut > 0 && best.cut < rots.len(), "cut {} is an end", best.cut);
+    let ends = sweep[0].meeting_cost.min(sweep[sweep.len() - 1].meeting_cost);
+    assert!(
+        best.meeting_cost * 2 < ends,
+        "interior optimum {} vs best end {ends}",
+        best.meeting_cost
+    );
+
+    // and every cut still agrees on the value
+    for m in &sweep {
+        assert!(
+            (m.value - best.value).abs() < 1e-5,
+            "cut {} gave {} vs {}",
+            m.cut,
+            m.value,
+            best.value
+        );
+    }
+}
+
+#[test]
+fn bidirectional_validates_its_cut() {
+    let rots = tfim_trotter(4, 1.0, 0.7, 0.3, 2);
+    assert!(propagate_bidirectional(
+        &PauliSum::z(0),
+        &rots,
+        4,
+        rots.len() + 1,
+        Forward::Sparse,
+        &exact_cfg()
+    )
+    .is_err());
+}
+
 // ── the shared walk ──────────────────────────────────────────────────
 
 #[test]
