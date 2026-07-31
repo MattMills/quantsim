@@ -813,6 +813,60 @@ impl Stabilizer {
         self.gens.len() - rank
     }
 
+    /// The generators of the subgroup supported inside `mask`, as
+    /// actual signed strings.
+    ///
+    /// Same elimination as [`Stabilizer::block_rank`], but carrying the
+    /// coefficient vector alongside: a row whose complement part
+    /// vanishes names a product of generators that is block-local, and
+    /// that product is what a per-block simulation needs in order to
+    /// prepare the block's share of the input.
+    pub fn block_generators(&self, mask: u64) -> Vec<PauliString> {
+        // (complement projection, coefficients over self.gens)
+        let mut rows: Vec<((u64, u64), u64)> = self
+            .gens
+            .iter()
+            .enumerate()
+            .map(|(i, g)| ((g.x & !mask, g.z & !mask), 1u64 << i))
+            .collect();
+        let mut rank = 0usize;
+        for bit in 0..(2 * MAX_QUBITS) {
+            let sel = |r: &((u64, u64), u64)| {
+                if bit < MAX_QUBITS {
+                    r.0 .0 >> bit & 1 == 1
+                } else {
+                    r.0 .1 >> (bit - MAX_QUBITS) & 1 == 1
+                }
+            };
+            let Some(p) = (rank..rows.len()).find(|&i| sel(&rows[i])) else {
+                continue;
+            };
+            rows.swap(rank, p);
+            let pivot = rows[rank];
+            for (i, row) in rows.iter_mut().enumerate() {
+                if i != rank && sel(row) {
+                    row.0 .0 ^= pivot.0 .0;
+                    row.0 .1 ^= pivot.0 .1;
+                    row.1 ^= pivot.1;
+                }
+            }
+            rank += 1;
+        }
+        rows.iter()
+            .filter(|r| r.0 .0 | r.0 .1 == 0)
+            .filter_map(|r| {
+                let mut acc = PauliString::identity();
+                let mut bits = r.1;
+                while bits != 0 {
+                    let i = bits.trailing_zeros() as usize;
+                    bits &= bits - 1;
+                    acc = acc.times(self.gens[i])?;
+                }
+                (acc.x | acc.z != 0).then_some(acc)
+            })
+            .collect()
+    }
+
     /// Whether the state is a product across `blocks` (plus the
     /// unclaimed qubits, taken one per site). True exactly when the
     /// block-local subgroups already account for the full rank.

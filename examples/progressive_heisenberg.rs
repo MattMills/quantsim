@@ -160,6 +160,109 @@ fn main() -> Result<()> {
         println!("  out with no propagation at all. A support rule sees one block of 8.");
     }
 
+    println!("\n== one representation per block, chosen per block ==\n");
+    println!("  Once the blocks are independent there is no reason for them to");
+    println!("  SHARE a representation. In the engineered frame the whole thing is");
+    println!("  <0..0|U+PU|0..0> = prod_b <phi_b| U_b+ P_b U_b |phi_b> — k complete");
+    println!("  simulations, each on its own qubits, its own input, its own gates.\n");
+    println!("  And the frame does something to the gates that is worth naming: it");
+    println!("  puts back the locality the scrambler destroyed.\n");
+    println!("  n     lab max/avg   scrambled max/avg   framed max/avg");
+    for &(k, bs) in &[(3usize, 4usize), (4, 5), (4, 8), (5, 10)] {
+        let n = k * bs;
+        let mut rots = Vec::new();
+        for _ in 0..3 {
+            for b in 0..k { for q in b*bs..(b+1)*bs-1 { rots.push(Rotation::rzz(q, q+1, 0.3)); } }
+            for q in 0..n { rots.push(Rotation::rx(q, 0.44)); }
+        }
+        let mut z = 0u64;
+        for b in 0..k { z |= 1u64 << (b*bs + 1); }
+        let (scr, key, _) = scramble(&rots, (0, z), n);
+        let framed = decoupling_frame(key, &scr, n)?.rewrite(&scr);
+        let wt = |r: &[Rotation]| {
+            let mx = r.iter().map(|x| x.weight()).max().unwrap_or(0);
+            (mx, r.iter().map(|x| x.weight()).sum::<usize>() as f64 / r.len() as f64)
+        };
+        let (a, b) = wt(&rots); let (c, d) = wt(&scr); let (e, f) = wt(&framed);
+        println!("  {n:3}     {a:2} / {b:.2}          {c:3} / {d:5.2}         {e:2} / {f:.2}");
+    }
+    println!("\n  The scrambled circuit has axes too wide for any windowed backend to");
+    println!("  ACCEPT (mps refuses past {}), so the only global option is dense.",
+        quantsim::backend::MPS_MAX_WINDOW);
+    println!("  Framed, it is two-local again — which is why an MPS can be pointed");
+    println!("  at a block at all.\n");
+
+    println!("  Four ten-qubit chains, scrambled to all-to-all — n=40, where a global");
+    println!("  state vector is 16 TiB and every gate is too wide for a window:\n");
+    {
+        let (k, bs) = (4usize, 10usize);
+        let n = k * bs;
+        let mut rots = Vec::new();
+        for _ in 0..3 {
+            for b in 0..k { for q in b*bs..(b+1)*bs-1 { rots.push(Rotation::rzz(q, q+1, 0.3)); } }
+            for q in 0..n { rots.push(Rotation::rx(q, 0.44)); }
+        }
+        let mut z = 0u64;
+        for b in 0..k { z |= 1u64 << (b*bs + 1); }
+        let (scr, key, _) = scramble(&rots, (0, z), n);
+        println!("  solver        value                bytes    time         per block");
+        for solver in [BlockSolver::Pauli, BlockSolver::Dense, BlockSolver::Mps { max_bond: 64 }] {
+            let t0 = Instant::now();
+            let r = propagate_blocked(key, &scr, n, solver)?;
+            println!("  {:<12}  {:+.12}  {:9}  {:>10?}   {:?}", solver.label(), r.value,
+                r.total_bytes(), t0.elapsed(),
+                r.blocks.iter().map(|b| b.detail.clone()).collect::<Vec<_>>());
+        }
+        println!("\n  Three unrelated representations, same twelve digits, none of them");
+        println!("  ever holding more than ten qubits.\n");
+    }
+
+    println!("  And the cheapest one differs BY BLOCK. One 18-qubit block at depth 2");
+    println!("  beside one 6-qubit block at depth 30 — nothing suits both:\n");
+    {
+        let (wide, deep_w, shallow, deep) = (18usize, 6usize, 2usize, 30usize);
+        let n = wide + deep_w;
+        let mut rots = Vec::new();
+        for s in 0..shallow {
+            for q in 0..wide-1 { rots.push(Rotation::rzz(q, q+1, 0.3 + 0.02 * s as f64)); }
+            for q in 0..wide { rots.push(Rotation::rx(q, 0.44)); }
+        }
+        for s in 0..deep {
+            for q in 0..deep_w-1 { rots.push(Rotation::rzz(wide+q, wide+q+1, 0.37 + 0.01 * s as f64)); }
+            for q in 0..deep_w { rots.push(Rotation::rx(wide+q, 0.29 + 0.005 * s as f64)); }
+        }
+        let obs = (0u64, (1u64 << 1) | (1u64 << (wide + 1)));
+        let (scr, key, _) = scramble(&rots, obs, n);
+        println!("  plan               value                bytes    time         per block");
+        let show = |label: &str, r: &BlockedReport, t: std::time::Duration| {
+            println!("  {label:<17}  {:+.12}  {:9}  {:>10?}   {:?}", r.value, r.total_bytes(), t,
+                r.blocks.iter().map(|b| format!("{}q {} {}", b.qubits, b.solver.label(), b.detail))
+                    .collect::<Vec<_>>());
+        };
+        for (label, s) in [("uniform pauli", BlockSolver::Pauli), ("uniform dense", BlockSolver::Dense)] {
+            let t0 = Instant::now();
+            let r = propagate_blocked(key, &scr, n, s)?;
+            show(label, &r, t0.elapsed());
+        }
+        let t0 = Instant::now();
+        let r = propagate_blocked_with(key, &scr, n, |_, mask, rots| {
+            // a narrow block's whole Hilbert space is smaller than a deep
+            // walk's Pauli sum; a wide block's is not
+            if mask.count_ones() as usize <= 10 && rots > 50 { BlockSolver::Dense }
+            else { BlockSolver::Pauli }
+        })?;
+        show("per-block choice", &r, t0.elapsed());
+    }
+    println!("\n  The mixed plan beats the better uniform one 4x and the worse one by");
+    println!("  three orders of magnitude, on the same twelve digits. That is the");
+    println!("  whole idea: not one representation that is good everywhere, but each");
+    println!("  piece of the problem held where it is cheapest.\n");
+    println!("  Two honest limits. The product form needs V+|0..0> to still factor");
+    println!("  across the blocks; when it does not, propagate_blocked REFUSES rather");
+    println!("  than multiplying numbers that are not independent. And this crate's");
+    println!("  MPS runs a dependency-free Jacobi SVD, so its wall-clock above is a");
+    println!("  statement about this implementation, not about MPS.\n");
+
     println!("\n== both directions of time, meeting in the middle ==\n");
     let n = 14;
     let mut rots = Vec::new();

@@ -834,7 +834,7 @@ impl Propagation {
 /// cannot cancel is never created — so the peak term count never
 /// includes it, and the work of carrying it is never done. Filtering
 /// after the fact gives the same answer and none of the saving.
-fn step_through(
+pub(crate) fn step_through(
     sum: &PauliSum,
     rot: &Rotation,
     exclude: Option<(&XSpan, usize)>,

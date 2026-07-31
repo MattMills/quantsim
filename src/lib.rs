@@ -63,6 +63,7 @@
 #![warn(missing_docs)]
 
 pub mod backend;
+pub mod blocks;
 pub mod bounds;
 pub mod braided;
 pub mod bundle;
@@ -123,6 +124,10 @@ pub mod prelude {
         orbit_closure, projective_order, realized_rank, run_path, verify_relations, BraidRelations,
         BraidWord, FreeWord, LedgerStep, MutualEncoding, OrbitClosure, PeriodicPath,
         RealizedAlgebra, RecursionLedger, ResidualLaw,
+    };
+    pub use crate::blocks::{
+        preparation, propagate_blocked, propagate_blocked_with, BlockOutcome, BlockSolver,
+        BlockedReport, Preparation,
     };
     pub use crate::bounds::{
         advantage_scan, classify_law, fit_law, resource_profile, select_by_scaling, AxisProbe,
