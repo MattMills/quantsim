@@ -33,8 +33,8 @@ mod sparse;
 pub use adaptive::AdaptiveState;
 pub use braided_state::{BraidedState, Realization};
 pub use clifford_frame::{
-    CliffordFrameStats, CliffordFramedState, PauliString, CLIFFORD_DIAGONAL_MAX,
-    CLIFFORD_RECOGNITION_MAX,
+    conjugate_by_step, CliffordFrameStats, CliffordFramedState, CliffordStep, PauliString,
+    CLIFFORD_DIAGONAL_MAX, CLIFFORD_RECOGNITION_MAX,
 };
 pub use dense::{DenseState, DENSE_MAX_QUBITS};
 pub use device::{ArityPolicy, DeviceState, DurationModel, LatencyMap, PhysicalOp, Topology};

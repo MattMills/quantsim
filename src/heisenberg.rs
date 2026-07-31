@@ -1321,6 +1321,23 @@ impl FactoredPauliSum {
         self.blocks.len() - 1
     }
 
+    /// The blocks themselves, for evaluators that need more than
+    /// `⟨0…0|·|0…0⟩` — [`crate::coupling`] contracts them against a
+    /// stabilizer input instead.
+    pub fn block_sums(&self) -> &[(u64, PauliSum)] {
+        &self.blocks
+    }
+
+    /// The overall scalar held outside the blocks.
+    pub fn scale(&self) -> C64 {
+        self.scale
+    }
+
+    /// Conjugate through one rotation, merging only if it straddles.
+    pub fn conjugate(&mut self, rot: &Rotation) {
+        self.step(rot)
+    }
+
     /// Conjugate through one rotation, merging only if it straddles.
     fn step(&mut self, rot: &Rotation) {
         let mask = rot.axis.0 | rot.axis.1;

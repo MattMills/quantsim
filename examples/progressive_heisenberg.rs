@@ -110,6 +110,56 @@ fn main() -> Result<()> {
     println!("  partition to break. TFIM collapses to one block at exactly 1.0× —");
     println!("  there is nothing to factor and the report says so.");
 
+    println!("\n== engineering the structure, rather than accepting it ==\n");
+    println!("  The honest limit of the table above is that it buys what the QUBIT");
+    println!("  partition allows. But that partition is a statement about the basis:");
+    println!("  what governs coupling is the symplectic form, so the real partition");
+    println!("  is the components of the axes' ANTICOMMUTATION graph. Below, each");
+    println!("  circuit is the same k decoupled blocks conjugated by a Clifford");
+    println!("  scrambler until every axis is wide — all-to-all to any support rule.\n");
+    println!("  circuit             axis wt  support  engineered  stored   flat terms        saving  sep");
+    for k in 2..=6usize {
+        let (bs, n) = (4usize, k * 4);
+        let mut rots = Vec::new();
+        for _ in 0..4 {
+            for b in 0..k { for q in b*bs..(b+1)*bs-1 { rots.push(Rotation::rzz(q, q+1, 0.3)); } }
+            for q in 0..n { rots.push(Rotation::rx(q, 0.44)); }
+        }
+        let mut z = 0u64;
+        for b in 0..k { z |= 1u64 << (b*bs + 1); }
+        let (scr, key, _) = scramble(&rots, (0, z), n);
+        let wt = scr.iter().map(|r| r.weight()).max().unwrap_or(0);
+        let r = propagate_engineered(key, &scr, n)?;
+        println!("  {k} blocks of {bs}, n={n:<2}    {wt:4}   {:6}    {:8}  {:6}  {:12}  {:11.0}×  {}",
+            r.support_blocks, r.engineered_blocks, r.peak_stored, r.peak_flat,
+            r.factor_saving(), r.separable_input);
+    }
+    println!("\n  Support sees ONE block at every size; the frame recovers all k.");
+    println!("  Stored grows linearly, flat geometrically — the saving is in the");
+    println!("  terms that never had to exist, not in a tighter truncation.\n");
+    println!("  Two things this does NOT claim. The frame is a heuristic where two");
+    println!("  components share a fully-commuting direction, so the block count is");
+    println!("  MEASURED from the framed axes, never assumed. And the entanglement");
+    println!("  is conserved, not destroyed: the frame moves it into the input state");
+    println!("  |phi> = V+|0..0>, and the block product is only valid when |phi>");
+    println!("  still factors. The `sep` column is that check. A CX-only scrambler");
+    println!("  fixes |0..0> so it always holds; drawn from the full Clifford");
+    println!("  generating set it fails about half the time, and then the");
+    println!("  contraction is done flat and the report says so rather than");
+    println!("  returning a wrong number.\n");
+    {
+        // the exact reduction that needs no frame at all
+        let n = 8;
+        let mut rots = Vec::new();
+        for a in 0..n { for b in (a + 1)..n { rots.push(Rotation::rzz(a, b, 0.21)); } }
+        let c = coupling_of((0, 1u64 << 3), &rots);
+        let r = propagate_engineered((0, 1u64 << 3), &rots, n)?;
+        println!("  And the cheapest case of all: {} all-to-all ZZ rotations on n={n},", rots.len());
+        println!("  every one of which commutes with <Z_3>. {} of them are dropped", c.inert_rotations());
+        println!("  outright — exactly, not approximately — and the answer {:+.1} falls", r.value);
+        println!("  out with no propagation at all. A support rule sees one block of 8.");
+    }
+
     println!("\n== both directions of time, meeting in the middle ==\n");
     let n = 14;
     let mut rots = Vec::new();

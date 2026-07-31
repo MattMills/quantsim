@@ -114,6 +114,33 @@ impl PauliString {
     pub fn weight(&self) -> usize {
         (self.x | self.z).count_ones() as usize
     }
+
+    /// The identity string.
+    pub fn identity() -> Self {
+        PauliString {
+            x: 0,
+            z: 0,
+            negative: false,
+        }
+    }
+
+    /// Whether this string commutes with `other` — the symplectic form.
+    pub fn commutes_with(&self, other: PauliString) -> bool {
+        ((self.z & other.x).count_ones() + (self.x & other.z).count_ones()) % 2 == 0
+    }
+
+    /// Product of two **commuting** Hermitian strings, which is again
+    /// Hermitian. Anticommuting strings multiply to `i` times a Hermitian
+    /// string and so cannot be represented here; the product is returned
+    /// as `None` in that case rather than silently dropping the phase.
+    pub fn times(self, rhs: PauliString) -> Option<PauliString> {
+        if !self.commutes_with(rhs) {
+            return None;
+        }
+        let mut acc = RawPauli::from_hermitian(self);
+        acc.mul(RawPauli::from_hermitian(rhs));
+        Some(acc.into_hermitian())
+    }
 }
 
 /// `i^phase · X^x Z^z` — the raw (possibly non-Hermitian) intermediate
@@ -226,14 +253,18 @@ fn conj_via(
     acc.into_hermitian()
 }
 
-/// One stored-side gate of a measurement-repair Clifford `V`: the smallest
-/// gate set that maps a measured (conjugated) string to Z-type. S turns a
-/// Y factor into X (diagonal on the stored state — no support growth), CX
-/// folds the X support onto a pivot (permutation — no growth), and the
-/// single final H maps the pivot's X to Z (the only step that can grow
-/// stored support, at most 2×, once per measurement).
-#[derive(Debug, Clone, Copy)]
-enum RepairStep {
+/// One elementary Clifford, as a conjugation on Pauli strings: the
+/// smallest generating set that suffices to steer a string anywhere in
+/// the Pauli group. S turns a Y factor into X (diagonal on the stored
+/// state — no support growth), CX folds X support onto a pivot
+/// (permutation — no growth), and H maps a pivot's X to Z (the only step
+/// that can grow stored support, at most 2×).
+///
+/// Used for measurement repair here and for building decoupling frames
+/// in [`crate::coupling`]; the sign rules below are pinned against dense
+/// gate matrices in this module's tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CliffordStep {
     /// S on a qubit.
     S(usize),
     /// CX with (control, target).
@@ -242,24 +273,24 @@ enum RepairStep {
     H(usize),
 }
 
-impl RepairStep {
+impl CliffordStep {
     /// `g† X_q g` in the Hermitian signed-string convention.
     fn x_image(&self, q: usize) -> PauliString {
         match *self {
             // S† X S = −Y.
-            RepairStep::S(a) if q == a => PauliString {
+            CliffordStep::S(a) if q == a => PauliString {
                 x: 1 << a,
                 z: 1 << a,
                 negative: true,
             },
             // H X H = Z.
-            RepairStep::H(a) if q == a => PauliString {
+            CliffordStep::H(a) if q == a => PauliString {
                 x: 0,
                 z: 1 << a,
                 negative: false,
             },
             // CX X_c CX = X_c X_t.
-            RepairStep::Cx(c, t) if q == c => PauliString {
+            CliffordStep::Cx(c, t) if q == c => PauliString {
                 x: (1 << c) | (1 << t),
                 z: 0,
                 negative: false,
@@ -276,13 +307,13 @@ impl RepairStep {
     fn z_image(&self, q: usize) -> PauliString {
         match *self {
             // H Z H = X.
-            RepairStep::H(a) if q == a => PauliString {
+            CliffordStep::H(a) if q == a => PauliString {
                 x: 1 << a,
                 z: 0,
                 negative: false,
             },
             // CX Z_t CX = Z_c Z_t.
-            RepairStep::Cx(c, t) if q == t => PauliString {
+            CliffordStep::Cx(c, t) if q == t => PauliString {
                 x: 0,
                 z: (1 << c) | (1 << t),
                 negative: false,
@@ -296,8 +327,8 @@ impl RepairStep {
     }
 }
 
-/// `g† P g` for one repair step.
-fn conj_by_step(p: PauliString, step: RepairStep) -> PauliString {
+/// `g† P g` for one elementary Clifford.
+pub fn conjugate_by_step(p: PauliString, step: CliffordStep) -> PauliString {
     conj_via(p, |q| step.x_image(q), |q| step.z_image(q))
 }
 
@@ -427,13 +458,13 @@ impl<S: Scalar> Core<S> {
     fn repair_after_measurement(&mut self, img: PauliString) -> Result<()> {
         debug_assert_ne!(img.x, 0, "Z-type measurements project diagonally");
         let mut q = img;
-        let mut steps: Vec<RepairStep> = Vec::new();
+        let mut steps: Vec<CliffordStep> = Vec::new();
         let mut ys = q.x & q.z;
         while ys != 0 {
             let b = ys.trailing_zeros() as usize;
             ys &= ys - 1;
-            let step = RepairStep::S(b);
-            q = conj_by_step(q, step);
+            let step = CliffordStep::S(b);
+            q = conjugate_by_step(q, step);
             steps.push(step);
         }
         debug_assert_eq!(q.x & q.z, 0, "S pass must clear every Y factor");
@@ -442,13 +473,13 @@ impl<S: Scalar> Core<S> {
         while rest != 0 {
             let i = rest.trailing_zeros() as usize;
             rest &= rest - 1;
-            let step = RepairStep::Cx(pivot, i);
-            q = conj_by_step(q, step);
+            let step = CliffordStep::Cx(pivot, i);
+            q = conjugate_by_step(q, step);
             steps.push(step);
         }
         debug_assert_eq!(q.x, 1u64 << pivot, "CX fold must isolate the pivot");
-        let step = RepairStep::H(pivot);
-        q = conj_by_step(q, step);
+        let step = CliffordStep::H(pivot);
+        q = conjugate_by_step(q, step);
         steps.push(step);
         debug_assert_eq!(q.x, 0, "repair must end on a Z-type string");
 
@@ -461,21 +492,21 @@ impl<S: Scalar> Core<S> {
                 .iter_mut()
                 .chain(self.tableau.z_images.iter_mut())
             {
-                *image = conj_by_step(*image, step);
+                *image = conjugate_by_step(*image, step);
             }
         }
         // Stored: stored ← V†·stored = g₁†(g₂†(…gₘ†… applied right-to-left
         // means g₁† acts first — the steps in choice order, daggered.
         for &step in &steps {
             match step {
-                RepairStep::S(b) => {
+                CliffordStep::S(b) => {
                     let minus_i = repair_scalar::<S>(c64(0.0, -1.0))?;
                     self.state.apply_diagonal(&[S::one(), minus_i], &[b])?;
                 }
-                RepairStep::Cx(c, t) => {
+                CliffordStep::Cx(c, t) => {
                     self.state.apply(&cx_matrix::<S>()?, &[c, t])?;
                 }
-                RepairStep::H(b) => {
+                CliffordStep::H(b) => {
                     self.state.apply(&h_matrix::<S>()?, &[b])?;
                 }
             }
@@ -486,18 +517,18 @@ impl<S: Scalar> Core<S> {
         let mut new_log: Vec<LoggedGate<S>> = Vec::with_capacity(self.log.len() + steps.len());
         for &step in steps.iter().rev() {
             let gate = match step {
-                RepairStep::S(b) => LoggedGate {
+                CliffordStep::S(b) => LoggedGate {
                     kernel: LoggedKernel::Diagonal(vec![
                         S::one(),
                         repair_scalar::<S>(c64(0.0, 1.0))?,
                     ]),
                     qubits: vec![b],
                 },
-                RepairStep::Cx(c, t) => LoggedGate {
+                CliffordStep::Cx(c, t) => LoggedGate {
                     kernel: LoggedKernel::Matrix(cx_matrix::<S>()?),
                     qubits: vec![c, t],
                 },
-                RepairStep::H(b) => LoggedGate {
+                CliffordStep::H(b) => LoggedGate {
                     kernel: LoggedKernel::Matrix(h_matrix::<S>()?),
                     qubits: vec![b],
                 },
@@ -1327,13 +1358,13 @@ mod tests {
             }
             m
         };
-        let cases: Vec<(RepairStep, Vec<C64>)> = vec![
-            (RepairStep::S(0), embed_1q(&s1, 0)),
-            (RepairStep::S(1), embed_1q(&s1, 1)),
-            (RepairStep::H(0), embed_1q(&h1, 0)),
-            (RepairStep::H(1), embed_1q(&h1, 1)),
-            (RepairStep::Cx(0, 1), cx_dense(0, 1)),
-            (RepairStep::Cx(1, 0), cx_dense(1, 0)),
+        let cases: Vec<(CliffordStep, Vec<C64>)> = vec![
+            (CliffordStep::S(0), embed_1q(&s1, 0)),
+            (CliffordStep::S(1), embed_1q(&s1, 1)),
+            (CliffordStep::H(0), embed_1q(&h1, 0)),
+            (CliffordStep::H(1), embed_1q(&h1, 1)),
+            (CliffordStep::Cx(0, 1), cx_dense(0, 1)),
+            (CliffordStep::Cx(1, 0), cx_dense(1, 0)),
         ];
         for (step, matrix) in cases {
             for px in 0..4usize {
@@ -1350,7 +1381,7 @@ mod tests {
                         negative || (coeff - c64(1.0, 0.0)).norm() < 1e-9,
                         "{step:?} on ({px},{pz}): coeff {coeff}"
                     );
-                    let got = conj_by_step(
+                    let got = conjugate_by_step(
                         PauliString {
                             x: px as u64,
                             z: pz as u64,
@@ -1364,7 +1395,7 @@ mod tests {
                         "{step:?} on ({px},{pz})"
                     );
                     // Linearity in the sign.
-                    let neg = conj_by_step(
+                    let neg = conjugate_by_step(
                         PauliString {
                             x: px as u64,
                             z: pz as u64,

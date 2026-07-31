@@ -71,6 +71,7 @@ pub mod characterize;
 pub mod circuit;
 pub mod closure;
 pub mod conformance;
+pub mod coupling;
 pub mod discovery;
 pub mod e8;
 pub mod error;
@@ -139,6 +140,10 @@ pub mod prelude {
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
     pub use crate::conformance::{
         random_registry_circuit, verify_backend, ConformanceConfig, ConformanceReport,
+    };
+    pub use crate::coupling::{
+        coupling_of, decoupling_frame, propagate_engineered, scramble, support_blocks, Coupling,
+        DecouplingFrame, EngineeredReport, Stabilizer,
     };
     pub use crate::discovery::{
         discover_stabilizers, stabilizes_state, state_deviation_up_to_phase, verify_transparent,
