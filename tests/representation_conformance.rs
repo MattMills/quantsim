@@ -342,6 +342,93 @@ fn the_braided_class_is_exactly_the_realization_generators() {
     assert!(BraidedState::new(0).is_err());
 }
 
+// ── the stateless query: an observable, with no state ────────────────
+
+#[test]
+fn the_heisenberg_query_matches_dense_without_a_state_vector() {
+    use quantsim::backend::PauliString;
+
+    // One Trotter layer of the transverse-field Ising model at the
+    // self-dual Clifford point: exp(iπ/4 Z_k) then exp(iπ/4 X_k X_k+1).
+    // Every gate is a braid generator, by construction.
+    let layer = |n: usize| -> Vec<(GateMatrix<C64>, Vec<usize>)> {
+        let mut v = Vec::new();
+        for k in 0..n {
+            v.push(Realization::Majorana.local_gate(2 * k, n).unwrap());
+        }
+        for k in 0..n.saturating_sub(1) {
+            v.push(Realization::Majorana.local_gate(2 * k + 1, n).unwrap());
+        }
+        v
+    };
+
+    let mut worst = 0.0f64;
+    let mut checked = 0usize;
+    for n in 2..=8usize {
+        let gates = layer(n);
+        let mut b = BraidedState::new(n).unwrap();
+        let mut d = DenseState::<C64>::new(n).unwrap();
+        for _ in 0..6 {
+            for (g, t) in &gates {
+                b.apply(g, t).unwrap();
+                d.apply(g, t).unwrap();
+            }
+            for q in 0..n {
+                for (p, ops) in [
+                    (PauliString { x: 0, z: 1 << q, negative: false }, vec![(q, Pauli::Z)]),
+                    (PauliString { x: 1 << q, z: 0, negative: false }, vec![(q, Pauli::X)]),
+                ] {
+                    let mine = b.expectation(p);
+                    // quantized on a stabilizer state: exactly 0 or ±1
+                    assert!(
+                        mine == 0.0 || mine == 1.0 || mine == -1.0,
+                        "expectation {mine} is not quantized"
+                    );
+                    let reference =
+                        pauli_expectation(&d as &dyn Backend<C64>, &ops).unwrap().re;
+                    worst = worst.max((mine - reference).abs());
+                    checked += 1;
+                }
+            }
+        }
+        assert!(b.is_pure_braid());
+        assert_eq!(b.stored_support(), 1);
+    }
+    assert!(checked >= 400, "only {checked} checks");
+    assert!(worst < 1e-14, "stateless expectation deviated by {worst:.3e}");
+}
+
+#[test]
+fn the_observable_light_cone_is_ballistic_and_needs_no_state() {
+    use quantsim::backend::PauliString;
+    let n = 63;
+    let mut s = BraidedState::new(n).unwrap();
+    let centre = 31usize;
+    let z = PauliString { x: 0, z: 1 << centre, negative: false };
+    assert_eq!(s.observable_weight(z), 1);
+
+    for t in 1..=12usize {
+        for k in 0..n {
+            let (g, tg) = Realization::Majorana.local_gate(2 * k, n).unwrap();
+            s.apply(&g, &tg).unwrap();
+        }
+        for k in 0..n - 1 {
+            let (g, tg) = Realization::Majorana.local_gate(2 * k + 1, n).unwrap();
+            s.apply(&g, &tg).unwrap();
+        }
+        // the support grows by exactly one site each way per layer:
+        // Lieb-Robinson velocity 1, read off the conjugated Pauli
+        let c = s.conjugated(z);
+        let support = c.x | c.z;
+        assert_eq!(c.weight(), 2 * t + 1, "weight at layer {t}");
+        assert_eq!(support.trailing_zeros() as usize, centre - t);
+        assert_eq!(63 - support.leading_zeros() as usize, centre + t);
+    }
+    // and none of that ever built an amplitude
+    assert_eq!(s.stored_support(), 1);
+    assert_eq!(s.frame_stats().flushes, 0);
+}
+
 // ── both representations compete in the ordinary selection machinery ──
 
 #[test]

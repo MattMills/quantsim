@@ -210,6 +210,44 @@ impl BraidedState {
         self.inner.stats()
     }
 
+    /// The Heisenberg-picture image of an observable: `C† P C`, where
+    /// `C` is the Clifford the word has spelled so far.
+    ///
+    /// This is the query that needs no state. A Pauli conjugated back
+    /// through the path is still one Pauli — `O(n)` bits — so an
+    /// expectation, a light cone, or an operator's support can be read
+    /// off the path at any width without a single amplitude existing.
+    /// The whole stateless claim reduces to this method being cheap.
+    pub fn conjugated(&self, p: super::PauliString) -> super::PauliString {
+        self.inner.conjugated(p)
+    }
+
+    /// Support of `C† P C` — the number of sites the observable has
+    /// spread to. Measured against time this is the light cone.
+    pub fn observable_weight(&self, p: super::PauliString) -> usize {
+        self.conjugated(p).weight()
+    }
+
+    /// The exact expectation `⟨0…0| C† P C |0…0⟩`, read off the
+    /// conjugated Pauli with no state and no sampling.
+    ///
+    /// On a stabilizer state every Pauli expectation is exactly `0`,
+    /// `+1` or `−1`: the conjugated string either has an `X` or `Y`
+    /// somewhere — which flips a bit of `|0…0⟩` and gives overlap 0 —
+    /// or is pure `Z`, and then the sign is the answer. Quantized
+    /// correlators are a property of the Clifford point, not an
+    /// approximation.
+    pub fn expectation(&self, p: super::PauliString) -> f64 {
+        let c = self.conjugated(p);
+        if c.x != 0 {
+            0.0
+        } else if c.negative {
+            -1.0
+        } else {
+            1.0
+        }
+    }
+
     /// Drop the word, keeping the state.
     ///
     /// Sound because the tableau **is** the group element the word names:
