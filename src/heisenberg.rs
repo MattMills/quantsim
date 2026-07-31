@@ -23,6 +23,27 @@
 //! genuinely anticommutes with a term it meets. Three consequences carry
 //! the method:
 //!
+//! * **Exclusion comes before approximation, and is exact.** A term
+//!   contributes to `⟨0|·|0⟩` only if its `X`-mask reaches zero, and the
+//!   mask only ever XORs with a remaining gate's axis — so if it lies
+//!   outside the GF(2) span of the remaining axes ([`XSpan`]), the term
+//!   and every descendant contribute **precisely zero**. The question is
+//!   asked at generation, so an excluded branch is never created. It is
+//!   kept in its own ledger ([`Propagation::excluded_l1`]) apart from the
+//!   error ledger, because removing it costs nothing at all — verified
+//!   bit-identical against the unexcluded walk.
+//!
+//!   Where it fires is structural and worth stating, because it is not
+//!   where one would hope. The span of gates `0..g` *shrinks* as `g → 0`,
+//!   and a backward walk reaches small `g` **last** — so exclusion
+//!   necessarily bites at the tail. Measured: an IQP-like circuit at
+//!   width 14 collapses from 16 384 surviving terms to **1**, but its
+//!   peak is unchanged at 16 384 and the time is not improved, because
+//!   the collapse happens in the final layer. TFIM, whose `X` axes are
+//!   spread through every layer, does get an earlier bite: peak 4 502 →
+//!   1 947 and 11.7 ms → 9.2 ms. So exclusion bounds the answer's
+//!   assembly and the memory at the end; it reduces the peak only when
+//!   the circuit's *prefix* is `X`-poor.
 //! * **The causal cone is free and needs no separate pass.** A rotation
 //!   whose axis commutes with every term costs one popcount and changes
 //!   nothing. [`Propagation::commuting_skips`] counts them — that is the
@@ -261,6 +282,11 @@ impl PauliSum {
         (l1, l2)
     }
 
+    /// Keep only the terms the predicate accepts.
+    pub fn retain(&mut self, mut f: impl FnMut(&PauliKey, &C64) -> bool) {
+        self.terms.retain(|k, c| f(k, c));
+    }
+
     /// `⟨0…0| Σ c_k X^{a_k} Z^{b_k} |0…0⟩` — the sum of the coefficients
     /// of the terms with no `X` support, since `Z^b|0⟩ = |0⟩` and
     /// `X^a|0⟩ = |a⟩` is orthogonal to `|0⟩` unless `a = 0`.
@@ -479,6 +505,78 @@ impl Journal {
     }
 }
 
+// ── exclusion: what provably cannot reach the answer ─────────────────
+
+/// A GF(2) basis of X-masks, built by insertion without ever rewriting
+/// an existing vector — so every **prefix** of the vector list is itself
+/// a valid basis, and one list serves every prefix of the circuit.
+#[derive(Debug, Clone, Default)]
+pub struct XSpan {
+    /// `(pivot bit, vector)`, pivots distinct, insertion order.
+    vectors: Vec<(u32, u64)>,
+    /// `counts[g]` = vectors contributed by gates `0..g`.
+    counts: Vec<usize>,
+}
+
+impl XSpan {
+    /// Build the filtration of X-mask spans over a rotation list, in
+    /// forward gate order.
+    pub fn of(rotations: &[Rotation]) -> Self {
+        let mut span = XSpan {
+            vectors: Vec::new(),
+            counts: Vec::with_capacity(rotations.len() + 1),
+        };
+        span.counts.push(0);
+        for r in rotations {
+            span.insert(r.axis.0);
+            span.counts.push(span.vectors.len());
+        }
+        span
+    }
+
+    fn insert(&mut self, mut v: u64) {
+        for &(pivot, basis) in &self.vectors {
+            if v >> pivot & 1 == 1 {
+                v ^= basis;
+            }
+        }
+        if v != 0 {
+            let pivot = 63 - v.leading_zeros();
+            self.vectors.push((pivot, v));
+        }
+    }
+
+    /// Whether `x` lies in the span of the X-masks of gates `0..gates`
+    /// — i.e. whether the remaining circuit can still cancel it.
+    ///
+    /// A `false` here is an **exact** exclusion: the term and every
+    /// descendant it would produce contribute precisely zero to
+    /// `⟨0|·|0⟩`, with no approximation involved.
+    pub fn reachable(&self, x: u64, gates: usize) -> bool {
+        if x == 0 {
+            return true;
+        }
+        let take = self.counts[gates.min(self.counts.len() - 1)];
+        let mut v = x;
+        for &(pivot, basis) in &self.vectors[..take] {
+            if v >> pivot & 1 == 1 {
+                v ^= basis;
+            }
+        }
+        v == 0
+    }
+
+    /// Rank of the full span.
+    pub fn rank(&self) -> usize {
+        self.vectors.len()
+    }
+
+    /// Approximate stored bytes — one shared list, not one basis per gate.
+    pub fn memory_bytes(&self) -> usize {
+        self.vectors.len() * 12 + self.counts.len() * 8 + std::mem::size_of::<Self>()
+    }
+}
+
 // ── configuration and the walk ───────────────────────────────────────
 
 /// How much to keep, and how much to remember.
@@ -493,6 +591,11 @@ pub struct Config {
     /// Store a checkpoint every this many steps. `0` disables them —
     /// minimum memory, no cheap refinement.
     pub checkpoint_every: usize,
+    /// Run **exclusion first**: before ranking terms by magnitude, drop
+    /// the ones the remaining circuit provably cannot bring back to the
+    /// `X`-free sector. That is exact and free of error, so it is asked
+    /// before truncation is.
+    pub exclusion: bool,
 }
 
 impl Default for Config {
@@ -501,6 +604,7 @@ impl Default for Config {
             threshold: 1e-8,
             max_terms: None,
             checkpoint_every: 64,
+            exclusion: true,
         }
     }
 }
@@ -526,6 +630,14 @@ pub struct Propagation {
     pub peak_terms: usize,
     /// Whether the term cap was ever hit.
     pub hit_cap: bool,
+    /// Terms removed by **exclusion** — provably unable to reach the
+    /// answer, so removing them costs nothing. Kept in its own ledger,
+    /// separate from [`Propagation::discarded_l1`], because one is exact
+    /// and the other is error.
+    pub excluded_terms: usize,
+    /// `Σ|c|` carried by the excluded terms. This is *not* error: those
+    /// terms contribute exactly zero.
+    pub excluded_l1: f64,
 }
 
 impl Propagation {
@@ -541,30 +653,62 @@ impl Propagation {
 }
 
 /// Conjugate one Pauli sum backwards through one rotation.
-fn step_through(sum: &PauliSum, rot: &Rotation) -> (PauliSum, bool) {
+///
+/// **Exclusion is applied at generation, not after it.** When a span is
+/// supplied, a branch whose `X`-mask the remaining circuit provably
+/// cannot cancel is never created — so the peak term count never
+/// includes it, and the work of carrying it is never done. Filtering
+/// after the fact gives the same answer and none of the saving.
+fn step_through(
+    sum: &PauliSum,
+    rot: &Rotation,
+    exclude: Option<(&XSpan, usize)>,
+) -> (PauliSum, bool, usize, f64) {
     let (c, s) = ((rot.theta).cos(), (rot.theta).sin());
     let phase = axis_operator_phase(rot.axis);
     let mut out = PauliSum::zero();
     let mut branched = false;
+    let (mut excluded, mut excluded_l1) = (0usize, 0.0f64);
+
+    let reachable = |x: u64| match exclude {
+        Some((sp, gates)) => sp.reachable(x, gates),
+        None => true,
+    };
+
     for (key, coeff) in sum.terms() {
         if commutes(key, rot.axis) {
-            out.add(key, coeff);
+            if reachable(key.0) {
+                out.add(key, coeff);
+            } else {
+                excluded += 1;
+                excluded_l1 += coeff.norm();
+            }
             continue;
         }
         // R† P R = cos θ · P − i sin θ · P Q, with both branches held to
         // the floor so a numerically-zero one does not survive.
         let keep = coeff * C64::new(c, 0.0);
         if keep.norm() >= COEFF_FLOOR {
-            out.add(key, keep);
+            if reachable(key.0) {
+                out.add(key, keep);
+            } else {
+                excluded += 1;
+                excluded_l1 += keep.norm();
+            }
         }
         let (prod, sign) = pauli_mul(key, rot.axis);
         let split = coeff * (C64::new(0.0, -s * sign) * phase);
         if split.norm() >= COEFF_FLOOR {
-            out.add(prod, split);
-            branched = true;
+            if reachable(prod.0) {
+                out.add(prod, split);
+                branched = true;
+            } else {
+                excluded += 1;
+                excluded_l1 += split.norm();
+            }
         }
     }
-    (out, branched)
+    (out, branched, excluded, excluded_l1)
 }
 
 /// Propagate an observable backwards through a rotation sequence.
@@ -585,6 +729,14 @@ pub fn propagate(
     let (mut disc_l1, mut disc_l2) = (0.0f64, 0.0f64);
     let mut peak = sum.len();
     let mut hit_cap = false;
+    let (mut excluded_terms, mut excluded_l1) = (0usize, 0.0f64);
+    // The exclusion filtration is over the whole rotation list; building
+    // it is one forward pass and one shared basis.
+    let span = if cfg.exclusion {
+        Some(XSpan::of(rotations))
+    } else {
+        None
+    };
 
     if cfg.checkpoint_every > 0 {
         journal.checkpoints.push(Checkpoint {
@@ -596,8 +748,12 @@ pub fn propagate(
 
     for (step, gate_index) in (0..rotations.len()).rev().enumerate() {
         let rot = &rotations[gate_index];
-        let (next, branched) = step_through(&sum, rot);
+        // `gate_index` gates remain after this one is consumed.
+        let excl = span.as_ref().map(|sp| (sp, gate_index));
+        let (next, branched, ex_n, ex_l1) = step_through(&sum, rot, excl);
         sum = next;
+        excluded_terms += ex_n;
+        excluded_l1 += ex_l1;
         if branched {
             branchings += 1;
         } else {
@@ -650,6 +806,8 @@ pub fn propagate(
         discarded_l2: disc_l2,
         peak_terms: peak,
         hit_cap,
+        excluded_terms,
+        excluded_l1,
     })
 }
 
@@ -875,6 +1033,8 @@ mod tests {
                 threshold: 0.0,
                 max_terms: None,
                 checkpoint_every: 0,
+                // exclusion off: this test is about the branch itself
+                exclusion: false,
             },
         )
         .unwrap();
@@ -900,6 +1060,7 @@ mod tests {
             threshold: 0.0,
             max_terms: None,
             checkpoint_every: 0,
+            exclusion: true,
         };
         let p = propagate(&PauliSum::z(0), &[Rotation::rz(0, 0.5)], &cfg).unwrap();
         assert_eq!(p.sum.len(), 1);

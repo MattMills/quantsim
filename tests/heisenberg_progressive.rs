@@ -11,6 +11,16 @@ fn exact_cfg() -> Config {
         threshold: 0.0,
         max_terms: None,
         checkpoint_every: 0,
+        exclusion: true,
+    }
+}
+
+/// The same, with exclusion off — the reference the exclusion mode must
+/// agree with.
+fn no_exclusion_cfg() -> Config {
+    Config {
+        exclusion: false,
+        ..exact_cfg()
     }
 }
 
@@ -111,7 +121,7 @@ fn a_clifford_angle_never_branches_the_sum() {
     let n = 12;
     let dt = std::f64::consts::FRAC_PI_4;
     let rots = tfim_trotter(n, 1.0, 1.0, dt, 20);
-    let p = propagate(&PauliSum::z(5), &rots, &exact_cfg()).unwrap();
+    let p = propagate(&PauliSum::z(5), &rots, &no_exclusion_cfg()).unwrap();
     assert_eq!(p.sum.len(), 1, "Clifford rotations must not branch");
     assert_eq!(p.discarded_l1, 0.0);
     assert!((p.sum.l2_squared() - 1.0).abs() < 1e-12);
@@ -121,7 +131,9 @@ fn a_clifford_angle_never_branches_the_sum() {
 fn the_l2_weight_is_conserved_by_conjugation() {
     let n = 8;
     let rots = tfim_trotter(n, 1.0, 0.7, 0.4, 4);
-    let p = propagate(&PauliSum::z(3), &rots, &exact_cfg()).unwrap();
+    // Exclusion deliberately removes terms, so L2 conservation is a
+    // property of the *unexcluded* walk.
+    let p = propagate(&PauliSum::z(3), &rots, &no_exclusion_cfg()).unwrap();
     // unitary conjugation preserves the Frobenius norm of the observable
     assert!(
         (p.sum.l2_squared() - 1.0).abs() < 1e-12,
@@ -130,6 +142,84 @@ fn the_l2_weight_is_conserved_by_conjugation() {
     );
     for step in p.journal.steps() {
         assert!((step.l2_squared - 1.0).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn exclusion_is_exact_and_never_changes_the_answer() {
+    // Exclusion drops terms the remaining circuit provably cannot bring
+    // back to the X-free sector. If the reachability test is sound, the
+    // answer is bit-identical to the unexcluded walk — that is the whole
+    // correctness criterion, and it is checked against dense too.
+    let mut worst_vs_plain = 0.0f64;
+    let mut worst_vs_dense = 0.0f64;
+    let mut total_excluded = 0usize;
+    let mut checks = 0usize;
+    for n in 2..=8usize {
+        for &dt in &[0.2f64, 0.55] {
+            let rots = tfim_trotter(n, 1.0, 0.7, dt, 3);
+            let d = dense_run(&rots, n);
+            for q in 0..n {
+                let with = propagate(&PauliSum::z(q), &rots, &exact_cfg()).unwrap();
+                let without = propagate(&PauliSum::z(q), &rots, &no_exclusion_cfg()).unwrap();
+                let reference = pauli_expectation(&d as &dyn Backend<C64>, &[(q, Pauli::Z)])
+                    .unwrap()
+                    .re;
+                worst_vs_plain =
+                    worst_vs_plain.max((with.expectation() - without.expectation()).abs());
+                worst_vs_dense = worst_vs_dense.max((with.expectation() - reference).abs());
+                total_excluded += with.excluded_terms;
+                // exclusion is exact: it never adds to the error ledger
+                assert_eq!(with.discarded_l1, 0.0, "exact mode must discard nothing");
+                assert!(with.sum.len() <= without.sum.len());
+                checks += 1;
+            }
+        }
+    }
+    assert!(checks >= 60, "only {checks} checks");
+    assert!(
+        worst_vs_plain < 1e-13,
+        "exclusion changed the answer by {worst_vs_plain:.3e}"
+    );
+    assert!(
+        worst_vs_dense < 1e-13,
+        "excluded walk deviated from dense by {worst_vs_dense:.3e}"
+    );
+    assert!(
+        total_excluded > 0,
+        "exclusion never fired — the test proves nothing"
+    );
+}
+
+#[test]
+fn the_x_span_filtration_is_a_correct_gf2_basis() {
+    let rots = tfim_trotter(6, 1.0, 0.7, 0.3, 3);
+    let span = XSpan::of(&rots);
+    // rank is at most the width, and reached because every site gets an X
+    assert!(span.rank() <= 6);
+    assert_eq!(span.rank(), 6);
+    // zero is always reachable, from anywhere
+    for g in 0..=rots.len() {
+        assert!(span.reachable(0, g));
+    }
+    // with no gates left, only zero is reachable
+    for x in 1u64..64 {
+        assert!(!span.reachable(x, 0), "x={x} reachable with no gates left");
+    }
+    // with every gate available, the full span is reachable
+    for x in 0u64..64 {
+        assert!(span.reachable(x, rots.len()));
+    }
+    // and membership is monotone in the number of remaining gates
+    for x in 0u64..64 {
+        let mut seen_true = false;
+        for g in 0..=rots.len() {
+            let r = span.reachable(x, g);
+            if r {
+                seen_true = true;
+            }
+            assert!(!seen_true || r, "reachability un-monotone for x={x}");
+        }
     }
 }
 
@@ -150,6 +240,7 @@ fn the_error_bound_actually_bounds_the_error() {
                 threshold: th,
                 max_terms: None,
                 checkpoint_every: 0,
+        exclusion: true,
             };
             let p = propagate(&PauliSum::z(q), &rots, &cfg).unwrap();
             let error = (p.expectation() - reference).abs();
@@ -185,6 +276,7 @@ fn the_term_cap_is_respected_and_reported() {
         threshold: 0.0,
         max_terms: Some(200),
         checkpoint_every: 0,
+        exclusion: true,
     };
     let p = propagate(&PauliSum::z(8), &rots, &cfg).unwrap();
     assert!(p.hit_cap, "the cap should have bound");
@@ -203,6 +295,7 @@ fn the_journal_is_monotone_and_retrodiction_matches_a_linear_scan() {
         threshold: 1e-6,
         max_terms: None,
         checkpoint_every: 16,
+        exclusion: true,
     };
     let p = propagate(&PauliSum::z(7), &rots, &cfg).unwrap();
     assert_eq!(p.journal.steps().len(), rots.len());
@@ -257,6 +350,7 @@ fn refinement_restarts_from_a_checkpoint_and_improves_the_answer() {
         threshold: 1e-3,
         max_terms: None,
         checkpoint_every: 8,
+        exclusion: true,
     };
     let p = propagate(&PauliSum::z(6), &rots, &coarse).unwrap();
     assert!(p.journal.checkpoint_count() > 1);
@@ -268,6 +362,7 @@ fn refinement_restarts_from_a_checkpoint_and_improves_the_answer() {
         threshold: 1e-9,
         max_terms: None,
         checkpoint_every: 8,
+        exclusion: true,
     };
     let (full, walked_full) = p.refine_from(&rots, 0, &fine).unwrap();
     assert_eq!(walked_full, rots.len());
@@ -309,6 +404,7 @@ fn the_shared_walk_matches_the_sum_of_separate_walks_and_costs_less() {
         threshold: 1e-7,
         max_terms: None,
         checkpoint_every: 0,
+        exclusion: true,
     };
     let r = propagate_basis(&obs, &w, &rots, &cfg, true).unwrap();
 
