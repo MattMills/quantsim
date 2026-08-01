@@ -1,6 +1,6 @@
 //! # quantsim
 //!
-//! An in-house research quantum simulator built around two swappable axes:
+//! An in-house research quantum simulator built around swappable axes:
 //!
 //! 1. **The amplitude algebra** ([`scalar::Scalar`]): ℝ, ℂ (default),
 //!    quaternions ℍ, octonions 𝕆, sedenions — via a generic Cayley–Dickson
@@ -14,6 +14,13 @@
 //!    sparse→dense promotion, factored entanglement clusters, matrix
 //!    product states, and the hierarchical `mera` tree with coarse views
 //!    at every scale; further representations register by name.
+//! 3. **Representations that are not state containers at all.** A
+//!    [`query::Resolver`] is defined by the questions it answers rather
+//!    than by what it stores — [`query::HeisenbergResolver`] holds no
+//!    register and instantiates no amplitudes. A [`pathsum::PathSum`]
+//!    holds the circuit's closed form, so its exponent is the *measured*
+//!    `h*` rather than the width: zero for every Clifford circuit at any
+//!    size. Neither could be a `Backend`, and neither should have to be.
 //!
 //! Gates live in a [`registry::GateRegistry`] — research gates are
 //! first-class: implement [`gates::GateDef`] or hand the registry a closure,
@@ -89,6 +96,7 @@ pub mod math;
 pub mod memo;
 pub mod mixed;
 pub mod padic;
+pub mod pathsum;
 pub mod phase;
 pub mod polarity;
 pub mod qudit;
@@ -190,6 +198,9 @@ pub mod prelude {
         fringe_period, geometry_radix, predicted_writes_per_point, resolve, sweep, Character,
         CrtDiagonal, DiagonalComparison, FactoredField, GeometryRadix, JournalEntry, Order, Radix,
         Resolution, Sweep, SweepReport, Wave, WaveSystem,
+    };
+    pub use crate::pathsum::{
+        expand_affine_product, turn_from_dyadic, turn_from_radians, Mask, PathSum, Turn,
     };
     pub use crate::phase::{
         bit_group_elements, compare_degrees, phase_degree, DegreeComparison, PhaseDegree,
