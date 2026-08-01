@@ -202,6 +202,79 @@ fn main() -> Result<()> {
     println!("  the circuit that the reduction reports, not by the size of the");
     println!("  Hilbert space nobody asked to enumerate.\n");
 
+
+    // ── the operator formulation ─────────────────────────────────────
+    println!("── what needs no tableau ──\n");
+    println!("  A stabilizer tableau represents a stabilizer STATE. It cannot hold");
+    println!("  a non-Clifford operator at all, so a tableau-based tool must decide");
+    println!("  up front which fragment it is in and branch. The path sum starts");
+    println!("  from the identity OPERATOR — each qubit's form is its own free input");
+    println!("  variable — and has one code path for every circuit. h* reports where");
+    println!("  it landed instead of being told.\n");
+    println!("  Circuit equivalence, decided by reducing V-dagger . U:\n");
+    println!("     identity                  verdict      residual h*");
+    let one = |gs: &[&str]| { let mut c = Circuit::<C64>::new(1);
+        for g in gs { c.gate(*g, vec![], vec![0]); } c };
+    for (label, a, b) in [
+        ("H.H = I", one(&["h","h"]), one(&[])),
+        ("T.T = S", one(&["t","t"]), one(&["s"])),
+        ("T^4 = Z", one(&["t","t","t","t"]), one(&["z"])),
+        ("T^8 = I", one(&["t";8]), one(&[])),
+        ("H.Z.H = X", one(&["h","z","h"]), one(&["x"])),
+        ("T vs S (differ)", one(&["t"]), one(&["s"])),
+    ] {
+        let (eq, h) = quantsim::pathsum::equivalent_verdict(&a, &b)?;
+        println!("     {label:24}  {:11}  {h:6}", if eq { "EQUAL" } else { "not proved" });
+    }
+    println!("\n  Two of those rows are outside a tableau's vocabulary entirely:");
+    println!("  T.T = S and T^8 = I are statements about non-Clifford operators.\n");
+
+    println!("── the T-count says hard; the reduction says Clifford ──\n");
+    println!("  A cost model that counts T gates sees magic. A tableau simulator");
+    println!("  sees non-Clifford letters and must refuse or fall back. Reduction");
+    println!("  DISCOVERS that the magic cancels, and the certificate does not care");
+    println!("  how many T gates were written down:\n");
+    println!("     circuit                        T gates    h*   verdict");
+    for k in [2usize, 8, 32, 64] {
+        let mut c = Circuit::<C64>::new(3);
+        for i in 0..k {
+            c.gate("t", vec![], vec![i % 3]);
+            c.gate("cx", vec![], vec![i % 3, (i + 1) % 3]);
+            c.gate("cx", vec![], vec![i % 3, (i + 1) % 3]);
+            c.gate("tdg", vec![], vec![i % 3]);
+            c.gate("h", vec![], vec![(i + 2) % 3]);
+        }
+        let op = quantsim::pathsum::operator(&c)?;
+        println!("     cancelling pairs, k={k:<4}          {:5} {:5}   {}", 2*k, op.internal_vars(),
+            if op.internal_vars() == 0 { "CLIFFORD, certified" } else { "magic survives" });
+    }
+    for n in [4usize, 16, 64] {
+        let mut c = Circuit::<C64>::new(n);
+        for q in 0..n { for _ in 0..8 { c.gate("t", vec![], vec![q]); } }
+        let op = quantsim::pathsum::operator(&c)?;
+        println!("     T^8 on every qubit, n={n:<4}       {:5} {:5}   {}", 8*n, op.internal_vars(),
+            if op.is_identity_up_to_phase() { "IDENTITY, certified" } else { "not identity" });
+    }
+    for k in [1usize, 2, 4, 8] {
+        let mut c = Circuit::<C64>::new(3);
+        for i in 0..k {
+            c.gate("h", vec![], vec![i % 3]);
+            c.gate("t", vec![], vec![i % 3]);
+            c.gate("cx", vec![], vec![i % 3, (i + 1) % 3]);
+            c.gate("t", vec![], vec![(i + 1) % 3]);
+        }
+        let op = quantsim::pathsum::operator(&c)?;
+        println!("     genuine magic, k={k:<4}             {:5} {:5}   {}", 2*k, op.internal_vars(),
+            if op.internal_vars() == 0 { "CLIFFORD, certified" } else { "magic survives" });
+    }
+    println!("\n  The contrast is the point. Magic that cancels is certified away at");
+    println!("  any T-count; magic that does not is not. Neither answer was assumed");
+    println!("  from the gate list, and no tableau was consulted to get either.\n");
+    println!("  Soundness runs one way and the module says so: reduction only");
+    println!("  rewrites the sum into an equal one, so EQUAL is a proof. \"Not");
+    println!("  proved\" means the rewrite system stalled — it is complete for the");
+    println!("  Clifford fragment and not in general — so it is never reported as");
+    println!("  \"unequal\".\n");
     // ── the edge of the fragment ─────────────────────────────────────
     println!("── where the fragment ends ──\n");
     println!("  The algebra is exact on dyadic angles and closed on nothing else,");

@@ -207,7 +207,8 @@ pub mod prelude {
         Resolution, Sweep, SweepReport, Wave, WaveSystem,
     };
     pub use crate::pathsum::{
-        expand_affine_product, turn_from_dyadic, turn_from_radians, Mask, PathSum, Turn,
+        equivalent, equivalent_verdict, expand_affine_product, operator, turn_from_dyadic,
+        turn_from_radians, Mask, PathSum, Turn,
     };
     pub use crate::phase::{
         bit_group_elements, compare_degrees, phase_degree, DegreeComparison, PhaseDegree,

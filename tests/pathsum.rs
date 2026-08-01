@@ -319,3 +319,217 @@ fn a_qubit_outside_the_register_is_refused() {
     assert!(ps.cnot(0, 0).is_err(), "a cnot needs two distinct qubits");
     assert!(ps.cz(0, 5).is_err());
 }
+
+// ── the operator formulation, and what needs no tableau ──────────────
+
+use quantsim::pathsum::{equivalent, equivalent_verdict, operator};
+
+fn dense_equal(a: &Circuit<C64>, b: &Circuit<C64>) -> bool {
+    // Compare the two unitaries column by column, up to global phase.
+    let n = a.num_qubits().max(b.num_qubits());
+    let sim: Simulator = Simulator::new();
+    let mut ratio: Option<C64> = None;
+    for col in 0..1u64 << n {
+        let prep = |c: &Circuit<C64>| -> Vec<C64> {
+            let mut full = Circuit::new(n);
+            for q in 0..n {
+                if col >> q & 1 == 1 {
+                    full.gate("x", vec![], vec![q]);
+                }
+            }
+            for op in c.ops() {
+                if let Op::Named { name, params, qubits } = op {
+                    full.gate(name, params.clone(), qubits.clone());
+                }
+            }
+            let st = sim.run(&full).unwrap();
+            (0..1u64 << n).map(|i| st.amplitude(i)).collect()
+        };
+        let (x, y) = (prep(a), prep(b));
+        for (p, q) in x.iter().zip(&y) {
+            if p.re.hypot(p.im) < 1e-12 && q.re.hypot(q.im) < 1e-12 {
+                continue;
+            }
+            if q.re.hypot(q.im) < 1e-12 {
+                return false;
+            }
+            let r = *p / *q;
+            match ratio {
+                None => ratio = Some(r),
+                Some(r0) => {
+                    if (r0.re - r.re).abs() > 1e-9 || (r0.im - r.im).abs() > 1e-9 {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
+#[test]
+fn the_operator_formulation_decides_known_identities() {
+    // A stabilizer tableau cannot hold a non-Clifford operator at all, so
+    // it cannot state — let alone decide — `T·T = S` or `T^8 = I`. The
+    // path sum has one code path for every circuit.
+    let one = |gs: &[&str]| {
+        let mut c = Circuit::<C64>::new(1);
+        for g in gs {
+            c.gate(*g, vec![], vec![0]);
+        }
+        c
+    };
+    for (label, a, b) in [
+        ("H·H = I", one(&["h", "h"]), one(&[])),
+        ("T·T = S", one(&["t", "t"]), one(&["s"])),
+        ("T·T·T·T = Z", one(&["t", "t", "t", "t"]), one(&["z"])),
+        ("T^8 = I", one(&["t"; 8]), one(&[])),
+        ("S·S = Z", one(&["s", "s"]), one(&["z"])),
+        ("H·Z·H = X", one(&["h", "z", "h"]), one(&["x"])),
+        ("T·T† = I", one(&["t", "tdg"]), one(&[])),
+    ] {
+        assert!(equivalent(&a, &b).unwrap(), "{label} should decide EQUAL");
+        assert!(dense_equal(&a, &b), "{label}: and dense must agree");
+    }
+
+    // two-qubit identities
+    let mut cz = Circuit::<C64>::new(2);
+    cz.gate("cz", vec![], vec![0, 1]);
+    let mut hcxh = Circuit::<C64>::new(2);
+    hcxh.gate("h", vec![], vec![1])
+        .gate("cx", vec![], vec![0, 1])
+        .gate("h", vec![], vec![1]);
+    assert!(equivalent(&cz, &hcxh).unwrap());
+
+    let mut swap = Circuit::<C64>::new(2);
+    swap.gate("swap", vec![], vec![0, 1]);
+    let mut three = Circuit::<C64>::new(2);
+    three
+        .gate("cx", vec![], vec![0, 1])
+        .gate("cx", vec![], vec![1, 0])
+        .gate("cx", vec![], vec![0, 1]);
+    assert!(equivalent(&swap, &three).unwrap());
+}
+
+#[test]
+fn a_circuit_is_always_decided_equal_to_itself() {
+    for &(n, gates) in &[(3usize, 20usize), (5, 40), (8, 60), (12, 80)] {
+        let c = word(n, gates, 3, n as u64);
+        let (eq, h) = equivalent_verdict(&c, &c).unwrap();
+        assert!(eq, "n={n}: a circuit must decide equal to itself");
+        assert_eq!(h, 0, "and the reduction must finish");
+    }
+}
+
+#[test]
+fn a_true_verdict_is_a_proof_and_a_false_one_is_only_a_stall() {
+    // Soundness in the direction that matters: every EQUAL is checked
+    // against dense. The other direction is deliberately weaker — the
+    // rewrite system is complete for Clifford but not in general — so
+    // "not proved" is reported as that, never as "unequal".
+    let one = |gs: &[&str]| {
+        let mut c = Circuit::<C64>::new(1);
+        for g in gs {
+            c.gate(*g, vec![], vec![0]);
+        }
+        c
+    };
+    for (a, b) in [
+        (one(&["h"]), one(&["x"])),
+        (one(&["t"]), one(&["s"])),
+        (one(&["s"]), one(&["z"])),
+    ] {
+        assert!(!equivalent(&a, &b).unwrap());
+        assert!(!dense_equal(&a, &b), "these really are different");
+    }
+}
+
+// ── the headline: Clifford-ness the gate list hides ──────────────────
+
+#[test]
+fn t_gates_that_cancel_are_certified_clifford_however_many_there_are() {
+    // The thing no tableau method can do. A T-counting cost model sees
+    // 2k magic gates and calls the circuit hard; a tableau simulator sees
+    // non-Clifford letters and must refuse or fall back. Reduction
+    // *discovers* that the magic cancels and certifies h* = 0, and the
+    // certificate does not care how many T gates were written down.
+    for k in [2usize, 8, 32, 64] {
+        let mut c = Circuit::<C64>::new(3);
+        for i in 0..k {
+            c.gate("t", vec![], vec![i % 3]);
+            c.gate("cx", vec![], vec![i % 3, (i + 1) % 3]);
+            c.gate("cx", vec![], vec![i % 3, (i + 1) % 3]);
+            c.gate("tdg", vec![], vec![i % 3]);
+            c.gate("h", vec![], vec![(i + 2) % 3]);
+        }
+        let op = operator(&c).unwrap();
+        assert_eq!(
+            op.internal_vars(),
+            0,
+            "{} T gates, and every one of them cancels",
+            2 * k
+        );
+    }
+
+    // T^8 on every qubit: 8n T gates, and the operator is the identity.
+    for n in [4usize, 8, 16] {
+        let mut c = Circuit::<C64>::new(n);
+        for q in 0..n {
+            for _ in 0..8 {
+                c.gate("t", vec![], vec![q]);
+            }
+        }
+        let op = operator(&c).unwrap();
+        assert!(
+            op.is_identity_up_to_phase(),
+            "{} T gates should reduce to the identity",
+            8 * n
+        );
+    }
+}
+
+#[test]
+fn genuine_magic_survives_and_the_exponent_grows() {
+    // The contrast that makes the previous test mean something: magic
+    // that does not cancel is not certified away.
+    let mut seen = Vec::new();
+    for k in [1usize, 2, 4, 8] {
+        let mut c = Circuit::<C64>::new(3);
+        for i in 0..k {
+            c.gate("h", vec![], vec![i % 3]);
+            c.gate("t", vec![], vec![i % 3]);
+            c.gate("cx", vec![], vec![i % 3, (i + 1) % 3]);
+            c.gate("t", vec![], vec![(i + 1) % 3]);
+        }
+        seen.push((k, operator(&c).unwrap().internal_vars()));
+    }
+    assert!(
+        seen.last().unwrap().1 > 0,
+        "real magic must survive: {seen:?}"
+    );
+    assert!(
+        seen.last().unwrap().1 > seen[0].1,
+        "and the exponent must grow with it: {seen:?}"
+    );
+}
+
+#[test]
+fn an_input_variable_is_free_and_reduction_leaves_it_alone() {
+    // Rule E resolves a constraint by substituting into a summed
+    // variable. Once inputs exist the constraint can involve only free
+    // inputs, and substituting into one would assert something the
+    // operator does not say. The identity operator on any width must
+    // survive reduction untouched.
+    for n in [1usize, 3, 8] {
+        let mut ps = PathSum::identity(n);
+        assert_eq!(ps.inputs(), n);
+        assert!(ps.is_identity());
+        ps.reduce();
+        assert!(ps.is_identity(), "reduction moved the identity at n={n}");
+    }
+    // and a Clifford operator reduces without consuming its inputs
+    let c = word(6, 40, 0, 5);
+    let op = operator(&c).unwrap();
+    assert_eq!(op.inputs(), 6);
+    assert_eq!(op.internal_vars(), 0, "Clifford: nothing should survive");
+}
