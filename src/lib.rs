@@ -1,6 +1,6 @@
 //! # quantsim
 //!
-//! An in-house research quantum simulator built around two swappable axes:
+//! An in-house research quantum simulator built around swappable axes:
 //!
 //! 1. **The amplitude algebra** ([`scalar::Scalar`]): ℝ, ℂ (default),
 //!    quaternions ℍ, octonions 𝕆, sedenions — via a generic Cayley–Dickson
@@ -14,6 +14,13 @@
 //!    sparse→dense promotion, factored entanglement clusters, matrix
 //!    product states, and the hierarchical `mera` tree with coarse views
 //!    at every scale; further representations register by name.
+//! 3. **Representations that are not state containers at all.** A
+//!    [`query::Resolver`] is defined by the questions it answers rather
+//!    than by what it stores — [`query::HeisenbergResolver`] holds no
+//!    register and instantiates no amplitudes. A [`pathsum::PathSum`]
+//!    holds the circuit's closed form, so its exponent is the *measured*
+//!    `h*` rather than the width: zero for every Clifford circuit at any
+//!    size. Neither could be a `Backend`, and neither should have to be.
 //!
 //! Gates live in a [`registry::GateRegistry`] — research gates are
 //! first-class: implement [`gates::GateDef`] or hand the registry a closure,
@@ -73,6 +80,7 @@ pub mod circuit;
 pub mod closure;
 pub mod conformance;
 pub mod coupling;
+pub mod crossview;
 pub mod discovery;
 pub mod dyadic;
 pub mod e8;
@@ -89,10 +97,13 @@ pub mod math;
 pub mod memo;
 pub mod mixed;
 pub mod padic;
+pub mod pathsum;
 pub mod phase;
 pub mod polarity;
 pub mod qudit;
+pub mod query;
 pub mod recursive;
+pub mod reflexive;
 pub mod registry;
 pub mod rng;
 pub mod sampling;
@@ -100,6 +111,8 @@ pub mod scalar;
 pub mod schedule;
 pub mod selfhost;
 pub mod sim;
+pub mod support;
+pub mod upembed;
 
 pub use backend::{AdaptiveState, Backend, BackendRegistry, DenseState, SparseState};
 pub use circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
@@ -148,6 +161,7 @@ pub mod prelude {
     pub use crate::conformance::{
         random_registry_circuit, verify_backend, ConformanceConfig, ConformanceReport,
     };
+    pub use crate::crossview::{fwht, fwht_c, CrossView};
     pub use crate::coupling::{
         coupling_of, decoupling_frame, propagate_engineered, scramble, support_blocks, Coupling,
         DecouplingFrame, EngineeredReport, Stabilizer,
@@ -190,6 +204,9 @@ pub mod prelude {
         CrtDiagonal, DiagonalComparison, FactoredField, GeometryRadix, JournalEntry, Order, Radix,
         Resolution, Sweep, SweepReport, Wave, WaveSystem,
     };
+    pub use crate::pathsum::{
+        expand_affine_product, turn_from_dyadic, turn_from_radians, Mask, PathSum, Turn,
+    };
     pub use crate::phase::{
         bit_group_elements, compare_degrees, phase_degree, DegreeComparison, PhaseDegree,
         PhaseGroup, EXHAUSTIVE_BUDGET,
@@ -197,6 +214,10 @@ pub mod prelude {
     pub use crate::qudit::{
         algebra_capacity, dual_algebra_report, synthesize_sandwich, AlgebraicRegister,
         DualAlgebraReport, QuditStats, SandwichOp, SandwichTerm,
+    };
+    pub use crate::reflexive::{
+        deviation, replay, Adaptive, DriveLaw, Emission, Gradient, Program, Proportional, Reflexive,
+        Run, Target,
     };
     pub use crate::registry::GateRegistry;
     pub use crate::rng::Prng;
@@ -217,4 +238,11 @@ pub mod prelude {
         LinearizationReport, SelfComputationCost, SelfHostedStack, VOLUME_COORDINATES,
     };
     pub use crate::sim::Simulator;
+    pub use crate::support::{
+        clear_memo, memo_len, propagate_wide, Support, WideConfig, WidePauli, WidePauliSum,
+        WidePropagation, WideRotation, MEMO_CAPACITY,
+    };
+    pub use crate::upembed::{
+        cluster_readout, gadgetize, Ancilla, Readout, UpEmbedResolver, UpEmbedding, MAX_CLUSTER,
+    };
 }
