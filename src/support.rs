@@ -718,10 +718,33 @@ impl WidePauliSum {
         WidePauliSum::default()
     }
 
-    /// A single Pauli with unit coefficient.
+    /// A single Pauli with unit coefficient, in the **raw** `X^x Z^z`
+    /// convention the keys use.
     pub fn from_pauli(p: WidePauli) -> WidePauliSum {
         let mut s = WidePauliSum::zero();
         s.add(p, C64::new(1.0, 0.0));
+        s
+    }
+
+    /// The **Hermitian** observable `i^{|x∧z|} X^x Z^z`, seeded with the
+    /// normalization that makes it Hermitian.
+    ///
+    /// The distinction is not pedantic and it is easy to lose: keys are
+    /// raw, so seeding a `Y` observable with coefficient `1` computes
+    /// `⟨X Z⟩ = −i⟨Y⟩`, which is purely imaginary — and any readout that
+    /// takes a real part then silently returns zero. That is exactly how
+    /// the reflexive loop's Jacobian came back identically zero, and it
+    /// looked like physics rather than a bug because `⟨X⟩` and `⟨Z⟩`
+    /// observables were unaffected.
+    pub fn from_observable(p: WidePauli) -> WidePauliSum {
+        let phase = match p.x.and(&p.z).weight() % 4 {
+            0 => C64::new(1.0, 0.0),
+            1 => C64::new(0.0, 1.0),
+            2 => C64::new(-1.0, 0.0),
+            _ => C64::new(0.0, -1.0),
+        };
+        let mut s = WidePauliSum::zero();
+        s.add(p, phase);
         s
     }
 
@@ -784,14 +807,24 @@ impl WidePauliSum {
     }
 
     /// `⟨0…0|Σ|0…0⟩`: only `X`-free terms survive, and each contributes
-    /// its coefficient times `i^{|x∧z|}` — which for an `X`-free term is
-    /// `1`.
+    /// its coefficient — an `X`-free raw key is `Z^z`, whose vacuum
+    /// expectation is `1`.
+    ///
+    /// Seed with [`WidePauliSum::from_observable`] if the sum is meant
+    /// to be a Hermitian observable, or this returns the real part of
+    /// something that was never real.
     pub fn vacuum_expectation(&self) -> f64 {
+        self.vacuum_expectation_complex().re
+    }
+
+    /// The same, without discarding the imaginary part — which should be
+    /// zero for a properly seeded Hermitian observable, and is worth
+    /// checking rather than assuming.
+    pub fn vacuum_expectation_complex(&self) -> C64 {
         self.terms
             .iter()
             .filter(|(p, _)| p.x.is_empty())
-            .map(|(_, c)| c.re)
-            .sum()
+            .fold(C64::new(0.0, 0.0), |a, (_, c)| a + *c)
     }
 }
 

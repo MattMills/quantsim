@@ -216,8 +216,8 @@ pub mod prelude {
         DualAlgebraReport, QuditStats, SandwichOp, SandwichTerm,
     };
     pub use crate::reflexive::{
-        deviation, replay, Adaptive, DriveLaw, Emission, Gradient, Proportional, Reflexive, Run,
-        Target,
+        deviation, replay, Adaptive, DriveLaw, Emission, Gradient, Program, Proportional, Reflexive,
+        Run, Target,
     };
     pub use crate::registry::GateRegistry;
     pub use crate::rng::Prng;

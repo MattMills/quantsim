@@ -335,3 +335,217 @@ fn the_drive_lives_on_half_the_harmonics_by_a_selection_rule() {
     assert!(live <= 1 << (n - 1), "{live} exceeds the parity half");
     assert!(live > 0, "nothing was steerable, so the test proves nothing");
 }
+
+// ── the same loop, with no register at all ───────────────────────────
+
+use quantsim::reflexive::Program;
+use quantsim::support::{Support, WideConfig, WidePauli, WideRotation};
+
+fn wide_mixing(n: usize) -> Vec<WideRotation> {
+    let mut v = Vec::new();
+    for q in 0..n - 1 {
+        v.push(WideRotation::rzz(q, q + 1, 0.35));
+    }
+    for q in 0..n {
+        v.push(WideRotation::rx(q, 0.42));
+    }
+    for q in 0..n {
+        v.push(WideRotation::rz(q, 0.27));
+    }
+    for q in 0..n {
+        v.push(WideRotation::rx(q, 0.31));
+    }
+    v
+}
+
+fn dense_mixing(n: usize) -> Circuit<C64> {
+    let mut c = Circuit::new(n);
+    for q in 0..n - 1 {
+        c.gate("rzz", vec![0.35], vec![q, q + 1]);
+    }
+    for q in 0..n {
+        c.gate("rx", vec![0.42], vec![q]);
+    }
+    for q in 0..n {
+        c.gate("rz", vec![0.27], vec![q]);
+    }
+    for q in 0..n {
+        c.gate("rx", vec![0.31], vec![q]);
+    }
+    c
+}
+
+fn exact() -> WideConfig {
+    WideConfig {
+        threshold: 0.0,
+        max_terms: None,
+    }
+}
+
+#[test]
+fn the_register_free_walk_reproduces_dense_including_y_observables() {
+    // The Y rows are the ones that matter. `PauliSum` keys are raw
+    // `X^x Z^z`, so seeding a Y observable with coefficient 1 computes
+    // ⟨XZ⟩ = −i⟨Y⟩ — purely imaginary, and a real-part readout silently
+    // returns zero. X and Z observables are unaffected, so a test
+    // without a Y row passes while the Jacobian is identically wrong.
+    let sim: Simulator = Simulator::new();
+    for n in [4usize, 6, 8, 10] {
+        let mut p = Program::new(n);
+        p.mix(&wide_mixing(n));
+        let st = sim.run(&dense_mixing(n)).unwrap();
+        for (wide, ops) in [
+            (
+                WidePauli {
+                    x: [0usize].into_iter().collect(),
+                    z: Support::empty(),
+                },
+                vec![(0usize, Pauli::X)],
+            ),
+            (
+                WidePauli {
+                    x: Support::empty(),
+                    z: [0usize].into_iter().collect(),
+                },
+                vec![(0, Pauli::Z)],
+            ),
+            (
+                WidePauli {
+                    x: [0usize].into_iter().collect(),
+                    z: [0usize].into_iter().collect(),
+                },
+                vec![(0, Pauli::Y)],
+            ),
+            (
+                WidePauli {
+                    x: [0usize].into_iter().collect(),
+                    z: [0usize, 1].into_iter().collect(),
+                },
+                vec![(0, Pauli::Y), (1, Pauli::Z)],
+            ),
+        ] {
+            let (got, cost) = p.expectation(&wide, &exact());
+            let want = pauli_expectation(&*st, &ops).unwrap();
+            assert!(
+                (got - want.re).abs() < 1e-11,
+                "n={n} {ops:?}: register-free {got} vs dense {}",
+                want.re
+            );
+            assert_eq!(cost.discarded_l1, 0.0, "the walk was meant to be exact");
+        }
+    }
+}
+
+#[test]
+fn the_register_free_jacobian_matches_finite_differences() {
+    let n = 8usize;
+    for target in [
+        WidePauli {
+            x: [0usize].into_iter().collect(),
+            z: Support::empty(),
+        },
+        WidePauli {
+            x: [0usize, 1].into_iter().collect(),
+            z: Support::empty(),
+        },
+        // a Y-type target, which is where dropping `c_O` shows up
+        WidePauli {
+            x: [0usize].into_iter().collect(),
+            z: [0usize, 1].into_iter().collect(),
+        },
+    ] {
+        let mut p = Program::new(n);
+        p.mix(&wide_mixing(n));
+        let (base, _) = p.expectation(&target, &exact());
+        let candidates = p.harmonics();
+        let (jac, _) = p.jacobian(&target, &candidates, &exact());
+        assert!(!jac.is_empty(), "nothing was steerable, so nothing is proved");
+
+        let eps = 1e-6;
+        for (s, g) in &jac {
+            let mut q = Program::new(n);
+            q.mix(&wide_mixing(n));
+            q.drive(&[(s.clone(), eps)]);
+            let (after, _) = q.expectation(&target, &exact());
+            let fd = (after - base) / eps;
+            assert!(
+                (fd - g).abs() < 1e-4,
+                "analytic {g} vs numeric {fd} on harmonic {s:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_register_free_loop_converges_and_builds_nothing() {
+    let n = 12usize;
+    let mut p = Program::new(n);
+    p.mix(&wide_mixing(n));
+    let target = WidePauli {
+        x: [0usize, 1].into_iter().collect(),
+        z: Support::empty(),
+    };
+    let mut errors = Vec::new();
+    for _ in 0..10 {
+        let (err, cost) = p.event(&target, 0.5, 0.4, &exact());
+        assert_eq!(cost.discarded_l1, 0.0, "this run is meant to be exact");
+        errors.push(err.abs());
+    }
+    assert!(
+        errors.last().unwrap() < &(errors[0] * 0.25),
+        "the loop did not converge: {errors:?}"
+    );
+    for w in errors.windows(2) {
+        assert!(w[1] <= w[0] + 1e-12, "error rose: {errors:?}");
+    }
+    // and the drive is rotations, not a 2^n diagonal
+    assert_eq!(p.drives(), 10);
+    assert!(
+        p.len() < wide_mixing(n).len() + 10 * n,
+        "the program grew like a diagonal rather than like a drive"
+    );
+}
+
+#[test]
+fn the_loop_runs_where_no_register_could_exist() {
+    // 1024 qubits. There is no state vector, no tableau and no width
+    // ceiling — the cost is the operator's spread and nothing else.
+    let n = 1024usize;
+    let mut p = Program::new(n);
+    p.mix(&wide_mixing(n));
+    let target = WidePauli {
+        x: [n / 2, n / 2 + 1].into_iter().collect(),
+        z: Support::empty(),
+    };
+    let (err, cost) = p.event(&target, 0.5, 0.4, &exact());
+    assert!(err.abs() <= 1.5);
+    assert_eq!(cost.discarded_l1, 0.0, "exact, not truncated");
+    assert!(
+        cost.peak_terms < 1000,
+        "{} terms at n={n} is not sub-exponential",
+        cost.peak_terms
+    );
+    assert!(cost.max_weight < 16, "weight {}", cost.max_weight);
+    assert!(p.drives() > 0, "the loop should have driven something");
+}
+
+#[test]
+fn the_cost_is_the_operator_spread_and_not_the_width() {
+    let target_of = |n: usize| WidePauli {
+        x: [n / 2, n / 2 + 1].into_iter().collect(),
+        z: Support::empty(),
+    };
+    let mut seen = Vec::new();
+    for n in [64usize, 256, 1024] {
+        let mut p = Program::new(n);
+        p.mix(&wide_mixing(n));
+        let (err, cost) = p.event(&target_of(n), 0.5, 0.4, &exact());
+        seen.push((n, cost.peak_terms, cost.max_weight, err));
+    }
+    let first = seen[0];
+    for &(n, terms, weight, err) in &seen {
+        assert_eq!(terms, first.1, "n={n}: the term count moved with the width");
+        assert_eq!(weight, first.2, "n={n}: the weight moved with the width");
+        assert!((err - first.3).abs() < 1e-11, "n={n}: the answer moved");
+    }
+}

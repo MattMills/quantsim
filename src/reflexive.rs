@@ -66,6 +66,7 @@ use crate::circuit::{BoundGate, GateKernel};
 use crate::crossview::{fwht, CrossView};
 use crate::error::{Error, Result};
 use crate::scalar::C64;
+use crate::support::{propagate_wide, Support, WideConfig, WidePauli, WidePauliSum, WideRotation};
 
 /// What one event of the loop emitted.
 #[derive(Clone, Debug)]
@@ -606,4 +607,238 @@ pub fn deviation(a: &DenseState<C64>, b: &DenseState<C64>) -> Result<f64> {
             ((x.re - y.re).powi(2) + (x.im - y.im).powi(2)).sqrt()
         })
         .fold(0.0f64, f64::max))
+}
+
+// ── the same loop, with no register at all ───────────────────────────
+
+/// A reflexive program that never builds a state vector.
+///
+/// Everything above holds a [`DenseState`] because it was written
+/// sensor-first, and the sensor read amplitudes. That was the wrong way
+/// round: a loop whose whole justification is that cost should track the
+/// state's structure has no business allocating `2^n` amplitudes to find
+/// that structure out. This is the same loop with the register removed,
+/// and it is the one to use.
+///
+/// Two facts make it possible, and neither is an approximation.
+///
+/// **The actuator is not a `2^n` diagonal.** A diagonal gate whose
+/// harmonic support is `k` *is* `k` commuting `Z`-string rotations:
+///
+/// ```text
+/// diag(e^{iφ}),  φ(x) = Σ_S θ_S(−1)^{|x∧S|}   =   Π_S exp(iθ_S Z_S)
+/// ```
+///
+/// so a drive on `k` harmonics costs `k` rotations appended to the
+/// program, whatever `n` is.
+///
+/// **The sensor is not a transform of the state.** For Pauli `O` and
+/// `Z_S`, `d⟨O⟩/dθ_S = 2i⟨O·Z_S⟩` — zero unless they anticommute, and
+/// otherwise a single Pauli expectation. So sensing the target *and*
+/// its whole Jacobian is a handful of Pauli expectations, each of which
+/// [`propagate_wide`] answers by walking the operator back to the
+/// vacuum. No register is instantiated and no width is capped.
+///
+/// What it costs is what every other honest thing in this crate costs:
+/// the operator's spread under the program, reported per query as
+/// [`Cost`], with truncation accounted in a certified `L1`.
+pub struct Program {
+    qubits: usize,
+    rotations: Vec<WideRotation>,
+    drives: usize,
+    walks: usize,
+}
+
+/// What one register-free sense cost.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Cost {
+    /// Terms in the propagated operator at its peak — the real cost.
+    pub peak_terms: usize,
+    /// Heaviest Pauli string reached.
+    pub max_weight: usize,
+    /// `Σ|c|` discarded by truncation; `0` when the walk was exact.
+    pub discarded_l1: f64,
+    /// Backward walks performed.
+    pub walks: usize,
+}
+
+impl Program {
+    /// An empty program on `qubits` qubits. No allocation is `2^n`, and
+    /// `qubits` may be far past any register size.
+    pub fn new(qubits: usize) -> Program {
+        Program {
+            qubits,
+            rotations: Vec::new(),
+            drives: 0,
+            walks: 0,
+        }
+    }
+
+    /// Register width the program is written against.
+    pub fn qubits(&self) -> usize {
+        self.qubits
+    }
+
+    /// Rotations in the program so far.
+    pub fn len(&self) -> usize {
+        self.rotations.len()
+    }
+
+    /// Whether the program is empty.
+    pub fn is_empty(&self) -> bool {
+        self.rotations.is_empty()
+    }
+
+    /// Drives emitted so far.
+    pub fn drives(&self) -> usize {
+        self.drives
+    }
+
+    /// Backward walks performed over the program's life.
+    pub fn walks(&self) -> usize {
+        self.walks
+    }
+
+    /// The program as rotations — the whole state of the machine.
+    pub fn rotations(&self) -> &[WideRotation] {
+        &self.rotations
+    }
+
+    /// Append a mixing layer.
+    pub fn mix(&mut self, layer: &[WideRotation]) {
+        self.rotations.extend_from_slice(layer);
+    }
+
+    /// `⟨0…0| U† P U |0…0⟩` by walking `P` back through the program.
+    pub fn expectation(&mut self, p: &WidePauli, cfg: &WideConfig) -> (f64, Cost) {
+        let walk = propagate_wide(
+            &WidePauliSum::from_observable(p.clone()),
+            &self.rotations,
+            cfg,
+        );
+        self.walks += 1;
+        (
+            walk.sum.vacuum_expectation(),
+            Cost {
+                peak_terms: walk.peak_terms,
+                max_weight: walk.max_weight,
+                discarded_l1: walk.discarded_l1,
+                walks: 1,
+            },
+        )
+    }
+
+    /// The `Z`-harmonics the program itself uses — a finite, structural
+    /// candidate set, chosen rather than enumerated.
+    ///
+    /// This is the point where a `2^n` sweep would otherwise sneak back
+    /// in. The harmonics worth driving are the ones the circuit already
+    /// couples, so the candidate set is read off the program instead of
+    /// generated from the register's size.
+    pub fn harmonics(&self) -> Vec<Support> {
+        let mut seen: Vec<Support> = Vec::new();
+        for r in &self.rotations {
+            if r.axis.x.is_empty() && !r.axis.z.is_empty() && !seen.contains(&r.axis.z) {
+                seen.push(r.axis.z.clone());
+            }
+        }
+        seen
+    }
+
+    /// `d⟨O⟩/dθ_S` for each candidate `S`, exactly.
+    ///
+    /// `[O, Z_S] = 0` when they commute — the parity selection rule —
+    /// and `2·O·Z_S` when they do not, so each live entry is one Pauli
+    /// expectation and the dead ones cost nothing at all.
+    pub fn jacobian(
+        &mut self,
+        target: &WidePauli,
+        candidates: &[Support],
+        cfg: &WideConfig,
+    ) -> (Vec<(Support, f64)>, Cost) {
+        let mut out = Vec::new();
+        let mut cost = Cost::default();
+        for s in candidates {
+            let zs = WidePauli {
+                x: Support::empty(),
+                z: s.clone(),
+            };
+            if target.commutes(&zs) {
+                continue;
+            }
+            // d⟨O⟩/dθ_S = i⟨[O, Z_S]⟩ = 2i⟨O·Z_S⟩ when they anticommute.
+            // `expectation` returns the Hermitian ⟨i^{|x∧z|}X^xZ^z⟩, so
+            // the raw product picks up the compensating factor here.
+            let (prod, sign) = target.mul(&zs);
+            let (value, c) = self.expectation(&prod, cfg);
+            // O·Z_S = i^{c_O − c_P}·P_herm, so the derivative is
+            // 2i·i^{c_O − c_P}·⟨P_herm⟩ — real only for odd k, which is
+            // the anticommuting case, and the sign alternates with it.
+            // Both halves matter: dropping `c_O` breaks every target
+            // with a Y component, and flipping the sign turns descent
+            // into ascent while still looking like a working loop.
+            let c_o = target.x.and(&target.z).weight();
+            let c_p = prod.x.and(&prod.z).weight();
+            let k = (c_o + 4 - c_p % 4) % 4;
+            let scaled = match k {
+                3 => 2.0 * sign * value,
+                1 => -2.0 * sign * value,
+                _ => 0.0,
+            };
+            out.push((s.clone(), scaled));
+            cost.peak_terms = cost.peak_terms.max(c.peak_terms);
+            cost.max_weight = cost.max_weight.max(c.max_weight);
+            cost.discarded_l1 += c.discarded_l1;
+            cost.walks += 1;
+        }
+        (out, cost)
+    }
+
+    /// Append a drive: `k` harmonics become `k` commuting rotations.
+    pub fn drive(&mut self, coefficients: &[(Support, f64)]) {
+        for (s, theta) in coefficients {
+            if *theta == 0.0 {
+                continue;
+            }
+            self.rotations.push(WideRotation {
+                theta: -2.0 * theta,
+                axis: WidePauli {
+                    x: Support::empty(),
+                    z: s.clone(),
+                },
+            });
+        }
+        self.drives += 1;
+    }
+
+    /// One event: sense the target, sense its Jacobian, step along it.
+    pub fn event(
+        &mut self,
+        target: &WidePauli,
+        setpoint: f64,
+        gain: f64,
+        cfg: &WideConfig,
+    ) -> (f64, Cost) {
+        let (value, c0) = self.expectation(target, cfg);
+        let err = setpoint - value;
+        let candidates = self.harmonics();
+        let (jac, c1) = self.jacobian(target, &candidates, cfg);
+        let norm: f64 = jac.iter().map(|(_, g)| g * g).sum::<f64>().sqrt();
+        if norm > f64::EPSILON {
+            let step: Vec<(Support, f64)> = jac
+                .into_iter()
+                .map(|(s, g)| (s, gain * err * g / norm))
+                .collect();
+            self.drive(&step);
+        }
+        (
+            err,
+            Cost {
+                peak_terms: c0.peak_terms.max(c1.peak_terms),
+                max_weight: c0.max_weight.max(c1.max_weight),
+                discarded_l1: c0.discarded_l1 + c1.discarded_l1,
+                walks: c0.walks + c1.walks,
+            },
+        )
+    }
 }
