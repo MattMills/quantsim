@@ -80,6 +80,7 @@ pub mod circuit;
 pub mod closure;
 pub mod conformance;
 pub mod coupling;
+pub mod crossview;
 pub mod discovery;
 pub mod dyadic;
 pub mod e8;
@@ -102,6 +103,7 @@ pub mod polarity;
 pub mod qudit;
 pub mod query;
 pub mod recursive;
+pub mod reflexive;
 pub mod registry;
 pub mod rng;
 pub mod sampling;
@@ -159,6 +161,7 @@ pub mod prelude {
     pub use crate::conformance::{
         random_registry_circuit, verify_backend, ConformanceConfig, ConformanceReport,
     };
+    pub use crate::crossview::{fwht, fwht_c, CrossView};
     pub use crate::coupling::{
         coupling_of, decoupling_frame, propagate_engineered, scramble, support_blocks, Coupling,
         DecouplingFrame, EngineeredReport, Stabilizer,
@@ -211,6 +214,10 @@ pub mod prelude {
     pub use crate::qudit::{
         algebra_capacity, dual_algebra_report, synthesize_sandwich, AlgebraicRegister,
         DualAlgebraReport, QuditStats, SandwichOp, SandwichTerm,
+    };
+    pub use crate::reflexive::{
+        deviation, replay, Adaptive, DriveLaw, Emission, Gradient, Proportional, Reflexive, Run,
+        Target,
     };
     pub use crate::registry::GateRegistry;
     pub use crate::rng::Prng;
