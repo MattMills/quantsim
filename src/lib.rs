@@ -92,6 +92,7 @@ pub mod padic;
 pub mod phase;
 pub mod polarity;
 pub mod qudit;
+pub mod query;
 pub mod recursive;
 pub mod registry;
 pub mod rng;
