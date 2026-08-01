@@ -109,6 +109,7 @@ pub mod scalar;
 pub mod schedule;
 pub mod selfhost;
 pub mod sim;
+pub mod support;
 pub mod upembed;
 
 pub use backend::{AdaptiveState, Backend, BackendRegistry, DenseState, SparseState};
@@ -230,6 +231,10 @@ pub mod prelude {
         LinearizationReport, SelfComputationCost, SelfHostedStack, VOLUME_COORDINATES,
     };
     pub use crate::sim::Simulator;
+    pub use crate::support::{
+        clear_memo, memo_len, propagate_wide, Support, WideConfig, WidePauli, WidePauliSum,
+        WidePropagation, WideRotation, MEMO_CAPACITY,
+    };
     pub use crate::upembed::{
         cluster_readout, gadgetize, Ancilla, Readout, UpEmbedResolver, UpEmbedding, MAX_CLUSTER,
     };
