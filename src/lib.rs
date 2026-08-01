@@ -81,6 +81,7 @@ pub mod gates;
 pub mod guard;
 pub mod harness;
 pub mod heisenberg;
+pub mod horizon;
 pub mod library;
 pub mod lift;
 pub mod math;
@@ -168,6 +169,7 @@ pub mod prelude {
         tfim_energy_basis, tfim_trotter, AxisSpan, BasisReport, FactoredPauliSum, FactoredReport,
         Forward, Journal, Meeting, PauliSum, Propagation, Rotation, Step, XSpan,
     };
+    pub use crate::horizon::{horizon, Horizon, AXES};
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};
