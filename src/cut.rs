@@ -474,3 +474,280 @@ fn numeric_rank(m: &mut [Vec<C64>]) -> usize {
     }
     rank
 }
+
+// ── from one cut to the whole ordering ───────────────────────────────
+
+impl CutGraph {
+    /// Edges crossing the contiguous cut after position `p` of `order`.
+    fn crossing_at(&self, order: &[usize], p: usize) -> Vec<(usize, usize)> {
+        let mut pos = vec![usize::MAX; self.sites()];
+        for (k, &s) in order.iter().enumerate() {
+            pos[s] = k;
+        }
+        self.bonds
+            .iter()
+            .copied()
+            .filter(|&(i, j)| {
+                let (a, b) = (pos[i], pos[j]);
+                (a < p) != (b < p)
+            })
+            .collect()
+    }
+
+    /// **Cutwidth** in a given site order: the most edges crossing any
+    /// contiguous cut.
+    ///
+    /// This is the number that decides whether a one-dimensional tensor
+    /// network works. A single cut (everything above) prices one
+    /// bipartition; laying the graph along a chain means paying the
+    /// *worst* bipartition, and that is the cutwidth.
+    pub fn cutwidth(&self, order: &[usize]) -> usize {
+        (1..order.len())
+            .map(|p| self.crossing_at(order, p).len())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// **GF(2) rank** of the biadjacency between the prefix and the
+    /// suffix at position `p`.
+    ///
+    /// For a *qubit* graph state this is the exact Schmidt rank exponent
+    /// across that cut — `rank = 2^{gf2_cut_rank}` — and it can be
+    /// strictly smaller than the crossing-edge count, because crossing
+    /// edges may be linearly dependent over `GF(2)`. Counting edges
+    /// alone over-states: a `2×3` weave crosses three edges at its worst
+    /// cut but has GF(2) rank 2, and its MPS bond is 4, not 8.
+    pub fn gf2_cut_rank(&self, order: &[usize], p: usize) -> usize {
+        let mut pos = vec![usize::MAX; self.sites()];
+        for (k, &s) in order.iter().enumerate() {
+            pos[s] = k;
+        }
+        // Rows indexed by A-side site, columns by B-side site.
+        let a: Vec<usize> = (0..self.sites()).filter(|&s| pos[s] < p).collect();
+        let b: Vec<usize> = (0..self.sites()).filter(|&s| pos[s] >= p).collect();
+        let mut rows: Vec<u128> = vec![0; a.len()];
+        for &(i, j) in &self.bonds {
+            let (x, y) = if pos[i] < p { (i, j) } else { (j, i) };
+            if pos[x] >= p || pos[y] < p {
+                continue;
+            }
+            let r = a.iter().position(|&s| s == x).expect("in A");
+            let c = b.iter().position(|&s| s == y).expect("in B");
+            if c < 128 {
+                rows[r] ^= 1u128 << c;
+            }
+        }
+        // Gaussian elimination over GF(2).
+        let mut rank = 0usize;
+        for col in 0..b.len().min(128) {
+            let bit = 1u128 << col;
+            if let Some(pivot) = (rank..rows.len()).find(|&r| rows[r] & bit != 0) {
+                rows.swap(rank, pivot);
+                for r in 0..rows.len() {
+                    if r != rank && rows[r] & bit != 0 {
+                        rows[r] ^= rows[rank];
+                    }
+                }
+                rank += 1;
+            }
+        }
+        rank
+    }
+
+    /// The MPS bond dimension this ordering forces: the worst contiguous
+    /// cut's Schur bound.
+    ///
+    /// For a uniform-arity graph state this is `d^cutwidth`. Mixed
+    /// arities make it a product of the crossing bonds' `min(aᵢ,aⱼ)`
+    /// instead, which is why the calculus is stated per-edge.
+    ///
+    /// Costs `O(n·|E|)`. No state is built, and the answer is what an
+    /// `MpsConfig::max_bond` should have been set to before running
+    /// anything — `mps_bond_bound_matches_the_measured_bond_dimension`
+    /// checks it against the real thing.
+    pub fn mps_bond_bound(&self, order: &[usize]) -> u128 {
+        (1..order.len())
+            .map(|p| {
+                self.crossing_at(order, p)
+                    .into_iter()
+                    .fold(1u128, |r, (i, j)| {
+                        r.saturating_mul(self.arities[i].min(self.arities[j]) as u128)
+                    })
+            })
+            .max()
+            .unwrap_or(1)
+    }
+
+    /// The **exact** MPS bond dimension for a uniform-qubit graph state
+    /// in this ordering: `2^{max_p gf2_cut_rank(p)}`.
+    ///
+    /// Still graph-only and still no state — but it uses the `GF(2)`
+    /// rank rather than the edge count, which is what makes it exact
+    /// rather than merely an upper bound.
+    pub fn qubit_bond_exact(&self, order: &[usize]) -> Result<u128> {
+        if self.arities.iter().any(|&a| a != 2) {
+            return Err(Error::InvalidState(
+                "cut: the GF(2) cut rank is the qubit graph-state statement;                  mixed arities need the Schur bound instead"
+                    .into(),
+            ));
+        }
+        Ok(1u128
+            << (1..order.len())
+                .map(|p| self.gf2_cut_rank(order, p))
+                .max()
+                .unwrap_or(0))
+    }
+
+    /// The identity order `0, 1, …, n−1`.
+    pub fn natural_order(&self) -> Vec<usize> {
+        (0..self.sites()).collect()
+    }
+
+    /// The graph's **cutwidth**: the best achievable over all orderings,
+    /// with the order that achieves it.
+    ///
+    /// Exact by exhaustive permutation up to [`MAX_EXACT_ORDER`] sites —
+    /// cutwidth is NP-hard in general, so past that this returns the best
+    /// order a greedy sweep finds and the value is an *upper* bound on
+    /// the true cutwidth. [`CutGraph::min_cutwidth_is_exact`] says which
+    /// you got, rather than leaving it to be assumed.
+    pub fn min_cutwidth(&self) -> (usize, Vec<usize>) {
+        let n = self.sites();
+        if n <= MAX_EXACT_ORDER {
+            let mut order: Vec<usize> = (0..n).collect();
+            let mut best = (usize::MAX, order.clone());
+            permute(&mut order, 0, &mut |o| {
+                let w = self.cutwidth(o);
+                if w < best.0 {
+                    best = (w, o.to_vec());
+                }
+            });
+            return best;
+        }
+        // Greedy: repeatedly append the site that adds fewest crossings.
+        let mut placed: Vec<usize> = Vec::with_capacity(n);
+        let mut left = vec![true; n];
+        while placed.len() < n {
+            let pick = (0..n)
+                .filter(|&s| left[s])
+                .min_by_key(|&s| {
+                    let open = self
+                        .bonds
+                        .iter()
+                        .filter(|&&(i, j)| {
+                            (i == s && left[j] && j != s) || (j == s && left[i] && i != s)
+                        })
+                        .count();
+                    let closed = self
+                        .bonds
+                        .iter()
+                        .filter(|&&(i, j)| {
+                            (i == s && placed.contains(&j)) || (j == s && placed.contains(&i))
+                        })
+                        .count();
+                    (open as isize - closed as isize, s as isize)
+                })
+                .expect("a site remains");
+            left[pick] = false;
+            placed.push(pick);
+        }
+        (self.cutwidth(&placed), placed)
+    }
+
+    /// Whether [`CutGraph::min_cutwidth`] was exhaustive or a heuristic.
+    pub fn min_cutwidth_is_exact(&self) -> bool {
+        self.sites() <= MAX_EXACT_ORDER
+    }
+}
+
+/// Sites up to which [`CutGraph::min_cutwidth`] searches every ordering.
+///
+/// Cutwidth is NP-hard, so past this the search is greedy and its answer
+/// is an upper bound. The distinction is reported, never silent.
+pub const MAX_EXACT_ORDER: usize = 8;
+
+fn permute(order: &mut Vec<usize>, k: usize, f: &mut impl FnMut(&[usize])) {
+    if k == order.len() {
+        f(order);
+        return;
+    }
+    for i in k..order.len() {
+        order.swap(k, i);
+        permute(order, k + 1, f);
+        order.swap(k, i);
+    }
+}
+
+// ── the geometries the threshold separates ───────────────────────────
+
+impl CutGraph {
+    /// A chain of `n` sites — cutwidth 1.
+    pub fn chain(n: usize, arity: usize) -> Result<CutGraph> {
+        let mut g = CutGraph::uniform(n, arity)?;
+        for q in 0..n.saturating_sub(1) {
+            g.bond(q, q + 1)?;
+        }
+        Ok(g)
+    }
+
+    /// A ring of `n` sites — cutwidth 2.
+    pub fn ring(n: usize, arity: usize) -> Result<CutGraph> {
+        let mut g = CutGraph::chain(n, arity)?;
+        if n > 2 {
+            g.bond(0, n - 1)?;
+        }
+        Ok(g)
+    }
+
+    /// A **bundle**: `strands` parallel strands with a rung joining all
+    /// of them at each of `sites` positions, and no along-strand bonds.
+    ///
+    /// The cheap side of the threshold. Every rung is local in
+    /// column-major order, so the cutwidth is `strands − 1` *however many
+    /// sites*, and — the point — adding sites never costs anything.
+    pub fn bundle(strands: usize, sites: usize, arity: usize) -> Result<CutGraph> {
+        let mut g = CutGraph::uniform(strands * sites, arity)?;
+        for s in 0..sites {
+            for k in 0..strands.saturating_sub(1) {
+                g.bond(s * strands + k, s * strands + k + 1)?;
+            }
+        }
+        Ok(g)
+    }
+
+    /// A **weave**: a `rows × cols` lattice, every intersection coupled.
+    ///
+    /// The expensive side. Cutwidth is `min(rows, cols)`, so the bond
+    /// dimension is `d^{min(rows,cols)}` — *flat in the long extent* and
+    /// exponential in the short one. This is the MPS/PEPS line: the point
+    /// where a one-dimensional tensor network stops being efficient, and
+    /// it is a property of the coupling graph's second direction, not of
+    /// the site count.
+    pub fn weave(rows: usize, cols: usize, arity: usize) -> Result<CutGraph> {
+        let mut g = CutGraph::uniform(rows * cols, arity)?;
+        let at = |r: usize, c: usize| r * cols + c;
+        for r in 0..rows {
+            for c in 0..cols {
+                if c + 1 < cols {
+                    g.bond(at(r, c), at(r, c + 1))?;
+                }
+                if r + 1 < rows {
+                    g.bond(at(r, c), at(r + 1, c))?;
+                }
+            }
+        }
+        Ok(g)
+    }
+
+    /// The row-major order for a `rows × cols` weave — the one that
+    /// attains the `min(rows, cols)` cutwidth when `cols ≥ rows`.
+    pub fn weave_order(rows: usize, cols: usize) -> Vec<usize> {
+        let mut out = Vec::with_capacity(rows * cols);
+        for c in 0..cols {
+            for r in 0..rows {
+                out.push(r * cols + c);
+            }
+        }
+        out
+    }
+}
