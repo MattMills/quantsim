@@ -81,6 +81,7 @@ pub mod closure;
 pub mod conformance;
 pub mod coupling;
 pub mod crossview;
+pub mod cut;
 pub mod discovery;
 pub mod dyadic;
 pub mod e8;
@@ -162,6 +163,7 @@ pub mod prelude {
         random_registry_circuit, verify_backend, ConformanceConfig, ConformanceReport,
     };
     pub use crate::crossview::{fwht, fwht_c, CrossView};
+    pub use crate::cut::{CutGraph, MAX_EXACT_DIM};
     pub use crate::coupling::{
         coupling_of, decoupling_frame, propagate_engineered, scramble, support_blocks, Coupling,
         DecouplingFrame, EngineeredReport, Stabilizer,
