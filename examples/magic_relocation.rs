@@ -1,15 +1,25 @@
-//! Relocating magic until the dynamics is Clifford — and what `h*` says
-//! about how much relocating was actually needed.
+//! Relocating magic, and what `h*` does and does not say about it.
 //!
 //! `upembed` moves every magic event to a fresh wire, after which the
-//! dynamics is Clifford by construction. True, but it says nothing about
-//! how many wires were *needed*: it spends one per `T` gate in the gate
-//! list, whether or not that gate's magic survives.
+//! dynamics is Clifford by construction — `to_circuit` emits nothing but
+//! `h`, `s` and `cx`. True, but it says nothing about how many wires
+//! were *needed*: it spends one per `T` in the gate list, whether or not
+//! that gate's magic survives.
 //!
-//! `pathsum` reduces every Clifford circuit to `h* = 0` from rewrite
-//! rules alone and knows nothing about `upembed`. Putting the two
-//! together turns "is it Clifford now?" into a measurement, and the
-//! answer is that the naive wire count is often badly wasteful.
+//! `pathsum` answers a different question. `h*` counts the variables
+//! still summed over once the output index is fixed, so `2^{h*}` is the
+//! cost of ONE amplitude `⟨z|U|x⟩`. Pairing the two turns "how many
+//! wires does this circuit really need?" into a measurement.
+//!
+//! It is worth being exact about what that measurement is, because an
+//! earlier version of this example was not. `h* = 0` does **not** mean
+//! the unitary is Clifford. A lone `T` has `h* = 0`; so does `CCZ`; so
+//! does every diagonal circuit, however much magic it carries — a
+//! diagonal gate maps each basis state to itself with a phase, so it
+//! never hides a variable. `tests/magic_relocation.rs` holds a dense
+//! Clifford oracle against all of those. Measured the other way, every
+//! Clifford circuit in that corpus did reduce to zero, so the classes
+//! sit as `{Clifford} ⊊ {h* = 0}` — readable in one direction only.
 
 use quantsim::circuit::Op;
 use quantsim::pathsum;
@@ -38,6 +48,32 @@ fn cancelling(n: usize, k: usize) -> Circuit<C64> {
         c.gate("cx", vec![], vec![i % n, (i + 1) % n]);
         c.gate("tdg", vec![], vec![i % n]);
         c.gate("h", vec![], vec![(i + 2) % n]);
+    }
+    c
+}
+
+/// The `i < j < k` triples of `0..n`.
+fn triples(n: usize) -> Vec<[usize; 3]> {
+    let mut out = Vec::new();
+    for i in 0..n {
+        for j in i + 1..n {
+            for k in j + 1..n {
+                out.push([i, j, k]);
+            }
+        }
+    }
+    out
+}
+
+/// A diagonal circuit with as much magic as `k` allows, on distinct
+/// triples so nothing cancels. Non-Clifford at every `k ≥ 1`.
+fn diagonal_core(n: usize, k: usize) -> Circuit<C64> {
+    let mut c = Circuit::new(n);
+    for q in 0..n {
+        c.gate("t", vec![], vec![q]);
+    }
+    for t in triples(n).iter().take(k) {
+        c.gate("ccz", vec![], t.to_vec());
     }
     c
 }
@@ -82,38 +118,29 @@ fn inverse(a: &Circuit<C64>) -> Circuit<C64> {
 }
 
 fn main() -> Result<()> {
-    println!("== relocating magic until the dynamics is Clifford ==\n");
+    println!("== relocating magic, and what h* measures ==\n");
 
-    // ── the two modules check each other ─────────────────────────────
-    println!("── the up-embedded dynamics, certified by a second representation ──\n");
-    println!("  `gadgetize` CLAIMS the dynamics is Clifford. `PathSum` reduces every");
-    println!("  Clifford circuit to h* = 0 from rewrite rules alone and knows nothing");
-    println!("  about `upembed`, so running the result through it is a certificate");
-    println!("  rather than this module marking its own homework.\n");
-    println!("   circuit              data   wires   steps   h*   verdict");
-    for (label, c) in [
-        ("magic k=4", magic_circuit(3, 4)),
-        ("magic k=8", magic_circuit(4, 8)),
-        ("magic k=16", magic_circuit(5, 16)),
-        ("cancelling k=16", cancelling(3, 16)),
+    // ── what h* is not ───────────────────────────────────────────────
+    println!("── h* = 0 is not a Clifford certificate ──\n");
+    println!("   circuit                     gates    h*   Clifford?");
+    let mut lone = Circuit::<C64>::new(1);
+    lone.gate("t", vec![], vec![0]);
+    for (label, c, clifford) in [
+        ("a lone T", lone, "no"),
+        ("diagonal core n=6 k=20", diagonal_core(6, 20), "no"),
+        ("diagonal core n=12 k=220", diagonal_core(12, 220), "no"),
+        ("cancelling k=8", cancelling(3, 8), "yes"),
     ] {
-        let emb = upembed::gadgetize(&c)?;
-        let h = pathsum::operator(&emb.to_circuit())?.internal_vars();
-        println!(
-            "   {label:20} {:4} {:7} {:7} {h:4}   {}",
-            emb.data(),
-            emb.wires(),
-            emb.steps().len(),
-            if h == 0 {
-                "certified Clifford"
-            } else {
-                "NOT Clifford"
-            }
-        );
+        let h = pathsum::operator(&c)?.internal_vars();
+        println!("   {label:26} {:6} {h:5}   {clifford}", c.len());
     }
+    println!("\n  A diagonal gate maps each basis state to itself with a phase, so it");
+    println!("  never hides a variable — h* stays 0 with 220 CCZ gates loaded in.");
+    println!("  The Clifford column is an independent dense oracle (see");
+    println!("  tests/magic_relocation.rs), not this module's own opinion.\n");
 
     // ── how many wires were actually needed ──────────────────────────
-    println!("\n── spend one wire at a time and ask what is left ──\n");
+    println!("── spend one wire at a time and ask what is left ──\n");
     println!("   circuit              T gates   gadgets needed   naive   saved");
     for (label, c) in [
         ("magic k=4", magic_circuit(3, 4)),
@@ -129,19 +156,18 @@ fn main() -> Result<()> {
                 break;
             }
         }
-        println!(
-            "   {label:20} {t:7} {need:16} {t:7} {:7}",
-            t - need
-        );
+        println!("   {label:20} {t:7} {need:16} {t:7} {:7}", t - need);
     }
     println!("\n  The cancelling rows are the point: 64 T gates in the gate list, and");
-    println!("  the right number of wires is ZERO — the unitary was already Clifford");
-    println!("  and reduction certifies it. A T-counting cost model would have spent");
-    println!("  64 ancillas relocating magic that was not there. Even the genuinely");
-    println!("  magical rows need fewer wires than they have T gates.\n");
-    println!("  Honest scope: the search is over PREFIXES of the T gates, so the");
-    println!("  number reported is an upper bound on the true minimum over subsets.");
-    println!("  The zero case is exact — no subset can beat none.\n");
+    println!("  the right number of wires is ZERO. A T-counting cost model would");
+    println!("  have spent 64 ancillas relocating magic that was not there. Even");
+    println!("  the genuinely magical rows need fewer wires than they have T gates.\n");
+    println!("  Scope, stated exactly: \"needed\" is the count at which ONE AMPLITUDE");
+    println!("  of the remaining dynamics becomes free — not the count at which the");
+    println!("  remaining unitary becomes Clifford. For the cancelling family both");
+    println!("  happen to hold; for a diagonal core only the first does. The search");
+    println!("  is also over PREFIXES of the T gates, so the number is an upper");
+    println!("  bound on the true minimum over subsets. The zero case is exact.\n");
 
     // ── and what composition does to it ──────────────────────────────
     println!("── h* under composition ──\n");
@@ -156,23 +182,25 @@ fn main() -> Result<()> {
     ] {
         let hv = pathsum::operator(&v)?.internal_vars();
         let huv = pathsum::operator(&concat(&u, &v))?.internal_vars();
-        println!("   magic k=4        {label:18} {hu:5}  {hv:5}  {:4}  {huv:5}", hu + hv);
+        println!(
+            "   magic k=4        {label:18} {hu:5}  {hv:5}  {:4}  {huv:5}",
+            hu + hv
+        );
     }
-    println!("\n  h* is NEITHER sub- nor super-additive, and the obvious hypothesis —");
-    println!("  that magic is a resource which adds — is false in both directions.");
-    println!("  Composed with its inverse it CANCELS to nothing. Composed with");
-    println!("  ITSELF it COMPOUNDS past the sum: magic that reduced away inside each");
-    println!("  block stops reducing once the join entangles it. Neither block");
-    println!("  determines the answer, so the join has to be reduced rather than");
-    println!("  estimated from its parts — which is exactly the thing a cost model");
-    println!("  built on T-counting cannot do.\n");
-    println!("  And the row that constrains how far to trust h*: composing with");
-    println!("  `cancelling k=4` — a block whose own h* is 0, so a CLIFFORD unitary");
-    println!("  — raises h* from 1 to 3. True magic is invariant under Clifford");
-    println!("  composition, so that rise is not a property of the unitary: it is");
-    println!("  the reduction failing to find the optimum. h* is WHAT THE REWRITE");
-    println!("  SYSTEM ACHIEVED, an upper bound on the readout exponent, and NOT a");
-    println!("  magic monotone. The rules are complete on the Clifford fragment and");
-    println!("  not beyond it, and this is where that shows.");
+    println!("\n  h* is NEITHER sub- nor super-additive. Composed with its inverse it");
+    println!("  CANCELS to nothing; composed with ITSELF it COMPOUNDS past the sum,");
+    println!("  because variables that reduced away inside each block stop reducing");
+    println!("  once the join entangles them. Neither block determines the answer,");
+    println!("  so a join has to be reduced rather than estimated from its parts —");
+    println!("  exactly what a cost model built on T-counting cannot do.\n");
+    println!("  The last row is the one that fixes h*'s meaning: `cancelling k=4` is");
+    println!("  a genuinely Clifford unitary, and composing with it raises h* from 1");
+    println!("  to 3. Magic is invariant under Clifford composition, so h* is NOT a");
+    println!("  magic monotone — it is the exponent for one amplitude, and");
+    println!("  composition genuinely changes that.\n");
+    println!("  Which is also why none of this bears on BQP vs BPP. Cheap amplitudes");
+    println!("  are not cheap sampling: the diagonal core above has h* = 0 at any");
+    println!("  depth, but measuring it in the X basis — a Hadamard layer either");
+    println!("  side — is IQP, believed hard, and h* rises to n exactly there.");
     Ok(())
 }
