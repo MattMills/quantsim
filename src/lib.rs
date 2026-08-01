@@ -74,6 +74,7 @@ pub mod closure;
 pub mod conformance;
 pub mod coupling;
 pub mod discovery;
+pub mod dyadic;
 pub mod e8;
 pub mod error;
 pub mod exact;
@@ -154,6 +155,9 @@ pub mod prelude {
     pub use crate::discovery::{
         discover_stabilizers, stabilizes_state, state_deviation_up_to_phase, verify_transparent,
         Insertion, StabilizerCheck, TransparencyReport,
+    };
+    pub use crate::dyadic::{
+        dyadic_cone, prune_two_sided, two_sided_bound, DyadicCone, Node, MAX_DEPTH,
     };
     pub use crate::e8::{self, ChainEmbedding};
     pub use crate::error::{Error, Result};
