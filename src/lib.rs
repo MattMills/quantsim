@@ -246,6 +246,7 @@ pub mod prelude {
         WidePropagation, WideRotation, MEMO_CAPACITY,
     };
     pub use crate::upembed::{
-        cluster_readout, gadgetize, Ancilla, Readout, UpEmbedResolver, UpEmbedding, MAX_CLUSTER,
+        cluster_readout, gadgetize, gadgetize_partial, magic_events, Ancilla, Readout,
+        UpEmbedResolver, UpEmbedding, MAX_CLUSTER,
     };
 }

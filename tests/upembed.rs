@@ -411,3 +411,201 @@ fn an_observable_off_the_register_is_refused() {
     let emb = upembed::gadgetize(&all_to_all(4, 2)).unwrap();
     assert!(upembed::cluster_readout(&emb, &[(4, Pauli::Z)]).is_err());
 }
+
+// ── up-embedding magic until the dynamics is Clifford ─────────────────
+
+use quantsim::pathsum;
+
+fn magic_circuit(n: usize, k: usize) -> Circuit<C64> {
+    let mut c = Circuit::new(n);
+    for i in 0..k {
+        c.gate("h", vec![], vec![i % n]);
+        c.gate("t", vec![], vec![i % n]);
+        c.gate("cx", vec![], vec![i % n, (i + 1) % n]);
+        c.gate("t", vec![], vec![(i + 1) % n]);
+    }
+    c
+}
+
+fn cancelling(n: usize, k: usize) -> Circuit<C64> {
+    let mut c = Circuit::new(n);
+    for i in 0..k {
+        c.gate("t", vec![], vec![i % n]);
+        c.gate("cx", vec![], vec![i % n, (i + 1) % n]);
+        c.gate("cx", vec![], vec![i % n, (i + 1) % n]);
+        c.gate("tdg", vec![], vec![i % n]);
+        c.gate("h", vec![], vec![(i + 2) % n]);
+    }
+    c
+}
+
+fn concat(a: &Circuit<C64>, b: &Circuit<C64>) -> Circuit<C64> {
+    let mut c = Circuit::new(a.num_qubits().max(b.num_qubits()));
+    for src in [a, b] {
+        for op in src.ops() {
+            if let quantsim::circuit::Op::Named {
+                name,
+                params,
+                qubits,
+            } = op
+            {
+                c.gate(name, params.clone(), qubits.clone());
+            }
+        }
+    }
+    c
+}
+
+#[test]
+fn the_up_embedded_dynamics_is_certified_clifford_by_a_second_representation() {
+    // `gadgetize` *claims* the dynamics is Clifford. `PathSum` reduces
+    // every Clifford circuit to h* = 0 from rewrite rules alone and
+    // knows nothing about this module, so running the up-embedded
+    // circuit through it is an independent certificate rather than this
+    // module marking its own homework.
+    for c in [
+        magic_circuit(3, 4),
+        magic_circuit(4, 8),
+        magic_circuit(5, 16),
+        cancelling(3, 16),
+    ] {
+        let emb = upembed::gadgetize(&c).unwrap();
+        assert!(emb.magic() > 0, "there should be magic to relocate");
+        let cliff = emb.to_circuit();
+        assert_eq!(
+            pathsum::operator(&cliff).unwrap().internal_vars(),
+            0,
+            "the up-embedded dynamics should reduce to h* = 0"
+        );
+    }
+}
+
+#[test]
+fn gadgets_drive_the_exponent_down_and_far_fewer_are_needed_than_t() {
+    // Spend one wire per magic event and ask a reducer what is left.
+    // Full gadgetization always works — it is Clifford by construction —
+    // but it says nothing about how many wires were *needed*.
+    for (c, expect_max) in [(magic_circuit(3, 4), 4usize), (magic_circuit(3, 8), 12)] {
+        let t = upembed::magic_events(&c).unwrap();
+        let bare = pathsum::operator(&c).unwrap().internal_vars();
+        assert!(bare > 0, "this circuit should carry irreducible magic");
+
+        let mut first_zero = None;
+        for g in 0..=t {
+            let partial = upembed::gadgetize_partial(&c, g).unwrap();
+            let h = pathsum::operator(&partial).unwrap().internal_vars();
+            if h == 0 {
+                first_zero = Some(g);
+                break;
+            }
+        }
+        let need = first_zero.expect("full gadgetization must reach Clifford");
+        assert!(need > 0, "a magic circuit needs at least one gadget");
+        assert!(
+            need <= expect_max && need < t,
+            "needed {need} of {t} gadgets, expected fewer than {expect_max}"
+        );
+        assert!(
+            need >= bare,
+            "the exponent {bare} should not exceed the gadgets needed {need}"
+        );
+    }
+}
+
+#[test]
+fn a_circuit_whose_magic_cancels_needs_no_gadgets_at_all() {
+    // The case that matters. Naive gadgetization spends one wire per T
+    // gate; reduction certifies that a circuit whose magic cancels
+    // already has Clifford dynamics, so the right number is zero.
+    for k in [4usize, 8, 32] {
+        let c = cancelling(3, k);
+        let t = upembed::magic_events(&c).unwrap();
+        assert_eq!(t, 2 * k, "the gate list really does carry {} T gates", 2 * k);
+        assert_eq!(
+            pathsum::operator(&c).unwrap().internal_vars(),
+            0,
+            "and none of them survives reduction"
+        );
+        // so gadgetizing nothing already leaves Clifford dynamics
+        let none = upembed::gadgetize_partial(&c, 0).unwrap();
+        assert_eq!(pathsum::operator(&none).unwrap().internal_vars(), 0);
+        assert_eq!(none.num_qubits(), 3, "and no wires were spent");
+        // while full gadgetization would have spent one per T gate
+        assert_eq!(upembed::gadgetize(&c).unwrap().wires(), 3 + t);
+    }
+}
+
+#[test]
+fn h_star_is_neither_sub_nor_super_additive_under_composition() {
+    // The obvious hypothesis — that magic is a resource which adds — is
+    // false in BOTH directions, which is why the join has to be reduced
+    // rather than estimated from its parts.
+    let u = magic_circuit(3, 4);
+    let hu = pathsum::operator(&u).unwrap().internal_vars();
+    assert!(hu > 0);
+
+    // composing with the inverse CANCELS: h*(U·U†) = 0 < 2·h*(U)
+    let mut inv = Circuit::<C64>::new(3);
+    for op in u.ops().iter().rev() {
+        if let quantsim::circuit::Op::Named {
+            name,
+            params,
+            qubits,
+        } = op
+        {
+            let n = match name.as_str() {
+                "t" => "tdg",
+                "tdg" => "t",
+                "s" => "sdg",
+                "sdg" => "s",
+                o => o,
+            };
+            inv.gate(n, params.clone(), qubits.clone());
+        }
+    }
+    let joined = concat(&u, &inv);
+    assert_eq!(
+        pathsum::operator(&joined).unwrap().internal_vars(),
+        0,
+        "U·U† must reduce away entirely"
+    );
+
+    // composing with ITSELF COMPOUNDS: h*(U·U) > 2·h*(U)
+    let doubled = concat(&u, &u);
+    let hd = pathsum::operator(&doubled).unwrap().internal_vars();
+    assert!(
+        hd > 2 * hu,
+        "h*(U·U) = {hd} should exceed 2·h*(U) = {}: magic that reduced inside \
+         each block stops reducing once the join entangles it",
+        2 * hu
+    );
+}
+
+#[test]
+fn h_star_is_what_the_reduction_achieved_and_not_a_magic_monotone() {
+    // The limit on how far h* can be read as a resource measure. True
+    // magic is invariant under composition with a Clifford, so if h*
+    // were a magic monotone this would not move. It does: composing
+    // with a block whose own h* is 0 — a Clifford unitary — raises h*
+    // from 1 to 3.
+    //
+    // h* is an upper bound on the readout exponent and a report of what
+    // the rewrite system achieved. The rules are complete on the
+    // Clifford fragment and not beyond it, and this is where that shows.
+    let u = magic_circuit(3, 4);
+    let hu = pathsum::operator(&u).unwrap().internal_vars();
+    assert_eq!(hu, 1);
+
+    let v = cancelling(3, 4);
+    assert_eq!(
+        pathsum::operator(&v).unwrap().internal_vars(),
+        0,
+        "this block must be Clifford, or the point does not stand"
+    );
+
+    let huv = pathsum::operator(&concat(&u, &v)).unwrap().internal_vars();
+    assert!(
+        huv > hu,
+        "h* {huv} should rise above {hu} even though the right factor is Clifford"
+    );
+}
