@@ -163,7 +163,7 @@ pub mod prelude {
         random_registry_circuit, verify_backend, ConformanceConfig, ConformanceReport,
     };
     pub use crate::crossview::{fwht, fwht_c, CrossView};
-    pub use crate::cut::{CutGraph, MAX_EXACT_DIM};
+    pub use crate::cut::{CutGraph, MAX_EXACT_DIM, MAX_EXACT_ORDER};
     pub use crate::coupling::{
         coupling_of, decoupling_frame, propagate_engineered, scramble, support_blocks, Coupling,
         DecouplingFrame, EngineeredReport, Stabilizer,

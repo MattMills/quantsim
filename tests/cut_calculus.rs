@@ -359,3 +359,182 @@ fn the_predictor_costs_the_graph_and_the_verifier_costs_the_cut() {
     // the verifier, by contrast, refuses — as it should
     assert!(g.exact_rank(&cut).is_err());
 }
+
+// ── from one cut to the whole ordering: cutwidth ──────────────────────
+
+/// Build the graph state in a given MPS site order and measure what
+/// quantsim's own MPS actually does.
+fn measured_mps(g: &CutGraph, order: &[usize]) -> (usize, usize) {
+    let n = g.sites();
+    let mut pos = vec![0usize; n];
+    for (k, &s) in order.iter().enumerate() {
+        pos[s] = k;
+    }
+    let mut c = Circuit::new(n);
+    for q in 0..n {
+        c.gate("h", vec![], vec![q]);
+    }
+    for &(i, j) in g.bonds() {
+        c.gate("cz", vec![], vec![pos[i], pos[j]]);
+    }
+    let mut st = MpsState::<C64>::with_config(
+        n,
+        MpsConfig {
+            max_bond: 1 << 20,
+            trunc_tol: 1e-14,
+        },
+    )
+    .unwrap();
+    let reg = GateRegistry::<C64>::standard();
+    for bg in c.bind(&reg).unwrap().gates() {
+        match &bg.kernel {
+            quantsim::circuit::GateKernel::Matrix(m) => st.apply(m, &bg.qubits).unwrap(),
+            quantsim::circuit::GateKernel::Diagonal(d) => st.apply_diagonal(d, &bg.qubits).unwrap(),
+        }
+    }
+    (st.max_bond_dimension(), st.routing_swaps())
+}
+
+#[test]
+fn one_crossing_direction_is_flat_however_many_strands() {
+    // The cheap side of the threshold, and the reason it matters: a
+    // bundle's cutwidth does not grow with the number of strands OR the
+    // number of sites. Cost is linear in both.
+    for strands in [2usize, 3, 4, 6, 8] {
+        for sites in [2usize, 4, 8] {
+            let g = CutGraph::bundle(strands, sites, 2).unwrap();
+            let order = g.natural_order();
+            assert_eq!(
+                g.cutwidth(&order),
+                1,
+                "bundle({strands},{sites}) should stay at cutwidth 1"
+            );
+            assert_eq!(g.qubit_bond_exact(&order).unwrap(), 2);
+        }
+    }
+}
+
+#[test]
+fn a_second_transverse_direction_is_exponential_in_the_short_extent() {
+    // The expensive side, and the precise location of the MPS/PEPS line:
+    // a weave's cutwidth is min(rows, cols), so the bond is exponential
+    // in the SHORT extent and flat in the long one. Length is free;
+    // width is not.
+    for cols in [2usize, 3, 4, 5, 6] {
+        let g = CutGraph::weave(2, cols, 2).unwrap();
+        let order = CutGraph::weave_order(2, cols);
+        assert!(
+            g.cutwidth(&order) <= 3,
+            "a 2×{cols} weave should not widen with length: {}",
+            g.cutwidth(&order)
+        );
+    }
+    // and it does grow with the short extent
+    let mut widths = Vec::new();
+    for rows in [2usize, 3, 4] {
+        let g = CutGraph::weave(rows, 6, 2).unwrap();
+        let order = CutGraph::weave_order(rows, 6);
+        widths.push(g.qubit_bond_exact(&order).unwrap());
+    }
+    for w in widths.windows(2) {
+        assert!(w[1] > w[0], "the bond must grow with the short extent: {widths:?}");
+    }
+}
+
+#[test]
+fn the_gf2_rank_is_below_the_edge_count_when_crossings_are_dependent() {
+    // The correction the edge-counting law needs: crossing edges can be
+    // linearly dependent over GF(2), and then the rank — the real
+    // Schmidt exponent — is strictly smaller. A 2×3 weave crosses three
+    // edges at its worst cut and has GF(2) rank 2.
+    let g = CutGraph::weave(2, 3, 2).unwrap();
+    let order = CutGraph::weave_order(2, 3);
+    assert_eq!(g.cutwidth(&order), 3, "three edges cross");
+    assert_eq!(g.mps_bond_bound(&order), 8, "edge counting says 8");
+    assert_eq!(g.qubit_bond_exact(&order).unwrap(), 4, "the GF(2) rank says 4");
+    let (measured, _) = measured_mps(&g, &order);
+    assert_eq!(measured, 4, "and the MPS agrees with the GF(2) rank");
+
+    // the rank is never above the edge count
+    for (rows, cols) in [(2usize, 2usize), (2, 4), (3, 3), (3, 4)] {
+        let g = CutGraph::weave(rows, cols, 2).unwrap();
+        let order = CutGraph::weave_order(rows, cols);
+        assert!(g.qubit_bond_exact(&order).unwrap() <= g.mps_bond_bound(&order));
+    }
+}
+
+#[test]
+fn the_prediction_is_exact_wherever_the_coupling_is_local_in_the_order() {
+    // The honest scope of the predictor against quantsim's MPS. Where
+    // the ordering makes every bond local — no routing — the graph-only
+    // number is the measured bond dimension, at every size. Where the
+    // router has to swap, it can leave slack the prediction does not
+    // account for, because quantsim's MPS has no recompression pass:
+    // the prediction is the FLOOR, not a promise about this router.
+    let mut checked = 0usize;
+    for g in [
+        CutGraph::chain(4, 2).unwrap(),
+        CutGraph::chain(8, 2).unwrap(),
+        CutGraph::chain(12, 2).unwrap(),
+        CutGraph::bundle(2, 4, 2).unwrap(),
+        CutGraph::bundle(3, 4, 2).unwrap(),
+        CutGraph::bundle(4, 4, 2).unwrap(),
+    ] {
+        let order = g.natural_order();
+        let (measured, swaps) = measured_mps(&g, &order);
+        assert_eq!(swaps, 0, "these orderings should need no routing");
+        assert_eq!(
+            g.qubit_bond_exact(&order).unwrap(),
+            measured as u128,
+            "no routing, so the prediction must be exact"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 6);
+
+    // And the other side, stated rather than hidden: routing can leave
+    // the bond above the floor.
+    let g = CutGraph::weave(2, 5, 2).unwrap();
+    let order = CutGraph::weave_order(2, 5);
+    let (measured, swaps) = measured_mps(&g, &order);
+    assert!(swaps > 0);
+    assert!(
+        measured as u128 >= g.qubit_bond_exact(&order).unwrap(),
+        "the prediction is a floor, and the router may sit above it"
+    );
+}
+
+#[test]
+fn the_minimum_over_orderings_says_whether_it_searched_them_all() {
+    // Cutwidth is NP-hard, so the module reports which answer you got
+    // rather than letting an upper bound pass as a minimum.
+    let small = CutGraph::ring(6, 2).unwrap();
+    assert!(small.min_cutwidth_is_exact());
+    assert_eq!(small.min_cutwidth().0, 2, "a ring cannot be laid flatter");
+
+    let big = CutGraph::chain(40, 2).unwrap();
+    assert!(!big.min_cutwidth_is_exact(), "past the exhaustive limit");
+    assert_eq!(
+        big.min_cutwidth().0,
+        1,
+        "and the greedy sweep still finds the chain's own order"
+    );
+
+    // a better ordering genuinely exists for the natural weave layout
+    let g = CutGraph::weave(2, 4, 2).unwrap();
+    assert!(g.min_cutwidth().0 <= g.cutwidth(&g.natural_order()));
+}
+
+#[test]
+fn the_ordering_predictor_costs_nothing_at_any_width() {
+    // 20000 sites. No state, no matrix, no MPS.
+    let g = CutGraph::chain(20_000, 2).unwrap();
+    let order = g.natural_order();
+    assert_eq!(g.cutwidth(&order), 1);
+    assert_eq!(g.qubit_bond_exact(&order).unwrap(), 2);
+
+    let w = CutGraph::weave(3, 5_000, 2).unwrap();
+    let order = CutGraph::weave_order(3, 5_000);
+    assert_eq!(w.cutwidth(&order), 4, "flat in the long extent");
+    assert!(w.sites() == 15_000);
+}

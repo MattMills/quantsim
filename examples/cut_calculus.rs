@@ -12,6 +12,25 @@
 
 use quantsim::cut::CutGraph;
 use quantsim::support::Support;
+
+/// Build the graph state in a given MPS order and measure the real bond.
+fn measured_mps(g: &CutGraph, order: &[usize]) -> Result<(usize, usize)> {
+    let n = g.sites();
+    let mut pos = vec![0usize; n];
+    for (k, &s) in order.iter().enumerate() { pos[s] = k; }
+    let mut c = Circuit::new(n);
+    for q in 0..n { c.gate("h", vec![], vec![q]); }
+    for &(i, j) in g.bonds() { c.gate("cz", vec![], vec![pos[i], pos[j]]); }
+    let mut st = MpsState::<C64>::with_config(n, MpsConfig { max_bond: 1 << 20, trunc_tol: 1e-14 })?;
+    let reg = GateRegistry::<C64>::standard();
+    for bg in c.bind(&reg)?.gates() {
+        match &bg.kernel {
+            quantsim::circuit::GateKernel::Matrix(m) => st.apply(m, &bg.qubits)?,
+            quantsim::circuit::GateKernel::Diagonal(d) => st.apply_diagonal(d, &bg.qubits)?,
+        }
+    }
+    Ok((st.max_bond_dimension(), st.routing_swaps()))
+}
 use quantsim::prelude::*;
 
 /// Every graph on `arities.len()` sites, and every non-trivial cut.
@@ -142,7 +161,53 @@ fn main() -> Result<()> {
     g.bond(0,1)?.bond(1,2)?.bond(2,3)?.bond(3,0)?;
     println!("   qubit 4-cycle, cut {{0,2}}:      schur {} cap {} chars {} exact {}  (theory: 3 against bound 16)",
         g.schur_bound(&CutGraph::cut_of(&[0, 2])), g.capacity_bound(&CutGraph::cut_of(&[0, 2])), g.character_count(&CutGraph::cut_of(&[0, 2]))?, g.exact_rank(&CutGraph::cut_of(&[0, 2]))?);
-    println!("\n── and the point of a graph-only predictor ──\n");
+
+    // ── from one cut to the whole ordering ───────────────────────────
+    println!("\n── cutwidth: from one cut to the whole MPS ──\n");
+    println!("  A single cut prices one bipartition. Laying the graph along a");
+    println!("  chain means paying the WORST one — that is the cutwidth, and");
+    println!("  d^cutwidth is the bond dimension an MPS is forced to. Checked");
+    println!("  against quantsim's own MpsState:\n");
+    println!("   geometry              sites   cutwidth   edge bound   GF(2) exact   measured   swaps");
+    let mut rows: Vec<(String, CutGraph, Vec<usize>)> = Vec::new();
+    for n in [4usize, 8, 12] {
+        let g = CutGraph::chain(n, 2)?; let o = g.natural_order();
+        rows.push((format!("chain({n})"), g, o));
+    }
+    for n in [4usize, 8] {
+        let g = CutGraph::ring(n, 2)?; let o = g.natural_order();
+        rows.push((format!("ring({n})"), g, o));
+    }
+    for k in [2usize, 4, 8] {
+        let g = CutGraph::bundle(k, 4, 2)?; let o = g.natural_order();
+        rows.push((format!("bundle({k} strands)"), g, o));
+    }
+    for (r, c) in [(2usize,3usize),(2,5),(3,3),(3,4),(4,4)] {
+        let g = CutGraph::weave(r, c, 2)?;
+        let o = CutGraph::weave_order(r, c);
+        rows.push((format!("weave({r}x{c})"), g, o));
+    }
+    for (label, g, order) in rows {
+        let (meas, swaps) = measured_mps(&g, &order)?;
+        println!("   {:22}{:5} {:10} {:12} {:13} {:9} {:7}", label, g.sites(),
+            g.cutwidth(&order), g.mps_bond_bound(&order), g.qubit_bond_exact(&order)?, meas, swaps);
+    }
+    println!("\n  Three things to read off. First, the THRESHOLD: a bundle stays at");
+    println!("  cutwidth 1 for any number of strands — one crossing direction is");
+    println!("  free — while a weave is exponential in min(rows,cols) and FLAT in");
+    println!("  the long extent. That is the MPS/PEPS line, and it is a property");
+    println!("  of the coupling's second direction, not of the site count.\n");
+    println!("  Second, edge counting OVER-STATES. Crossing edges can be linearly");
+    println!("  dependent over GF(2); the real Schmidt exponent is the RANK of the");
+    println!("  adjacency block. A 2x3 weave crosses 3 edges and has rank 2 — bond");
+    println!("  4, not 8, and the MPS agrees.\n");
+    println!("  Third, the prediction is a FLOOR, not a promise about this router.");
+    println!("  Where the coupling is local in the ordering (swaps 0) it is exact");
+    println!("  at every size. Where routing swaps are needed they drag sites");
+    println!("  through worse orderings, and quantsim's MPS has no recompression");
+    println!("  pass to reclaim the slack — so it can sit above the floor. That is");
+    println!("  a fact about the router, and worth fixing there.\n");
+    println!("── and the point of a graph-only predictor ──\n");
     let n = 100_000usize;
     let mut chain = CutGraph::uniform(n, 3)?;
     for q in 0..n - 1 { chain.bond(q, q + 1)?; }
