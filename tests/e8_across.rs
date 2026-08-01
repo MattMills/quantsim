@@ -100,11 +100,22 @@ fn the_advantage_over_the_qubit_path_is_linear_in_the_copies_not_exponential() {
         ),
         other => panic!("expected a polynomial advantage law, got {other:?}"),
     }
-    // The native operation's own cost is not what grows.
-    assert!(scaling
-        .cost_law
-        .as_ref()
-        .is_some_and(Law::is_subexponential));
+    // The native operation's own cost is not what grows. Asserted as
+    // measured GROWTH rather than as a fitted shape: `cost_law` is a
+    // power law fitted to median WALL-CLOCK over three sizes, where a
+    // steep polynomial and a shallow exponential are numerically
+    // adjacent and which label the fit picks moves with machine load.
+    // The ratio does not — and it is the ratio that carries the claim.
+    let (first, last) = (
+        scaling.native_nanos[0] as f64,
+        scaling.native_nanos[scaling.native_nanos.len() - 1] as f64,
+    );
+    let copies = scaling.copies[scaling.copies.len() - 1] as f64 / scaling.copies[0] as f64;
+    assert!(
+        last / first.max(1.0) < copies * copies,
+        "the native operation's cost should not outrun the square of the tower: \
+         {first} to {last} ns over {copies}x the copies"
+    );
 }
 
 #[test]

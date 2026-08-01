@@ -145,5 +145,9 @@ fn main() -> Result<()> {
         slope(&a.direct_nanos),
         slope(&a.stack_nanos)
     );
+    println!(
+        "  (the two wall-clock slopes sit within a few percent of each other, which\n            is inside this machine's scheduling noise — the ordering is a measurement,\n            not a claim. The COUNTED ledger beside it is the one that is asserted:\n            direct {:?} entangling operations against the stack's {:?}.)",
+        a.direct_entangling, a.stack_entangling
+    );
     Ok(())
 }

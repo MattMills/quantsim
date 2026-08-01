@@ -74,6 +74,7 @@ pub mod closure;
 pub mod conformance;
 pub mod coupling;
 pub mod discovery;
+pub mod dyadic;
 pub mod e8;
 pub mod error;
 pub mod exact;
@@ -81,6 +82,7 @@ pub mod gates;
 pub mod guard;
 pub mod harness;
 pub mod heisenberg;
+pub mod horizon;
 pub mod library;
 pub mod lift;
 pub mod math;
@@ -154,6 +156,9 @@ pub mod prelude {
         discover_stabilizers, stabilizes_state, state_deviation_up_to_phase, verify_transparent,
         Insertion, StabilizerCheck, TransparencyReport,
     };
+    pub use crate::dyadic::{
+        dyadic_cone, prune_two_sided, two_sided_bound, DyadicCone, Node, MAX_DEPTH,
+    };
     pub use crate::e8::{self, ChainEmbedding};
     pub use crate::error::{Error, Result};
     pub use crate::exact::{DOmega, ExactReal, ExactState};
@@ -168,6 +173,7 @@ pub mod prelude {
         tfim_energy_basis, tfim_trotter, AxisSpan, BasisReport, FactoredPauliSum, FactoredReport,
         Forward, Journal, Meeting, PauliSum, Propagation, Rotation, Step, XSpan,
     };
+    pub use crate::horizon::{horizon, Horizon, AXES};
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};

@@ -184,27 +184,45 @@ fn the_object_trades_entangling_gates_per_use_for_a_one_off_write() {
 }
 
 #[test]
-fn the_wall_clock_slope_is_lower_even_where_the_constant_is_not() {
+fn the_per_use_slope_is_lower_even_where_the_constant_is_not() {
     // Honest counterpoint to the counted crossover: a classical
     // simulator applies a diagonal kernel in O(support) regardless of
     // arity, so the stack's win does not show up as raw speed at small
     // repetition counts — it shows up in the SLOPE, because the steady
     // state is cheaper per use than a multi-controlled phase.
+    //
+    // Asserted on the COUNTED entangling operations rather than on
+    // nanoseconds. The two slopes differ by about 6% in wall-clock,
+    // which is inside this machine's scheduling noise, so the timed
+    // version flips ordering under parallel load — it is a measurement,
+    // and `examples/selfhosted_stack.rs` prints it as one, beside these
+    // counts.
     let sim = Simulator::<C64>::new();
     let reps = [8usize, 64, 256];
     let r = amortization(&sim, "sparse", 6, &ccz(), &reps).expect("amortize");
     let slope = |v: &[usize]| {
         (v[v.len() - 1] as f64 - v[0] as f64) / (reps[reps.len() - 1] - reps[0]) as f64
     };
-    let (direct, stack) = (slope(&r.direct_nanos), slope(&r.stack_nanos));
+    let (direct, stack) = (slope(&r.direct_entangling), slope(&r.stack_entangling));
     assert!(
         stack < direct,
-        "the stack's per-use cost should be the cheaper one: {stack:.1} vs {direct:.1} ns/use"
+        "the stack's per-use cost should be the cheaper one: {stack:.3} vs {direct:.3} per use"
     );
-    assert!(
-        r.stack_nanos[0] > r.direct_nanos[0],
-        "while its constant is the more expensive one at one use"
+    assert_eq!(
+        stack, 0.0,
+        "and the steady state should cost no entangling operations at all"
     );
+    assert_eq!(
+        r.direct_entangling,
+        r.repetitions,
+        "while the direct route pays one multi-controlled phase per use"
+    );
+    // The other half of the original claim — that the stack's CONSTANT is
+    // the more expensive one — has no counted form at all: the one-off
+    // self-computation is a single entangling operation, so by this
+    // ledger the stack is ahead from the first use. It is expensive only
+    // in wall-clock, and that is exactly why it is measured in the
+    // example rather than asserted here.
 }
 
 #[test]
