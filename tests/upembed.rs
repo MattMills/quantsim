@@ -1,0 +1,413 @@
+//! Up-embedded readout. That relocating each magic event to a fresh
+//! wire makes the whole dynamics Clifford, that the readout then costs
+//! the observable's *magic adjacency* rather than its cone, that this
+//! answers exactly where the cone resolver buys nothing at all — and
+//! that none of it knows how wide the register is.
+
+use quantsim::backend::{conjugate_by_step, CliffordStep, PauliString};
+use quantsim::gates::Pauli;
+use quantsim::prelude::*;
+use quantsim::query::{ConeResolver, Inner, Resolver, StateResolver};
+use quantsim::upembed::{self, UpEmbedResolver};
+
+fn word(n: usize, gates: usize, t_share: u64, seed: u64) -> Circuit<C64> {
+    let mut rng = Prng::new(seed);
+    let mut c = Circuit::new(n);
+    for _ in 0..gates {
+        let a = (rng.next_u64() % n as u64) as usize;
+        let b = (rng.next_u64() % n as u64) as usize;
+        match rng.next_u64() % (8 + t_share) {
+            0 => c.gate("h", vec![], vec![a]),
+            1 => c.gate("s", vec![], vec![a]),
+            2 => c.gate("x", vec![], vec![a]),
+            3 => c.gate("z", vec![], vec![a]),
+            4 => c.gate("y", vec![], vec![a]),
+            5 => c.gate("sdg", vec![], vec![a]),
+            6 => {
+                if a != b {
+                    c.gate("cz", vec![], vec![a, b])
+                } else {
+                    c.gate("h", vec![], vec![a])
+                }
+            }
+            7 => {
+                if a != b {
+                    c.gate("cx", vec![], vec![a, b])
+                } else {
+                    c.gate("sx", vec![], vec![a])
+                }
+            }
+            k => {
+                if k % 2 == 0 {
+                    c.gate("t", vec![], vec![a])
+                } else {
+                    c.gate("tdg", vec![], vec![a])
+                }
+            }
+        };
+    }
+    c
+}
+
+/// Every pair coupled in every layer — the shape with no locality left
+/// for a cone to cut, with magic interleaved between the layers.
+fn all_to_all(n: usize, t: usize) -> Circuit<C64> {
+    let mut c = Circuit::new(n);
+    for q in 0..n {
+        c.gate("h", vec![], vec![q]);
+    }
+    for k in 0..t / 2 {
+        c.gate("t", vec![], vec![(k * 3) % n]);
+    }
+    for a in 0..n {
+        for b in (a + 1)..n {
+            c.gate("cz", vec![], vec![a, b]);
+        }
+    }
+    for k in 0..t - t / 2 {
+        c.gate("t", vec![], vec![(k * 5 + 1) % n]);
+    }
+    for a in 0..n {
+        for b in (a + 1)..n {
+            c.gate("cz", vec![], vec![a, b]);
+        }
+    }
+    for q in 0..n {
+        c.gate("h", vec![], vec![q]);
+    }
+    c
+}
+
+/// Independent blocks, each with its own magic — disjoint magic
+/// neighbourhoods, which is what the factorization actually rewards.
+fn blocked(n: usize, block: usize, t_per_block: usize) -> Circuit<C64> {
+    let mut c = Circuit::new(n);
+    for lo in (0..n).step_by(block) {
+        let hi = (lo + block).min(n);
+        for _ in 0..3 {
+            for a in lo..hi {
+                for b in (a + 1)..hi {
+                    c.gate("cz", vec![], vec![a, b]);
+                }
+            }
+            for q in lo..hi {
+                c.gate("h", vec![], vec![q]);
+            }
+        }
+        for k in 0..t_per_block {
+            c.gate("t", vec![], vec![lo + k % (hi - lo)]);
+        }
+    }
+    c
+}
+
+// ── it is the same expectation ───────────────────────────────────────
+
+#[test]
+fn the_up_embedded_readout_agrees_with_dense() {
+    let sim: Simulator = Simulator::new();
+    let mut worst = 0.0f64;
+    for seed in 0..50u64 {
+        for n in 2..=4usize {
+            let c = word(n, 12, 4, seed * 13 + n as u64);
+            let state = sim.run(&c).unwrap();
+            for q in 0..n {
+                for p in [Pauli::X, Pauli::Y, Pauli::Z] {
+                    let want = pauli_expectation(&*state, &[(q, p)]).unwrap();
+                    let got = upembed::expectation(&c, &[(q, p)]).unwrap();
+                    worst = worst.max((want.re - got.value).abs());
+                }
+            }
+            // a two-site observable, which mixes the line algebra
+            let ops = [(0usize, Pauli::Z), (n - 1, Pauli::X)];
+            let want = pauli_expectation(&*state, &ops).unwrap();
+            let got = upembed::expectation(&c, &ops).unwrap();
+            worst = worst.max((want.re - got.value).abs());
+        }
+    }
+    assert!(worst < 1e-12, "worst deviation {worst:e}");
+}
+
+#[test]
+fn the_wide_transport_agrees_with_the_crates_own_u64_transport() {
+    // Two independent implementations of the same Clifford conjugation:
+    // this module's unbounded-bitset tableau, and the crate's `u64`
+    // `conjugate_by_step`. They must agree wire for wire wherever both
+    // can run — that is what licences replacing the bounded one.
+    let mut rng = Prng::new(99);
+    let mut cases = 0usize;
+    for trial in 0..300u64 {
+        let n = 3 + (trial as usize % 8);
+        let emb = upembed::gadgetize(&word(n, 30, 0, trial)).unwrap();
+        for _ in 0..5 {
+            let mask = (1u64 << n) - 1;
+            let (x, z) = (rng.next_u64() & mask, rng.next_u64() & mask);
+            let want = emb.steps().iter().rev().fold(
+                PauliString {
+                    x,
+                    z,
+                    negative: false,
+                },
+                |acc, &s: &CliffordStep| conjugate_by_step(acc, s),
+            );
+            let got = upembed::debug_transport(x, z, emb.steps());
+            assert_eq!(
+                (want.x, want.z, want.negative),
+                got,
+                "trial {trial}: transporting X^{x:b} Z^{z:b}"
+            );
+            cases += 1;
+        }
+    }
+    assert_eq!(cases, 1500);
+}
+
+#[test]
+fn an_exactly_zero_expectation_is_decided_rather_than_approximated() {
+    // The readout lives in ℤ[ω]/√2^k, so a vanishing expectation comes
+    // back as the ring's zero — a decision, not a small double.
+    // T|+⟩ points along the X–Y diagonal: ⟨Z⟩ is exactly nothing, and
+    // ⟨X⟩ is exactly 1/√2, which is a ring element and not a rounding.
+    let mut c = Circuit::new(1);
+    c.gate("h", vec![], vec![0]).gate("t", vec![], vec![0]);
+    let z = upembed::expectation(&c, &[(0, Pauli::Z)]).unwrap();
+    assert!(z.exact.is_zero(), "value was {}", z.value);
+    assert_eq!(z.value, 0.0, "not merely small — zero");
+    for p in [Pauli::X, Pauli::Y] {
+        let r = upembed::expectation(&c, &[(0, p)]).unwrap();
+        assert!(!r.exact.is_zero());
+        assert!((r.value - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-15);
+    }
+
+    // And the same decision survives at scale, where the cancellation
+    // is between hundreds of contracted lines rather than two.
+    let big = upembed::expectation(&all_to_all(12, 6), &[(6, Pauli::X)]).unwrap();
+    assert!(big.exact.is_zero(), "value was {}", big.value);
+    assert!(
+        !upembed::expectation(&all_to_all(12, 6), &[(6, Pauli::Y)])
+            .unwrap()
+            .exact
+            .is_zero(),
+        "the same circuit must not vanish along every axis, or the test proves nothing"
+    );
+}
+
+// ── where the cone buys nothing ──────────────────────────────────────
+
+#[test]
+fn where_the_cone_buys_nothing_the_up_embedding_still_does() {
+    // The whole reason this module exists. An all-to-all layer puts
+    // every qubit in every cone, so `ConeResolver` simulates the full
+    // width and reports 1.0× — honestly, but uselessly. Going up a
+    // dimension pays the observable's magic adjacency instead, and that
+    // does not care that the circuit is nonlocal.
+    let reg = GateRegistry::<C64>::standard();
+    let (n, t) = (12usize, 6usize);
+    let c = all_to_all(n, t);
+    let ops = [(n / 2, Pauli::Z)];
+
+    let mut cone = ConeResolver::new(c.clone(), &reg, Inner::Dense);
+    let cheap = cone.expectation(&ops).unwrap();
+    assert_eq!(cheap.cost.qubits, n, "an all-to-all layer has no outside");
+    assert_eq!(cheap.cost.compression(), 1.0, "and therefore no compression");
+
+    let mut up = UpEmbedResolver::new(c.clone());
+    let a = up.expectation(&ops).unwrap();
+    assert!(
+        (a.value - cheap.value).abs() < 1e-11,
+        "same question, different frame: {} vs {}",
+        a.value,
+        cheap.value
+    );
+    assert!(
+        a.cost.qubits <= t,
+        "the exponent should be the magic, not the width: {}",
+        a.cost.qubits
+    );
+    assert!(
+        a.cost.compression() > 60.0,
+        "compression only {:.1}x",
+        a.cost.compression()
+    );
+}
+
+#[test]
+fn the_cost_does_not_know_how_wide_the_register_is() {
+    // Hold the magic fixed, grow the register 16-fold, and the cluster
+    // spectrum does not move — while the cone's exponent tracks the
+    // width exactly, because on this shape the cone *is* the width.
+    let t = 6usize;
+    let mut seen = Vec::new();
+    for n in [16usize, 32, 64, 128, 256] {
+        let r = upembed::expectation(&all_to_all(n, t), &[(n / 2, Pauli::Z)]).unwrap();
+        seen.push((n, r.clusters.clone(), r.terms));
+    }
+    let first = seen[0].clone();
+    for (n, clusters, terms) in &seen {
+        assert_eq!(*clusters, first.1, "n={n}: the clusters moved");
+        assert_eq!(*terms, first.2, "n={n}: the cost moved");
+    }
+    assert!(
+        first.2 <= 1 << t,
+        "and the cost is bounded by the magic: {} terms",
+        first.2
+    );
+}
+
+#[test]
+fn there_is_no_width_ceiling() {
+    // 200 data qubits plus their ancillas — past the crate's `u64`
+    // Pauli representation, and 2^200 past a state vector. The claim of
+    // this module is that cost stops tracking the width; a module making
+    // that claim has no business capping the width.
+    let n = 200usize;
+    let r = upembed::expectation(&all_to_all(n, 4), &[(100, Pauli::Z)]).unwrap();
+    assert!(r.value.abs() <= 1.0 + 1e-12);
+    assert!(r.terms <= 16, "{} terms at n={n}", r.terms);
+    let emb = upembed::gadgetize(&all_to_all(n, 4)).unwrap();
+    assert_eq!(emb.wires(), n + 4);
+    assert!(emb.wires() > 64, "the point is to be past the u64 ceiling");
+}
+
+// ── the factorization ────────────────────────────────────────────────
+
+#[test]
+fn disjoint_magic_neighbourhoods_factorize_the_subset_sum() {
+    // The subset sum ranges over 2^t, but `|Φ⟩` is a product state, so
+    // it splits over the connected components of the transported lines.
+    // When the magic sits in separate neighbourhoods that is the whole
+    // difference between a product of small sums and one large one.
+    let r = upembed::expectation(&blocked(48, 8, 4), &[(4, Pauli::Z)]).unwrap();
+    let t: usize = r.clusters.iter().sum();
+    assert!(t >= 20, "the circuit should carry real magic: t = {t}");
+    assert!(
+        r.clusters.len() > 1,
+        "the magic should have split into neighbourhoods: {:?}",
+        r.clusters
+    );
+    assert!(
+        r.terms < (1u128 << t) / 100,
+        "{} terms against a flat 2^{t}",
+        r.terms
+    );
+    assert!(
+        r.factorization_gain() > 100.0,
+        "gain only {:.1}x",
+        r.factorization_gain()
+    );
+}
+
+#[test]
+fn a_clifford_circuit_needs_no_ancillas_and_one_contraction() {
+    let r = upembed::expectation(&word(24, 400, 0, 4), &[(12, Pauli::Z)]).unwrap();
+    assert_eq!(r.clusters, vec![0], "no magic, one empty cluster");
+    assert_eq!(r.terms, 1, "and a single boundary contraction");
+    assert_eq!(r.transports, 1, "only the observable is transported");
+}
+
+#[test]
+fn only_one_transport_per_ancilla_however_large_the_sum() {
+    // The subset sum has 2^t terms but the *transports* are t + 1,
+    // because conjugation is multiplicative — that is what keeps the
+    // Clifford work linear in the magic.
+    let c = all_to_all(16, 8);
+    let r = upembed::expectation(&c, &[(8, Pauli::Z)]).unwrap();
+    let emb = upembed::gadgetize(&c).unwrap();
+    assert_eq!(r.transports, emb.magic() + 1);
+    assert!(r.terms >= 1 << 4, "the sum itself is much larger");
+}
+
+// ── as a resolver, and the edge ──────────────────────────────────────
+
+#[test]
+fn the_resolver_answers_what_the_state_resolver_answers() {
+    let reg = GateRegistry::<C64>::standard();
+    for &(n, t) in &[(6usize, 4usize), (10, 6), (12, 4)] {
+        let c = all_to_all(n, t);
+        for q in [0usize, n / 3, n / 2] {
+            let ops = [(q, Pauli::Z)];
+            let mut state = StateResolver::new(c.clone(), &reg, Inner::Dense);
+            let mut up = UpEmbedResolver::new(c.clone());
+            let a = state.expectation(&ops).unwrap();
+            let b = up.expectation(&ops).unwrap();
+            assert!(
+                (a.value - b.value).abs() < 1e-11,
+                "n={n} q={q}: {} vs {}",
+                a.value,
+                b.value
+            );
+            assert_eq!(a.cost.qubits, n, "the state resolver pays the full width");
+            assert!(b.cost.qubits <= t, "the up-embedding pays the magic");
+        }
+    }
+}
+
+#[test]
+fn a_clifford_perturbation_is_absorbed_and_a_magic_one_is_refused() {
+    let reg = GateRegistry::<C64>::standard();
+    let c = all_to_all(8, 4);
+    let ops = [(4usize, Pauli::Z)];
+    let mut up = UpEmbedResolver::new(c.clone());
+    let mut state = StateResolver::new(c, &reg, Inner::Dense);
+
+    // A half turn about a single-qubit axis is a Pauli, hence Clifford,
+    // hence something this frame simply absorbs.
+    let pauli = Rotation {
+        theta: std::f64::consts::PI,
+        axis: (1u64 << 3, 0),
+    };
+    let a = up.response(5, 3, pauli, &ops).unwrap();
+    let b = state.response(5, 3, pauli, &ops).unwrap();
+    assert!(
+        (a.value - b.value).abs() < 1e-11,
+        "{} vs {}",
+        a.value,
+        b.value
+    );
+
+    // An eighth turn is magic, and the frame says so rather than
+    // rounding it into the nearest Clifford.
+    let magic = Rotation {
+        theta: std::f64::consts::FRAC_PI_4,
+        axis: (1u64 << 3, 0),
+    };
+    match up.response(5, 3, magic, &ops) {
+        Err(Error::InvalidState(msg)) => {
+            assert!(msg.contains("Clifford"), "the refusal should say why: {msg}")
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_circuit_outside_clifford_plus_t_is_refused_by_name() {
+    let mut c = Circuit::new(3);
+    c.gate("h", vec![], vec![0]);
+    c.gate("ccz", vec![], vec![0, 1, 2]);
+    match upembed::gadgetize(&c) {
+        Err(Error::InvalidState(msg)) => assert!(msg.contains("ccz"), "{msg}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+
+    let mut c = Circuit::new(2);
+    c.gate("rz", vec![0.3], vec![0]);
+    match upembed::gadgetize(&c) {
+        Err(Error::InvalidState(msg)) => assert!(msg.contains("π/4"), "{msg}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+
+    // Dyadic but finer than π/4 is still outside Clifford+T, and gets
+    // its own reason rather than being lumped in with the above.
+    let mut c = Circuit::new(2);
+    c.gate("rz", vec![std::f64::consts::FRAC_PI_8], vec![0]);
+    match upembed::gadgetize(&c) {
+        Err(Error::InvalidState(msg)) => assert!(msg.contains("finer"), "{msg}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_observable_off_the_register_is_refused() {
+    let emb = upembed::gadgetize(&all_to_all(4, 2)).unwrap();
+    assert!(upembed::cluster_readout(&emb, &[(4, Pauli::Z)]).is_err());
+}

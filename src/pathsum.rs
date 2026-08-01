@@ -208,6 +208,28 @@ impl Mask {
         out
     }
 
+    /// Union.
+    pub fn or(&self, other: &Mask) -> Mask {
+        let n = self.0.len().max(other.0.len());
+        let mut out = Mask(Vec::with_capacity(n));
+        for i in 0..n {
+            out.0
+                .push(self.0.get(i).copied().unwrap_or(0) | other.0.get(i).copied().unwrap_or(0));
+        }
+        out.trim();
+        out
+    }
+
+    /// Whether any variable below `i` is present.
+    pub fn any_below(&self, i: usize) -> bool {
+        let full = i / 64;
+        if self.0.iter().take(full).any(|&w| w != 0) {
+            return true;
+        }
+        let rest = i % 64;
+        rest != 0 && self.0.get(full).is_some_and(|w| w & ((1u64 << rest) - 1) != 0)
+    }
+
     /// Intersection.
     pub fn and(&self, other: &Mask) -> Mask {
         let n = self.0.len().min(other.0.len());
