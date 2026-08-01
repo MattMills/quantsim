@@ -743,3 +743,81 @@ impl Resolver for UpEmbedResolver {
         self.answer(ops, Some(c))
     }
 }
+
+// ── handing the Clifford result to another representation ────────────
+
+impl UpEmbedding {
+    /// The up-embedded dynamics as an ordinary [`Circuit`] — all
+    /// Clifford, on [`UpEmbedding::wires`] wires.
+    ///
+    /// The point of being able to hand it over: a *second* representation
+    /// can then check the claim. `PathSum` reduces every Clifford circuit
+    /// to `h* = 0` from rewrite rules alone, so running this through it
+    /// certifies "the dynamics is Clifford" without trusting this
+    /// module's own bookkeeping.
+    pub fn to_circuit(&self) -> Circuit<C64> {
+        let mut c = Circuit::new(self.wires());
+        for step in &self.steps {
+            match *step {
+                CliffordStep::H(a) => c.gate("h", vec![], vec![a]),
+                CliffordStep::S(a) => c.gate("s", vec![], vec![a]),
+                CliffordStep::Cx(a, b) => c.gate("cx", vec![], vec![a, b]),
+            };
+        }
+        c
+    }
+}
+
+/// Gadgetize only the **first `count`** magic events, leaving the rest
+/// in place — the partial move.
+///
+/// Full [`gadgetize`] relocates every `T` to a fresh wire and the
+/// dynamics becomes Clifford by construction, which is true but says
+/// nothing about how many wires were *needed*. Gadgetizing a prefix and
+/// asking a reducer what is left turns that into a measurement: spend
+/// wires one at a time and watch the surviving magic fall.
+///
+/// Returns the circuit on `qubits + min(count, t)` wires. Ancillas carry
+/// the magic as boundary data and are not prepared here — this is the
+/// dynamics, which is the part whose Clifford-ness is in question.
+pub fn gadgetize_partial(circuit: &Circuit<C64>, count: usize) -> Result<Circuit<C64>> {
+    let data = circuit.num_qubits();
+    let total = magic_events(circuit)?;
+    let take = count.min(total);
+    let mut out = Circuit::new(data + take);
+    let mut used = 0usize;
+    for op in circuit.ops() {
+        let Op::Named {
+            name,
+            params,
+            qubits: qs,
+        } = op
+        else {
+            return Err(Error::InvalidState(
+                "upembed: only named registry gates gadgetize".into(),
+            ));
+        };
+        let is_magic = matches!(name.as_str(), "t" | "tdg") && qs.len() == 1;
+        if is_magic && used < take {
+            out.gate("cx", vec![], vec![qs[0], data + used]);
+            used += 1;
+        } else {
+            out.gate(name, params.clone(), qs.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// Magic events in a circuit — the `T` and `T†` gates a full
+/// gadgetization would each spend a wire on.
+pub fn magic_events(circuit: &Circuit<C64>) -> Result<usize> {
+    let mut n = 0usize;
+    for op in circuit.ops() {
+        if let Op::Named { name, qubits, .. } = op {
+            if matches!(name.as_str(), "t" | "tdg") && qubits.len() == 1 {
+                n += 1;
+            }
+        }
+    }
+    Ok(n)
+}

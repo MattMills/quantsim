@@ -58,6 +58,34 @@
 //! structure, not just on how much magic is present. It is measured
 //! after the fact, never predicted.
 //!
+//! ## The operator formulation, and what needs no tableau
+//!
+//! [`PathSum::identity`] starts from the identity *operator* rather than
+//! a state: each qubit's form is its own free input variable. That one
+//! change is what the absence of a tableau buys.
+//!
+//! A stabilizer tableau represents a stabilizer *state*. It cannot hold
+//! a non-Clifford operator at all, so a tableau-based tool has to decide
+//! up front which fragment it is in and branch. The path sum has one
+//! code path for every circuit, and `h*` *reports* where it landed.
+//!
+//! Two capabilities follow, neither available to a tableau:
+//!
+//! * [`equivalent`] decides circuit equality by reducing `V† ∘ U` — and
+//!   `T·T = S`, `T⁸ = I` are statements a tableau cannot even express.
+//! * Reduction **discovers Clifford-ness the gate list hides**. A circuit
+//!   with 128 `T` gates that cancel reduces to `h* = 0` and is certified
+//!   Clifford; a T-counting cost model calls it hard, and a tableau
+//!   simulator must refuse or fall back. Magic that does *not* cancel is
+//!   not certified away, which is what makes the certificate mean
+//!   something.
+//!
+//! Soundness runs one way and is reported that way: reduction only ever
+//! rewrites the sum into an equal one, so `true` is a proof. A `false` is
+//! "the rewrite system stalled" — complete for the Clifford fragment,
+//! not in general — and [`equivalent_verdict`] returns the surviving
+//! `h*` so the two can be told apart.
+//!
 //! Ported from the `octonion_triality` research package's `pathsum` /
 //! `pathunit` modules, whose reduction rules this follows.
 
@@ -335,6 +363,8 @@ pub struct PathSum {
     active: Mask,
     /// The state reduced to zero.
     zero: bool,
+    /// Free input variables `0..inputs` — `0` for a state.
+    inputs: usize,
     /// Rule-V splits performed — the reduction's measured work.
     splits: u64,
 }
@@ -351,6 +381,7 @@ impl PathSum {
             nvars: 0,
             active: Mask::zero(),
             zero: false,
+            inputs: 0,
             splits: 0,
         }
     }
@@ -628,100 +659,138 @@ impl PathSum {
     /// `u3`, a gate at an angle that is not `2π·k/2^m` — is **refused
     /// with its name**, not approximated. A representation that is exact
     /// on a fragment should say where the fragment ends.
+    /// Run a [`Circuit`] as a path sum, then reduce.
+    ///
+    /// This is the point of contact with the rest of the crate: the same
+    /// circuit that a [`DenseState`](crate::DenseState) evolves can be
+    /// *composed* here instead, and the two agree amplitude for
+    /// amplitude — including global phase, which a representation that
+    /// only ever reports probabilities is free to lose and this one is
+    /// not.
+    ///
+    /// The supported letters are the dyadic fragment plus the rotations
+    /// that reduce to it. Anything else — a continuously parameterised
+    /// `u3`, a gate at an angle that is not `2π·k/2^m` — is **refused
+    /// with its name**, not approximated. A representation that is exact
+    /// on a fragment should say where the fragment ends.
     pub fn from_circuit(circuit: &Circuit<C64>) -> Result<PathSum> {
         let mut ps = PathSum::new(circuit.num_qubits());
-        for op in circuit.ops() {
-            let Op::Named {
-                name,
-                params,
-                qubits: qs,
-            } = op
-            else {
-                return Err(Error::InvalidState(
-                    "pathsum: only named registry gates compose as path sums".into(),
-                ));
-            };
-            let p = |i: usize| params.get(i).copied().unwrap_or(0.0);
-            // Report the gate's own parameter on refusal. A rotation
-            // decomposes into a turn *and* a half-turn of global phase,
-            // so the raw converter would otherwise name an angle the
-            // caller never wrote.
-            let ang = |theta: f64| -> Result<Turn> {
-                turn_from_radians(theta).map_err(|_| {
-                    Error::InvalidState(format!(
-                        "pathsum: `{name}` at {} rad is not a dyadic angle; \
-                         this representation refuses it rather than rounding it",
-                        p(0)
-                    ))
-                })
-            };
-            match (name.as_str(), qs.len()) {
-                ("id", _) => {}
-                ("h", 1) => ps.h(qs[0])?,
-                ("x" | "not", 1) => ps.x(qs[0])?,
-                ("z", 1) => ps.z(qs[0])?,
-                ("s", 1) => ps.s(qs[0])?,
-                ("sdg", 1) => ps.sdg(qs[0])?,
-                ("t", 1) => ps.t(qs[0])?,
-                ("tdg", 1) => ps.tdg(qs[0])?,
-                ("y", 1) => {
-                    // Y = i·X·Z, so Z, then X, then the quarter turn.
-                    ps.z(qs[0])?;
-                    ps.x(qs[0])?;
-                    ps.global_phase(QUARTER);
-                }
-                ("p" | "phase", 1) => ps.phase_on(qs[0], ang(p(0))?)?,
-                ("rz", 1) => {
-                    // exp(−iθZ/2) = e^{−iθ/2}·diag(1, e^{iθ})
-                    ps.global_phase(ang(-p(0) / 2.0)?);
-                    ps.phase_on(qs[0], ang(p(0))?)?;
-                }
-                ("rx", 1) => {
-                    ps.h(qs[0])?;
-                    ps.global_phase(ang(-p(0) / 2.0)?);
-                    ps.phase_on(qs[0], ang(p(0))?)?;
-                    ps.h(qs[0])?;
-                }
-                ("sx", 1) => {
-                    ps.global_phase(EIGHTH);
-                    ps.h(qs[0])?;
-                    ps.global_phase(turn_from_dyadic(-1, 3)?);
-                    ps.phase_on(qs[0], QUARTER)?;
-                    ps.h(qs[0])?;
-                }
-                ("sxdg", 1) => {
-                    ps.global_phase(EIGHTH.wrapping_neg());
-                    ps.h(qs[0])?;
-                    ps.global_phase(turn_from_dyadic(1, 3)?);
-                    ps.phase_on(qs[0], QUARTER.wrapping_neg())?;
-                    ps.h(qs[0])?;
-                }
-                ("cx" | "cnot", 2) => ps.cnot(qs[0], qs[1])?,
-                ("cz", 2) => ps.cz(qs[0], qs[1])?,
-                ("swap", 2) => ps.swap(qs[0], qs[1])?,
-                ("cp" | "cphase", 2) => ps.phase_on_all(&[qs[0], qs[1]], ang(p(0))?)?,
-                ("rzz", 2) => {
-                    // exp(−iθ Z⊗Z/2) = e^{−iθ/2}·ω^{θ·(a⊕b)}
-                    ps.global_phase(ang(-p(0) / 2.0)?);
-                    ps.phase_on_parity(&[qs[0], qs[1]], ang(p(0))?)?;
-                }
-                ("ccz", 3) => ps.ccz(qs[0], qs[1], qs[2])?,
-                ("ccx", 3) => {
-                    ps.h(qs[2])?;
-                    ps.ccz(qs[0], qs[1], qs[2])?;
-                    ps.h(qs[2])?;
-                }
-                _ => {
-                    return Err(Error::InvalidState(format!(
-                        "pathsum: `{name}` on {} qubits is outside the dyadic fragment",
-                        qs.len()
-                    )))
-                }
-            }
-        }
+        ps.apply_circuit(circuit, false)?;
         ps.reduce();
         Ok(ps)
     }
+
+    /// One gate, optionally inverted.
+    fn apply_op(&mut self, op: &Op<C64>, dagger: bool) -> Result<()> {
+        let Op::Named {
+            name,
+            params,
+            qubits: qs,
+        } = op
+        else {
+            return Err(Error::InvalidState(
+                "pathsum: only named registry gates compose as path sums".into(),
+            ));
+        };
+        // Inverting a gate of this fragment is either a letter swap or a
+        // negated angle; every other letter here is self-inverse.
+        let (owned_name, params) = if dagger {
+            match name.as_str() {
+                "s" => ("sdg".to_string(), params.clone()),
+                "sdg" => ("s".to_string(), params.clone()),
+                "t" => ("tdg".to_string(), params.clone()),
+                "tdg" => ("t".to_string(), params.clone()),
+                "sx" => ("sxdg".to_string(), params.clone()),
+                "sxdg" => ("sx".to_string(), params.clone()),
+                "p" | "phase" | "rz" | "rx" | "cp" | "cphase" | "rzz" => {
+                    (name.clone(), params.iter().map(|x| -x).collect())
+                }
+                _ => (name.clone(), params.clone()),
+            }
+        } else {
+            (name.clone(), params.clone())
+        };
+        let name = &owned_name;
+        let p = |i: usize| params.get(i).copied().unwrap_or(0.0);
+        // Report the gate's own parameter on refusal. A rotation
+        // decomposes into a turn *and* a half-turn of global phase,
+        // so the raw converter would otherwise name an angle the
+        // caller never wrote.
+        let ang = |theta: f64| -> Result<Turn> {
+            turn_from_radians(theta).map_err(|_| {
+                Error::InvalidState(format!(
+                    "pathsum: `{name}` at {} rad is not a dyadic angle; \
+                     this representation refuses it rather than rounding it",
+                    p(0)
+                ))
+            })
+        };
+        match (name.as_str(), qs.len()) {
+            ("id", _) => {}
+            ("h", 1) => self.h(qs[0])?,
+            ("x" | "not", 1) => self.x(qs[0])?,
+            ("z", 1) => self.z(qs[0])?,
+            ("s", 1) => self.s(qs[0])?,
+            ("sdg", 1) => self.sdg(qs[0])?,
+            ("t", 1) => self.t(qs[0])?,
+            ("tdg", 1) => self.tdg(qs[0])?,
+            ("y", 1) => {
+                // Y = i·X·Z, so Z, then X, then the quarter turn.
+                self.z(qs[0])?;
+                self.x(qs[0])?;
+                self.global_phase(QUARTER);
+            }
+            ("p" | "phase", 1) => self.phase_on(qs[0], ang(p(0))?)?,
+            ("rz", 1) => {
+                // exp(−iθZ/2) = e^{−iθ/2}·diag(1, e^{iθ})
+                self.global_phase(ang(-p(0) / 2.0)?);
+                self.phase_on(qs[0], ang(p(0))?)?;
+            }
+            ("rx", 1) => {
+                self.h(qs[0])?;
+                self.global_phase(ang(-p(0) / 2.0)?);
+                self.phase_on(qs[0], ang(p(0))?)?;
+                self.h(qs[0])?;
+            }
+            ("sx", 1) => {
+                self.global_phase(EIGHTH);
+                self.h(qs[0])?;
+                self.global_phase(turn_from_dyadic(-1, 3)?);
+                self.phase_on(qs[0], QUARTER)?;
+                self.h(qs[0])?;
+            }
+            ("sxdg", 1) => {
+                self.global_phase(EIGHTH.wrapping_neg());
+                self.h(qs[0])?;
+                self.global_phase(turn_from_dyadic(1, 3)?);
+                self.phase_on(qs[0], QUARTER.wrapping_neg())?;
+                self.h(qs[0])?;
+            }
+            ("cx" | "cnot", 2) => self.cnot(qs[0], qs[1])?,
+            ("cz", 2) => self.cz(qs[0], qs[1])?,
+            ("swap", 2) => self.swap(qs[0], qs[1])?,
+            ("cp" | "cphase", 2) => self.phase_on_all(&[qs[0], qs[1]], ang(p(0))?)?,
+            ("rzz", 2) => {
+                // exp(−iθ Z⊗Z/2) = e^{−iθ/2}·ω^{θ·(a⊕b)}
+                self.global_phase(ang(-p(0) / 2.0)?);
+                self.phase_on_parity(&[qs[0], qs[1]], ang(p(0))?)?;
+            }
+            ("ccz", 3) => self.ccz(qs[0], qs[1], qs[2])?,
+            ("ccx", 3) => {
+                self.h(qs[2])?;
+                self.ccz(qs[0], qs[1], qs[2])?;
+                self.h(qs[2])?;
+            }
+            _ => {
+                return Err(Error::InvalidState(format!(
+                    "pathsum: `{name}` on {} qubits is outside the dyadic fragment",
+                    qs.len()
+                )))
+            }
+        }
+        Ok(())
+    }
+
 }
 
 // ── reduction ────────────────────────────────────────────────────────
@@ -906,7 +975,19 @@ impl PathSum {
                 if self_c == 0 || self_c == HALF {
                     // Rule E: the sum over y forces the affine
                     // constraint `couple = const`.
+                    //
+                    // The pivot has to be a variable we are *summing
+                    // over*. Once input variables exist (the operator
+                    // formulation) `couple` can be a condition on the
+                    // inputs alone, and an input is free — substituting
+                    // into one would assert a constraint the operator
+                    // does not have. When that happens the rule simply
+                    // does not fire.
                     let konst = self_c == HALF;
+                    let piv = couple.and(&self.active).lowest();
+                    if !couple.is_zero() && piv.is_none() {
+                        continue;
+                    }
                     for (t, _) in &terms {
                         self.poly.remove(t);
                     }
@@ -918,7 +999,7 @@ impl PathSum {
                         self.e_half += 2;
                         self.active.clear(v);
                     } else {
-                        let piv = couple.lowest().unwrap();
+                        let piv = piv.expect("checked above");
                         self.e_half += 2;
                         self.active.clear(v);
                         let rest = couple.xor(&Mask::single(piv));
@@ -1051,4 +1132,124 @@ impl PathSum {
             .map(|b| self.amplitude(b))
             .collect()
     }
+}
+
+// ── the operator formulation: what needs no tableau ──────────────────
+
+impl PathSum {
+    /// The **identity operator** on `qubits` qubits: `|x⟩ ↦ |x⟩`.
+    ///
+    /// The one change that turns a state into an operator — each qubit's
+    /// form starts as its own *input variable* rather than a constant.
+    /// Input variables are free: they are never summed over, so
+    /// reduction leaves them alone and [`PathSum::internal_vars`] counts
+    /// only the path variables the walls introduced.
+    ///
+    /// This is the thing a stabilizer tableau cannot do. A tableau
+    /// represents a stabilizer *state*; it cannot hold a non-Clifford
+    /// operator at all, so a tableau-based tool has to decide up front
+    /// which fragment it is in and branch. The path sum has one code
+    /// path for every circuit, and `h*` *reports* where it landed.
+    pub fn identity(qubits: usize) -> PathSum {
+        let mut ps = PathSum::new(qubits);
+        ps.nvars = qubits;
+        ps.inputs = qubits;
+        for (q, form) in ps.forms.iter_mut().enumerate() {
+            *form = (Mask::single(q), false);
+        }
+        ps
+    }
+
+    /// Input variables — `0` for a state, the width for an operator.
+    pub fn inputs(&self) -> usize {
+        self.inputs
+    }
+
+    /// Whether this is the identity operator exactly, global phase
+    /// included.
+    ///
+    /// The decision procedure behind [`equivalent`]: every output form is
+    /// its own input, the phase polynomial is empty, the scale is one and
+    /// nothing is left under a sum.
+    pub fn is_identity(&self) -> bool {
+        self.is_identity_up_to_phase() && self.phase == 0
+    }
+
+    /// The same, ignoring an overall phase — which no measurement sees.
+    pub fn is_identity_up_to_phase(&self) -> bool {
+        !self.zero
+            && self.inputs == self.qubits
+            && self.poly.is_empty()
+            && self.e_half == 0
+            && self.active.count() == 0
+            && self
+                .forms
+                .iter()
+                .enumerate()
+                .all(|(q, (m, c))| !*c && *m == Mask::single(q))
+    }
+
+    /// The global phase, in turns.
+    pub fn phase(&self) -> Turn {
+        self.phase
+    }
+
+
+
+    /// Apply a circuit's gates, optionally inverted.
+    pub fn apply_circuit(&mut self, circuit: &Circuit<C64>, dagger: bool) -> Result<()> {
+        if circuit.num_qubits() > self.qubits {
+            return Err(Error::InvalidState(format!(
+                "pathsum: a {}-qubit circuit does not fit a {}-qubit path sum",
+                circuit.num_qubits(),
+                self.qubits
+            )));
+        }
+        let ops: Vec<&Op<C64>> = if dagger {
+            circuit.ops().iter().rev().collect()
+        } else {
+            circuit.ops().iter().collect()
+        };
+        for op in ops {
+            self.apply_op(op, dagger)?;
+        }
+        Ok(())
+    }
+}
+
+/// Whether two circuits are the same unitary, decided by reduction.
+///
+/// Builds `V† ∘ U` as one operator path sum and reduces it: the circuits
+/// agree exactly when what is left is the identity. No tableau, no
+/// simulation, and no `2^n` anything — and, unlike a tableau method, it
+/// does not need either circuit to be Clifford.
+///
+/// Sound in both directions where it answers: reduction only ever
+/// rewrites the sum into an equal one, so `true` is a proof. `false` is
+/// weaker — the rewrite system is complete for the Clifford fragment but
+/// not in general, so a `false` means *this procedure did not reduce it
+/// to the identity*, which `equivalent_verdict` states rather than
+/// hides.
+pub fn equivalent(a: &Circuit<C64>, b: &Circuit<C64>) -> Result<bool> {
+    Ok(equivalent_verdict(a, b)?.0)
+}
+
+/// [`equivalent`], plus the surviving `h*` — `0` with a non-identity
+/// result means the circuits are genuinely different; `> 0` means the
+/// reduction stalled and the answer is "not proved equal", not "unequal".
+pub fn equivalent_verdict(a: &Circuit<C64>, b: &Circuit<C64>) -> Result<(bool, usize)> {
+    let n = a.num_qubits().max(b.num_qubits());
+    let mut ps = PathSum::identity(n);
+    ps.apply_circuit(a, false)?;
+    ps.apply_circuit(b, true)?;
+    ps.reduce();
+    Ok((ps.is_identity_up_to_phase(), ps.internal_vars()))
+}
+
+/// The operator a circuit *is*, reduced — with `h*` its exponent.
+pub fn operator(circuit: &Circuit<C64>) -> Result<PathSum> {
+    let mut ps = PathSum::identity(circuit.num_qubits());
+    ps.apply_circuit(circuit, false)?;
+    ps.reduce();
+    Ok(ps)
 }
