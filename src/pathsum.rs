@@ -477,6 +477,20 @@ impl PathSum {
         out
     }
 
+    /// Every term mentioning `v`, as `(degree, coefficient)`.
+    ///
+    /// The diagnostic behind a cubic stall: it says which coefficients a
+    /// rule would have to close over, so "would a richer normalization
+    /// reach this?" becomes a question about the actual numbers rather
+    /// than about the shape alone.
+    pub fn terms_containing(&self, v: usize) -> Vec<(usize, Turn)> {
+        self.poly
+            .iter()
+            .filter(|(t, _)| t.iter().any(|m| m.bit(v)))
+            .map(|(t, c)| (t.len(), *c))
+            .collect()
+    }
+
     /// Why each surviving internal variable resisted elimination.
     ///
     /// [`internal_vars`](Self::internal_vars) reports *how many* variables

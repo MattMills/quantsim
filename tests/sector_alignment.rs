@@ -68,10 +68,35 @@
 //! `y·p·q` is cubic, leaving only rule `[V]`, which splits one monomial
 //! into three rather than eliminating anything.
 //!
-//! The open target is therefore a **cubic elimination rule** — closing a
-//! cubic Gauss sum — and not a representation that holds `n³`
-//! coefficients. Both bottlenecks are now named and measured: an
-//! odd-eighth closure order (29%) and a cubic closure degree (71%).
+//! ## And the cubic case is a constraint, not a Gauss sum
+//!
+//! Every cubic-trapped variable on a `CCZ`-rich circuit carries
+//! coefficients that are exactly `½`. That settles which of the two
+//! possible cubic problems is the real one. Summing `y` out gives
+//! `1 + ω^A`; at half turns `A ∈ {0, ½}`, so the sum is `2` or `0` — it
+//! **vanishes unless a constraint holds**, exactly like rule `[E]`, with
+//! no varying magnitude anywhere. Quarter-turn coefficients *would* have
+//! given magnitudes `2` and `√2`, genuinely path-dependent and needing a
+//! normalization exponent that varies per path. That case does not occur.
+//!
+//! So the open target is not a cubic Gauss sum. It is rule `[E]` lifted
+//! from *affine* constraints to **quadratic** ones: the constraint handed
+//! to it is `L ⊕ p·q = c`.
+//!
+//! That locates the blocker exactly. Solving such a constraint means
+//! substituting a quadratic expression where a parity is expected, and a
+//! `Mask` is linear by construction. Expanding `a ⊕ b = a + b − 2ab` to
+//! return to monomials *is* rule `[V]` — the split the whole exercise was
+//! trying to avoid. **The obstruction is the parity representation of the
+//! substitution target**, not the scalar algebra and not the signature.
+//!
+//! Three bottlenecks, all now measured rather than guessed:
+//!
+//! | share | stall | blocked by |
+//! |---|---|---|
+//! | 29% | odd-eighth closure *order* | the coefficient ring, `ℤ[√2]` units |
+//! | 71% | cubic closure *degree* | affine-only substitution (`Mask` is a parity) |
+//! | — | signature | ruled out: closure depends on the order of `u`, not the metric |
 
 use quantsim::circuit::Op;
 use quantsim::pathsum::{self, Stall};
@@ -365,4 +390,75 @@ fn the_cubic_stratum_is_sparse_so_reaching_it_is_not_a_storage_problem() {
             prof.keys().max().unwrap()
         );
     }
+}
+
+/// **The cubic stall is a quadratic CONSTRAINT, not a missing Gauss sum.**
+///
+/// Every cubic-trapped variable on a `CCZ`-rich circuit carries
+/// quarter-multiple coefficients — in fact all of them are exactly `½`.
+/// That decides which of the two possible cubic problems is the real one.
+///
+/// Summing `y` out of a trap gives `1 + ω^A` with `A` a polynomial in the
+/// remaining parities. At half turns `A ∈ {0, ½}`, so the sum is `2` or
+/// `0`: it **vanishes unless a constraint holds**, exactly like rule
+/// `[E]`, and the magnitude never varies. Had the coefficients been
+/// quarter turns instead, the magnitudes would have been `2` and `√2` —
+/// genuinely path-dependent, needing a normalization exponent that varies
+/// per path. That case does not occur.
+///
+/// So the cubic bottleneck is not a missing cubic Gauss sum. It is rule
+/// `[E]` being restricted to *affine* constraints while the constraint it
+/// is handed, `L ⊕ p·q = c`, is **quadratic**.
+///
+/// And that locates the blocker precisely: solving it means substituting
+/// a quadratic expression where a parity is expected, and a `Mask` is
+/// linear by construction. Expanding `a ⊕ b = a + b − 2ab` to get back to
+/// monomials *is* rule `[V]` — which is the split the whole exercise was
+/// trying to avoid. The obstruction is the parity representation of the
+/// substitution target, not the scalar algebra and not the signature.
+#[test]
+fn cubic_stalls_are_half_turn_constraints_rather_than_gauss_sums() {
+    for (label, n) in [("cubic n=16", 16usize), ("cubic n=32", 32), ("cubic n=64", 64)] {
+        let ps = pathsum::operator(&cubic(n, 2, 11)).unwrap();
+        let mut seen = 0usize;
+        for (v, st) in ps.stall_census() {
+            if let Stall::Shape { degree: 3 } = st {
+                seen += 1;
+                for (deg, c) in ps.terms_containing(v) {
+                    assert_eq!(
+                        c,
+                        pathsum::HALF,
+                        "{label}: a degree-{deg} term on a cubic-trapped variable \
+                         carried {c:#x} rather than a half turn. Half turns make the \
+                         trap a constraint (sum is 2 or 0); anything else would make \
+                         it a varying-magnitude sum and change what the fix has to be."
+                    );
+                }
+            }
+        }
+        assert!(seen > 0, "{label}: no cubic stalls to characterise");
+        println!("   {label:12} {seen} cubic stalls, all half-turn constraints");
+    }
+}
+
+/// The contrast that fixes the reading: a half-turn trap has a *constant*
+/// magnitude and a quarter-turn one would not.
+#[test]
+fn a_half_turn_trap_keeps_one_magnitude_and_a_quarter_turn_trap_would_not() {
+    let mag = |a: f64| {
+        let (s, c) = (std::f64::consts::TAU * a).sin_cos();
+        ((1.0 + c) * (1.0 + c) + s * s).sqrt()
+    };
+    // Half turns: the two branches are 2 and 0 — a constraint, and the
+    // nonzero branch has a single magnitude that `e_half` already holds.
+    assert!((mag(0.0) - 2.0).abs() < 1e-12);
+    assert!(mag(0.5).abs() < 1e-12);
+    // Quarter turns: two DIFFERENT nonzero magnitudes, which no single
+    // global normalization exponent can carry.
+    assert!((mag(0.0) - 2.0).abs() < 1e-12);
+    assert!((mag(0.25) - 2f64.sqrt()).abs() < 1e-12);
+    assert!(
+        (mag(0.0) - mag(0.25)).abs() > 0.5,
+        "if these ever agreed, the quarter-turn cubic case would close too"
+    );
 }
