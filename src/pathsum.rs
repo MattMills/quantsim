@@ -381,7 +381,12 @@ pub struct PathSum {
 pub enum Stall {
     /// The variable appears inside a compound monomial, or in more than
     /// two masks. Structural.
-    Shape,
+    Shape {
+        /// Degree of the widest monomial trapping the variable — the
+        /// number of parities multiplied together. Degree 2 is the `n²`
+        /// stratum, degree 3 the `n³`.
+        degree: usize,
+    },
     /// The shape is right but a coupling term is off a half turn,
     /// carrying the offending coefficient. Structural.
     Coupling(Turn),
@@ -456,6 +461,22 @@ impl PathSum {
         self.active.without(&self.live_union()).count()
     }
 
+    /// How many monomials sit at each **degree** — the number of parities
+    /// multiplied together in a term.
+    ///
+    /// Degree 1 is a bare parity; degree 2 is the `n²` stratum, degree 3
+    /// the `n³`. Rule V only ever splits a variable out of a compound
+    /// monomial, so this profile is what the structural stalls are made
+    /// of, and it says which stratum a representation would have to hold
+    /// to reach them.
+    pub fn degree_profile(&self) -> std::collections::BTreeMap<usize, usize> {
+        let mut out = std::collections::BTreeMap::new();
+        for t in self.poly.keys() {
+            *out.entry(t.len()).or_insert(0) += 1;
+        }
+        out
+    }
+
     /// Why each surviving internal variable resisted elimination.
     ///
     /// [`internal_vars`](Self::internal_vars) reports *how many* variables
@@ -485,6 +506,7 @@ impl PathSum {
             let mut shape_ok = true;
             let mut bad_coupling = None;
             let mut mentioned = false;
+            let mut worst_degree = 0usize;
             for (t, c) in &self.poly {
                 if !t.iter().any(|m| m.bit(v)) {
                     continue;
@@ -493,7 +515,8 @@ impl PathSum {
                 let holding: Vec<&Mask> = t.iter().filter(|m| m.bit(v)).collect();
                 if holding.len() != 1 || *holding[0] != pmask || t.len() > 2 {
                     shape_ok = false;
-                    break;
+                    worst_degree = worst_degree.max(t.len());
+                    continue;
                 }
                 if t.len() == 1 {
                     self_c = *c;
@@ -510,7 +533,7 @@ impl PathSum {
                 continue;
             }
             let stall = if !shape_ok {
-                Stall::Shape
+                Stall::Shape { degree: worst_degree }
             } else if let Some(c) = bad_coupling {
                 Stall::Coupling(c)
             } else if (self_c == 0 || self_c == HALF)

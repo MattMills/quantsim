@@ -50,6 +50,28 @@
 //! every `1/8` stall removes 29% of surviving variables, taking `h*/n`
 //! from about `0.53` to about `0.38`. Worth roughly `1.4×` the reachable
 //! width. Real, and not a change of growth class.
+//!
+//! ## The other 71%, and which stratum it lives in
+//!
+//! The structural stalls turn out to be far more specific than "compound
+//! monomials". **Every one measured is at degree exactly three** — none
+//! at degree 2, none at 4 or above. Rules `[E]` and `[G]` take a variable
+//! appearing as `y` or `y·L`, degree 1 and 2; degree 3 is the first shape
+//! they cannot take, and nothing climbs higher because `CCZ` is the
+//! widest gate in the fragment and rule `[V]` splits reduce degree. On
+//! `CCZ`-rich circuits the cubic stratum is *every* stall.
+//!
+//! And that stratum is **sparse**: about `2n` terms against the `~n³/6`
+//! available, under 0.1% occupancy at `n = 64`. So reaching it is not a
+//! storage problem — the terms are few and already held exactly. The
+//! problem is that `[E]` and `[G]` are quadratic while a degree-3 trap
+//! `y·p·q` is cubic, leaving only rule `[V]`, which splits one monomial
+//! into three rather than eliminating anything.
+//!
+//! The open target is therefore a **cubic elimination rule** — closing a
+//! cubic Gauss sum — and not a representation that holds `n³`
+//! coefficients. Both bottlenecks are now named and measured: an
+//! odd-eighth closure order (29%) and a cubic closure degree (71%).
 
 use quantsim::circuit::Op;
 use quantsim::pathsum::{self, Stall};
@@ -231,4 +253,116 @@ fn the_ultrahyperbolic_order_eight_element_gives_the_elliptic_factor() {
         "an order-8 element of SL(2,R) gives {det}, and the elliptic sector \
          gives 2+√2 — if these ever differ, the signature route is back open"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// The strata: which DEGREE the structural stalls live at.
+// ─────────────────────────────────────────────────────────────────────
+
+/// `CCZ`-rich circuits, which push cubic terms into the phase polynomial.
+fn cubic(n: usize, layers: usize, seed: u64) -> Circuit<C64> {
+    let mut rng = Prng::new(seed);
+    let mut c = Circuit::new(n);
+    for _ in 0..layers {
+        for q in 0..n {
+            c.gate("h", vec![], vec![q]);
+        }
+        for _ in 0..n {
+            let a = (rng.next_u64() % n as u64) as usize;
+            let b = (a + 1 + (rng.next_u64() % (n as u64 - 1)) as usize) % n;
+            let mut d = (rng.next_u64() % n as u64) as usize;
+            while d == a || d == b {
+                d = (d + 1) % n;
+            }
+            c.gate("ccz", vec![], vec![a, b, d]);
+        }
+    }
+    c
+}
+
+/// **Every structural stall is at degree exactly three.**
+///
+/// Not one at degree 2, not one at degree 4 or above. The reason is
+/// visible in the rules: `[E]` and `[G]` handle a variable appearing as
+/// `y` or as `y·L` — degree 1 and 2 — and degree 3 is the first shape
+/// they cannot take. Nothing climbs past 3 because `CCZ` is the widest
+/// gate in the fragment and rule `[V]` splits reduce degree.
+///
+/// So the structural bottleneck is not "compound monomials" in general.
+/// It is one stratum: the cubic one. On `CCZ`-rich circuits it is
+/// *every* stall — zero alignment stalls at all.
+#[test]
+fn every_structural_stall_sits_in_the_cubic_stratum() {
+    for (label, c) in [
+        ("skeleton n=32", with_magic(&skeleton(32, 2, 11), 32, 5)),
+        ("skeleton n=64", with_magic(&skeleton(64, 2, 11), 64, 5)),
+        ("cubic n=16", cubic(16, 2, 11)),
+        ("cubic n=32", cubic(32, 2, 11)),
+    ] {
+        let ps = pathsum::operator(&c).unwrap();
+        let mut cubic_stalls = 0usize;
+        for (_, st) in ps.stall_census() {
+            if let Stall::Shape { degree } = st {
+                assert_eq!(
+                    degree, 3,
+                    "{label}: a structural stall sat at degree {degree}. Every one \
+                     measured has been cubic, and the whole reading — that the \
+                     bottleneck is one stratum rather than compound monomials in \
+                     general — depends on that."
+                );
+                cubic_stalls += 1;
+            }
+        }
+        println!("   {label:16} h*={:3}  cubic stalls={cubic_stalls}", ps.internal_vars());
+    }
+}
+
+/// **The cubic stratum is `O(n)`-occupied, not `O(n³)`.**
+///
+/// There are `~n³/6` possible degree-3 monomials, but a reduced path sum
+/// only ever holds about `2n` of them — occupancy at `n = 64` is under
+/// 0.1%. The `n²` stratum behaves the same way, around `2n` against
+/// `n²/2` possible.
+///
+/// That matters for what a richer representation would have to do.
+/// Reaching the cubic stratum is **not a storage problem** — the terms
+/// are already few and already held exactly. The problem is that rules
+/// `[E]` and `[G]` are *quadratic* and a degree-3 trap `y·p·q` is cubic,
+/// so the only move available is rule `[V]`, which splits one monomial
+/// into three rather than eliminating anything.
+///
+/// The open target is therefore a **cubic elimination rule**, and it is
+/// a question about closing a cubic Gauss sum, not about holding `n³`
+/// coefficients.
+#[test]
+fn the_cubic_stratum_is_sparse_so_reaching_it_is_not_a_storage_problem() {
+    println!("      n   deg2   deg3   deg2/n²   deg3/n³");
+    let mut last_ratio = 1.0f64;
+    for n in [8usize, 16, 32, 64] {
+        let ps = pathsum::operator(&cubic(n, 2, 11)).unwrap();
+        let prof = ps.degree_profile();
+        let g = |d: usize| *prof.get(&d).unwrap_or(&0);
+        let (d2, d3) = (g(2), g(3));
+        let r3 = d3 as f64 / (n * n * n) as f64;
+        println!(
+            "   {n:6} {d2:6} {d3:6}   {:7.4}   {r3:8.5}",
+            d2 as f64 / (n * n) as f64
+        );
+        assert!(
+            d3 <= 8 * n,
+            "the cubic stratum held {d3} terms at n={n}, past the ~2n that has \
+             been measured; if it ever grows like n³ this stops being sparse \
+             and becomes a storage problem after all"
+        );
+        assert!(
+            r3 < last_ratio,
+            "cubic occupancy did not fall with n ({r3} vs {last_ratio})"
+        );
+        last_ratio = r3;
+        assert!(
+            prof.keys().all(|&d| d <= 3),
+            "a monomial of degree {} appeared; the fragment is closed at cubic",
+            prof.keys().max().unwrap()
+        );
+    }
 }
