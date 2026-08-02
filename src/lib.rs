@@ -97,6 +97,7 @@ pub mod lift;
 pub mod math;
 pub mod memo;
 pub mod mixed;
+pub mod modwidth;
 pub mod padic;
 pub mod pathsum;
 pub mod phase;
