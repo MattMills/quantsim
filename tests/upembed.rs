@@ -457,12 +457,19 @@ fn concat(a: &Circuit<C64>, b: &Circuit<C64>) -> Circuit<C64> {
 }
 
 #[test]
-fn the_up_embedded_dynamics_is_certified_clifford_by_a_second_representation() {
-    // `gadgetize` *claims* the dynamics is Clifford. `PathSum` reduces
-    // every Clifford circuit to h* = 0 from rewrite rules alone and
-    // knows nothing about this module, so running the up-embedded
-    // circuit through it is an independent certificate rather than this
-    // module marking its own homework.
+fn the_up_embedded_dynamics_is_clifford_by_gate_set_and_has_free_amplitudes() {
+    // The dynamics really is Clifford, but the reason is the emitted
+    // gate set: `to_circuit` produces nothing but `h`, `s` and `cx`.
+    //
+    // An earlier version of this test read `h* = 0` from `PathSum` as an
+    // independent *certificate* of Clifford-ness. That inference is
+    // invalid — h* counts the variables left summed after the output is
+    // fixed, so it is the one-amplitude exponent, and a lone `T`, a
+    // `CCZ`, and every diagonal circuit sit at h* = 0 while being
+    // non-Clifford. See `tests/magic_relocation.rs`, which holds a dense
+    // Clifford oracle against exactly those cases. What h* = 0 does say
+    // here is true and worth asserting: one amplitude of the up-embedded
+    // dynamics costs O(1).
     for c in [
         magic_circuit(3, 4),
         magic_circuit(4, 8),
@@ -472,10 +479,20 @@ fn the_up_embedded_dynamics_is_certified_clifford_by_a_second_representation() {
         let emb = upembed::gadgetize(&c).unwrap();
         assert!(emb.magic() > 0, "there should be magic to relocate");
         let cliff = emb.to_circuit();
+        for op in cliff.ops() {
+            let quantsim::circuit::Op::Named { name, .. } = op else {
+                panic!("up-embedding emitted a non-registry op")
+            };
+            assert!(
+                matches!(name.as_str(), "h" | "s" | "cx"),
+                "up-embedding emitted {name}, outside the Clifford generators \
+                 the construction promises"
+            );
+        }
         assert_eq!(
             pathsum::operator(&cliff).unwrap().internal_vars(),
             0,
-            "the up-embedded dynamics should reduce to h* = 0"
+            "and one amplitude of the up-embedded dynamics should cost O(1)"
         );
     }
 }
@@ -485,6 +502,11 @@ fn gadgets_drive_the_exponent_down_and_far_fewer_are_needed_than_t() {
     // Spend one wire per magic event and ask a reducer what is left.
     // Full gadgetization always works — it is Clifford by construction —
     // but it says nothing about how many wires were *needed*.
+    //
+    // What "needed" means here is precise and narrower than it first
+    // looks: the count at which ONE AMPLITUDE of the remaining dynamics
+    // becomes free. It is not the point at which the remaining unitary
+    // becomes Clifford — h* = 0 does not imply that.
     for (c, expect_max) in [(magic_circuit(3, 4), 4usize), (magic_circuit(3, 8), 12)] {
         let t = upembed::magic_events(&c).unwrap();
         let bare = pathsum::operator(&c).unwrap().internal_vars();
@@ -499,7 +521,7 @@ fn gadgets_drive_the_exponent_down_and_far_fewer_are_needed_than_t() {
                 break;
             }
         }
-        let need = first_zero.expect("full gadgetization must reach Clifford");
+        let need = first_zero.expect("full gadgetization must reach a free amplitude");
         assert!(need > 0, "a magic circuit needs at least one gadget");
         assert!(
             need <= expect_max && need < t,
@@ -515,8 +537,12 @@ fn gadgets_drive_the_exponent_down_and_far_fewer_are_needed_than_t() {
 #[test]
 fn a_circuit_whose_magic_cancels_needs_no_gadgets_at_all() {
     // The case that matters. Naive gadgetization spends one wire per T
-    // gate; reduction certifies that a circuit whose magic cancels
-    // already has Clifford dynamics, so the right number is zero.
+    // gate; here the magic cancels, so one amplitude is already free and
+    // the right number of wires is zero.
+    //
+    // This family *is* also genuinely Clifford — `tests/magic_relocation.rs`
+    // confirms it against a dense oracle — but that is a separate fact
+    // about these circuits, not something the h* = 0 below establishes.
     for k in [4usize, 8, 32] {
         let c = cancelling(3, k);
         let t = upembed::magic_events(&c).unwrap();
@@ -582,16 +608,17 @@ fn h_star_is_neither_sub_nor_super_additive_under_composition() {
 }
 
 #[test]
-fn h_star_is_what_the_reduction_achieved_and_not_a_magic_monotone() {
+fn h_star_is_an_amplitude_exponent_and_not_a_magic_monotone() {
     // The limit on how far h* can be read as a resource measure. True
     // magic is invariant under composition with a Clifford, so if h*
     // were a magic monotone this would not move. It does: composing
-    // with a block whose own h* is 0 — a Clifford unitary — raises h*
-    // from 1 to 3.
+    // with `cancelling` — independently verified Clifford against a
+    // dense oracle in `tests/magic_relocation.rs` — raises h*.
     //
-    // h* is an upper bound on the readout exponent and a report of what
-    // the rewrite system achieved. The rules are complete on the
-    // Clifford fragment and not beyond it, and this is where that shows.
+    // The reason is simply that h* is not a magic measure at all: it is
+    // the exponent for one amplitude, and composition genuinely changes
+    // that. Reading it as magic is the mistake this test exists to
+    // prevent.
     let u = magic_circuit(3, 4);
     let hu = pathsum::operator(&u).unwrap().internal_vars();
     assert_eq!(hu, 1);
@@ -600,7 +627,7 @@ fn h_star_is_what_the_reduction_achieved_and_not_a_magic_monotone() {
     assert_eq!(
         pathsum::operator(&v).unwrap().internal_vars(),
         0,
-        "this block must be Clifford, or the point does not stand"
+        "the right factor must have a free amplitude, or the point does not stand"
     );
 
     let huv = pathsum::operator(&concat(&u, &v)).unwrap().internal_vars();

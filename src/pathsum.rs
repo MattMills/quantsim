@@ -369,6 +369,44 @@ pub struct PathSum {
     splits: u64,
 }
 
+/// Why a surviving internal variable resisted elimination — the output
+/// of [`PathSum::stall_census`].
+///
+/// The split that matters is structural-versus-alignment. `Shape`,
+/// `Coupling` and `Pivot` are facts about the monomial structure and no
+/// change of scalar algebra touches them. `Alignment` is a fact about
+/// *where on the circle* the self-coefficient landed, and a sector whose
+/// sums close at different points would reach exactly those.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stall {
+    /// The variable appears inside a compound monomial, or in more than
+    /// two masks. Structural.
+    Shape {
+        /// Degree of the widest monomial trapping the variable — the
+        /// number of parities multiplied together. Degree 2 is the `n²`
+        /// stratum, degree 3 the `n³`.
+        degree: usize,
+    },
+    /// The shape is right but a coupling term is off a half turn,
+    /// carrying the offending coefficient. Structural.
+    Coupling(Turn),
+    /// Rule E would fire, but every pivot in the coupling is a free
+    /// input and the operator has no such constraint to assert.
+    Pivot,
+    /// Shape and couplings are exactly what a rule wants; only the
+    /// self-coefficient (carried here) is off every point where the
+    /// elliptic Gauss sum closes. This is the reachable case.
+    Alignment(Turn),
+}
+
+impl Stall {
+    /// Whether a different signature could plausibly reach this — true
+    /// only for [`Stall::Alignment`].
+    pub fn is_alignment(&self) -> bool {
+        matches!(self, Stall::Alignment(_))
+    }
+}
+
 impl PathSum {
     /// `|0…0⟩` on `qubits` qubits: no path variables, all forms constant.
     pub fn new(qubits: usize) -> Self {
@@ -421,6 +459,108 @@ impl PathSum {
     /// irreducible topological content, and the exponent of readout.
     pub fn internal_vars(&self) -> usize {
         self.active.without(&self.live_union()).count()
+    }
+
+    /// How many monomials sit at each **degree** — the number of parities
+    /// multiplied together in a term.
+    ///
+    /// Degree 1 is a bare parity; degree 2 is the `n²` stratum, degree 3
+    /// the `n³`. Rule V only ever splits a variable out of a compound
+    /// monomial, so this profile is what the structural stalls are made
+    /// of, and it says which stratum a representation would have to hold
+    /// to reach them.
+    pub fn degree_profile(&self) -> std::collections::BTreeMap<usize, usize> {
+        let mut out = std::collections::BTreeMap::new();
+        for t in self.poly.keys() {
+            *out.entry(t.len()).or_insert(0) += 1;
+        }
+        out
+    }
+
+    /// Every term mentioning `v`, as `(degree, coefficient)`.
+    ///
+    /// The diagnostic behind a cubic stall: it says which coefficients a
+    /// rule would have to close over, so "would a richer normalization
+    /// reach this?" becomes a question about the actual numbers rather
+    /// than about the shape alone.
+    pub fn terms_containing(&self, v: usize) -> Vec<(usize, Turn)> {
+        self.poly
+            .iter()
+            .filter(|(t, _)| t.iter().any(|m| m.bit(v)))
+            .map(|(t, c)| (t.len(), *c))
+            .collect()
+    }
+
+    /// Why each surviving internal variable resisted elimination.
+    ///
+    /// [`internal_vars`](Self::internal_vars) reports *how many* variables
+    /// survived. This reports *why*, and the distinction is what decides
+    /// whether a wider algebra could ever help.
+    ///
+    /// A [`Stall::Shape`] or [`Stall::Coupling`] is structural: the
+    /// variable sits inside a compound monomial, or a coupling term is
+    /// off a half turn, and no choice of signature changes that.
+    /// [`Stall::Pivot`] is the operator formulation refusing to constrain
+    /// a free input. [`Stall::Alignment`] is the opposite of all three —
+    /// the shape is exactly what a rule wants, and only the
+    /// self-coefficient is off the four points where the elliptic Gauss
+    /// sum closes (`0`, `¼`, `½`, `¾`). A `T` gate contributes an eighth,
+    /// which is not one of them.
+    ///
+    /// So the alignment count is the *opportunity*: the number of
+    /// variables a sector with different closure points could reach
+    /// without touching the rewrite system's structure at all.
+    pub fn stall_census(&self) -> Vec<(usize, Stall)> {
+        let candidates = self.active.without(&self.live_union());
+        let mut out = Vec::new();
+        for v in candidates.iter() {
+            let pmask = Mask::single(v);
+            let mut self_c: Turn = 0;
+            let mut couple = Mask::zero();
+            let mut shape_ok = true;
+            let mut bad_coupling = None;
+            let mut mentioned = false;
+            let mut worst_degree = 0usize;
+            for (t, c) in &self.poly {
+                if !t.iter().any(|m| m.bit(v)) {
+                    continue;
+                }
+                mentioned = true;
+                let holding: Vec<&Mask> = t.iter().filter(|m| m.bit(v)).collect();
+                if holding.len() != 1 || *holding[0] != pmask || t.len() > 2 {
+                    shape_ok = false;
+                    worst_degree = worst_degree.max(t.len());
+                    continue;
+                }
+                if t.len() == 1 {
+                    self_c = *c;
+                } else {
+                    if *c != HALF {
+                        bad_coupling = Some(*c);
+                    }
+                    if let Some(other) = t.iter().find(|m| !m.bit(v)) {
+                        couple = couple.xor(other);
+                    }
+                }
+            }
+            if !mentioned {
+                continue;
+            }
+            let stall = if !shape_ok {
+                Stall::Shape { degree: worst_degree }
+            } else if let Some(c) = bad_coupling {
+                Stall::Coupling(c)
+            } else if (self_c == 0 || self_c == HALF)
+                && !couple.is_zero()
+                && couple.and(&self.active).lowest().is_none()
+            {
+                Stall::Pivot
+            } else {
+                Stall::Alignment(self_c)
+            };
+            out.push((v, stall));
+        }
+        out
     }
 
     fn live_union(&self) -> Mask {
