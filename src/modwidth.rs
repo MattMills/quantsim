@@ -35,11 +35,19 @@
 //! `7 → 24 → 6 → 3`. The cost of `×k` is not monotone in `k`; it is a
 //! property of `k`'s arithmetic relationship to the cut.
 //!
-//! And it persists under composition, which is what makes it useful:
-//! `×7^K` stays at width 3 however large `K` gets, so a reversible
-//! computation of unbounded depth can sit at fixed width. That is a
-//! statement about *which* computations are cheap rather than how big
-//! they are, which is the only kind of statement that helps.
+//! And it persists under composition, which is what makes it useful.
+//! Since `k^e` cycles with the multiplicative order of `k` mod `N`, the
+//! width curve cycles with it: the cost of modular exponentiation is
+//! **periodic and therefore bounded**, so depth past one period buys
+//! nothing, and the maximum over the period is computable in advance.
+//! That is a statement about *which* computations are cheap rather than
+//! how big they are, which is the only kind that helps.
+//!
+//! The source README claims something stronger — that `×7^K` "stays at
+//! the resonant width 3". That does not reproduce: at the `ℤ_2880` waist
+//! the curve is `[7, 24, 24, 6, 24, 24, 21, 3, 21, 24, 14, 2, …]`,
+//! resonant but not fixed. Periodicity is what holds and what
+//! `tests/modwidth.rs` asserts.
 //!
 //! ## Scope, stated plainly
 //!

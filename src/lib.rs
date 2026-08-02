@@ -103,6 +103,7 @@ pub mod pathsum;
 pub mod phase;
 pub mod polarity;
 pub mod qudit;
+pub mod radixweb;
 pub mod query;
 pub mod recursive;
 pub mod reflexive;
