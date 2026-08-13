@@ -419,25 +419,31 @@ fn the_magic_separates_when_it_is_both_early_and_banded() {
     );
 }
 
-/// **The anticommutation partition is frame-invariant, so no Clifford
-/// reframing can improve it.**
+/// **Clifford conjugation of a fixed axis list preserves its
+/// anticommutation partition.**
 ///
-/// The hope was that one big anticommutation component in the natural
-/// frame might fall apart in a better-chosen one — `coupling` documents
-/// that distinct components are symplectically orthogonal and factorize
-/// however much their supports overlap, so the partition is what any
-/// block method is bounded by.
+/// The scope matters more than the result, so it is stated first. What
+/// is proven is narrow: conjugating a *given* list of Pauli operators by
+/// an element of the Clifford group leaves every pairwise symplectic
+/// product `ω(P_a, P_b)` unchanged, because Clifford conjugation is a
+/// symplectic automorphism of `𝔽₂^{2n}`. Every edge of the
+/// anticommutation graph therefore survives, and so does the partition.
 ///
-/// It cannot fall apart, and the reason is a two-line argument rather
-/// than a measurement. Clifford conjugation preserves the symplectic
-/// form, so `ω(P_a, P_b)` — and hence every edge of the anticommutation
-/// graph, and hence the whole partition — is identical in every frame.
+/// What this does **not** say:
 ///
-/// The corollary is what makes it worth a test: two Paulis with disjoint
+/// * nothing about non-Clifford frames;
+/// * nothing about the axis list being canonical — and it is not. These
+///   468 axes come from pushing each `T`'s `Z` axis through its Clifford
+///   *prefix*. Pushing through the suffix, cutting the circuit and
+///   pushing partway, or regrouping rotations all yield a different
+///   operator list, whose partition is a different question this
+///   argument does not reach;
+/// * nothing about representations that never build this graph.
+///
+/// The corollary is worth pinning alongside it: two Paulis with disjoint
 /// qubit support commute, so every anticommutation edge is also a
-/// support-overlap edge. The support partition is therefore always a
-/// *coarsening* of the anticommutation partition, in every frame. The
-/// anticommutation count is a floor on both, and on this circuit it is 1.
+/// support-overlap edge, and the support partition is a *coarsening* of
+/// the anticommutation one — for this list, under this group.
 #[test]
 fn no_clifford_frame_can_split_this_circuits_magic() {
     let axes = dcs::rotation_axes(&Dcs::experiment().circuit()).unwrap();
