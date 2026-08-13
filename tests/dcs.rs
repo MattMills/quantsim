@@ -419,33 +419,39 @@ fn the_magic_separates_when_it_is_both_early_and_banded() {
     );
 }
 
-/// **Clifford conjugation of a fixed axis list preserves its
-/// anticommutation partition.**
+/// **A regression pin, not a result.**
 ///
-/// The scope matters more than the result, so it is stated first. What
-/// is proven is narrow: conjugating a *given* list of Pauli operators by
-/// an element of the Clifford group leaves every pairwise symplectic
-/// product `ω(P_a, P_b)` unchanged, because Clifford conjugation is a
-/// symplectic automorphism of `𝔽₂^{2n}`. Every edge of the
-/// anticommutation graph therefore survives, and so does the partition.
+/// This asserts that `coupling`'s anticommutation partition of the
+/// rotation axes does not change when the axes are conjugated by a
+/// Clifford. That is worth *pinning*, because the partition is what
+/// `coupling` and `blocks` key off and a bug in the conjugation would
+/// silently move it. It is not worth *reporting*, and an earlier version
+/// of this comment reported it.
 ///
-/// What this does **not** say:
+/// The reason it is not a result: the Clifford group is **defined** as
+/// the normalizer of the Pauli group — the unitaries whose conjugation
+/// maps Paulis to Paulis. Preserving the symplectic form is that
+/// definition restated, so "conjugating by a Clifford leaves the
+/// anticommutation graph alone" is not a fact about this circuit, or
+/// about any circuit. It is the group's defining property.
 ///
-/// * nothing about non-Clifford frames;
-/// * nothing about the axis list being canonical — and it is not. These
-///   468 axes come from pushing each `T`'s `Z` axis through its Clifford
-///   *prefix*. Pushing through the suffix, cutting the circuit and
-///   pushing partway, or regrouping rotations all yield a different
-///   operator list, whose partition is a different question this
-///   argument does not reach;
-/// * nothing about representations that never build this graph.
+/// It closes nothing. In particular it says nothing about non-Clifford
+/// changes of representation, nothing about overcomplete or
+/// non-orthogonal representations, and nothing about the axis list being
+/// canonical — it is not: these 468 axes come from pushing each `T`'s
+/// `Z` axis through its Clifford *prefix*, and pushing through the
+/// suffix, cutting the circuit and pushing partway, or regrouping
+/// rotations each give a different operator list whose partition is a
+/// different question.
 ///
-/// The corollary is worth pinning alongside it: two Paulis with disjoint
-/// qubit support commute, so every anticommutation edge is also a
-/// support-overlap edge, and the support partition is a *coarsening* of
-/// the anticommutation one — for this list, under this group.
+/// The second assertion is the one carrying content: two Paulis with
+/// disjoint qubit support commute, so every anticommutation edge is also
+/// a support-overlap edge, and the support partition therefore coarsens
+/// the anticommutation one. That is a relation between two partitions of
+/// the same list, and it is why `upembed`'s clustering can never be
+/// finer than `coupling`'s.
 #[test]
-fn no_clifford_frame_can_split_this_circuits_magic() {
+fn the_anticommutation_partition_is_a_clifford_conjugation_invariant() {
     let axes = dcs::rotation_axes(&Dcs::experiment().circuit()).unwrap();
     let lab = dcs::anticommutation_components(&axes);
     assert_eq!(lab, vec![dcs::EXPERIMENT_T_GATES], "one component in the lab frame");
@@ -475,7 +481,9 @@ fn no_clifford_frame_can_split_this_circuits_magic() {
     assert_eq!(
         dcs::anticommutation_components(&framed),
         lab,
-        "conjugation preserves ω, so the partition is a frame invariant"
+        "conjugation by a Clifford preserves ω by the definition of the \
+         Clifford group; this pins the implementation, not a property of \
+         the circuit"
     );
 
     // And the coarsening relation, on a profile where both are nontrivial.
