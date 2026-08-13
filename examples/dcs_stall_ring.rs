@@ -74,6 +74,48 @@ fn main() {
         );
         let profile: Vec<String> = deg.iter().map(|(k, v)| format!("deg {k}: {v}")).collect();
         println!("           surviving monomials by degree — {}", profile.join(", "));
+        // What coefficient sits on the terms that trap a stalled
+        // variable decides which fix applies. Half turns mean summing
+        // the variable out yields 2 or 0 — a constraint, rule [E]'s own
+        // structure, reachable by lifting [E] from affine to quadratic.
+        // Quarter or eighth turns mean the magnitude varies per path and
+        // no constraint rule can absorb it.
+        let (mut half, mut quarter, mut eighth, mut other) = (0, 0, 0, 0);
+        for (v, st) in &census {
+            if !matches!(st, Stall::Shape { .. }) {
+                continue;
+            }
+            for (_deg, c) in ps.terms_containing(*v) {
+                match c {
+                    quantsim::pathsum::HALF => half += 1,
+                    quantsim::pathsum::QUARTER | quantsim::pathsum::THREE_QUARTER => quarter += 1,
+                    _ if c % quantsim::pathsum::EIGHTH == 0 => eighth += 1,
+                    _ => other += 1,
+                }
+            }
+        }
+        // A variable is freed only if EVERY term trapping it is a
+        // half turn; one quarter-turn term is enough to keep it.
+        let mut all_half = 0;
+        for (v, st) in &census {
+            if !matches!(st, Stall::Shape { .. }) {
+                continue;
+            }
+            let terms = ps.terms_containing(*v);
+            if !terms.is_empty() && terms.iter().all(|(_, c)| *c == quantsim::pathsum::HALF) {
+                all_half += 1;
+            }
+        }
+        let tot = half + quarter + eighth + other;
+        println!(
+            "           trapping-term coefficients — half {half}, quarter {quarter}, \
+             odd-eighth {eighth}, other {other}   ({:.0}% half)",
+            if tot > 0 { 100.0 * half as f64 / tot as f64 } else { 0.0 }
+        );
+        println!(
+            "           variables a QUADRATIC rule [E] could free: {all_half} of {shape} shape-stalled  ({:.0}% of h*)",
+            if h > 0 { 100.0 * all_half as f64 / h as f64 } else { 0.0 }
+        );
     }
     println!();
     println!("  Alignment stalls sit on odd eighths — the T gate's own coefficient —");
