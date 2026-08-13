@@ -174,6 +174,61 @@ pub struct DopeSite {
     pub cz_index: usize,
 }
 
+/// Where in the circuit the `T` gates are allowed to sit.
+///
+/// The paper places doping only at spacetime-code-commuting wires, and
+/// records what that does to the distribution: "when constraining to the
+/// locations allowed by spacetime checks, doping sites are sparse in the
+/// majority of the layers, but increase in density especially in the
+/// last few layers."
+///
+/// That is not a detail. A `T` gate's reach is its **forward light
+/// cone**, and on a linear chain a cone opening at layer `L` of a
+/// depth-`D` circuit is only `2(D − L)` qubits wide at the output. Magic
+/// placed late cannot reach far, so late magic is *separable* magic —
+/// and separability is what every factorization in this crate is
+/// measured against. The profile is therefore a first-class parameter,
+/// not a seed detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Doping {
+    /// Uniform over every post-`CZ` wire — the paper's Figure S14
+    /// control, and the worst case for separability.
+    Uniform,
+    /// Confined to the last `layers` brickwork layers, which is the
+    /// direction the paper says its check constraint pushes.
+    Late {
+        /// How many trailing layers may carry magic.
+        layers: usize,
+    },
+    /// Confined to the first `layers` — the opposite extreme, kept so
+    /// the comparison has both ends and not just the flattering one.
+    Early {
+        /// How many leading layers may carry magic.
+        layers: usize,
+    },
+    /// Confined to `width`-wide bands of qubits separated by `gap`
+    /// idle qubits, and to the last `layers` layers.
+    ///
+    /// The knob that actually governs separability, and it has two
+    /// halves. A `T`'s axis is transported *backwards* — the frame
+    /// carries `V† Z_a V`, so the reach is the **backward** cone to the
+    /// circuit's input, and it is EARLY magic that is narrow, not late.
+    /// Narrow is not enough on its own: on a line, magic on every qubit
+    /// chains into one component however narrow each cone is. Separating
+    /// needs both — early (`late = false`, cone width `2·layers`) and a
+    /// spatial `gap` wider than that cone.
+    Banded {
+        /// Qubits per doped band.
+        width: usize,
+        /// Undoped qubits between bands.
+        gap: usize,
+        /// Layers that may carry magic, counted from `end`.
+        layers: usize,
+        /// Count `layers` from the circuit's end rather than its start.
+        late: bool,
+    },
+}
+
 /// A doped Clifford sampling instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Dcs {
@@ -185,6 +240,8 @@ pub struct Dcs {
     pub t_gates: usize,
     /// Seed for the single-qubit Clifford layers and the doping draw.
     pub seed: u64,
+    /// Where the magic is allowed to sit.
+    pub doping: Doping,
 }
 
 impl Dcs {
@@ -195,6 +252,7 @@ impl Dcs {
             depth: EXPERIMENT_DEPTH,
             t_gates: EXPERIMENT_T_GATES,
             seed: 2607_25941,
+            doping: Doping::Uniform,
         }
     }
 
@@ -212,6 +270,7 @@ impl Dcs {
             depth: n,
             t_gates: t,
             seed: 2607_25941,
+            doping: Doping::Uniform,
         }
     }
 
@@ -224,6 +283,11 @@ impl Dcs {
     /// The same instance under a different seed.
     pub fn with_seed(self, seed: u64) -> Dcs {
         Dcs { seed, ..self }
+    }
+
+    /// The same instance with the magic confined differently.
+    pub fn with_doping(self, doping: Doping) -> Dcs {
+        Dcs { doping, ..self }
     }
 
     /// Two-qubit gates in this instance.
@@ -263,6 +327,27 @@ impl Dcs {
     /// [`dope_sites`](Self::dope_sites) under `seed`.
     pub fn doping(&self) -> Vec<DopeSite> {
         let mut pool = self.dope_sites();
+        match self.doping {
+            Doping::Uniform => {}
+            Doping::Late { layers } => {
+                let first = self.depth.saturating_sub(layers);
+                pool.retain(|s| s.layer >= first);
+            }
+            Doping::Early { layers } => pool.retain(|s| s.layer < layers),
+            Doping::Banded {
+                width,
+                gap,
+                layers,
+                late,
+            } => {
+                let period = width + gap;
+                let first = self.depth.saturating_sub(layers);
+                pool.retain(|s| {
+                    let in_time = if late { s.layer >= first } else { s.layer < layers };
+                    in_time && period > 0 && s.qubit % period < width
+                });
+            }
+        }
         let t = self.t_gates.min(pool.len());
         // Partial Fisher–Yates: the first `t` entries after the shuffle
         // are a uniform sample without replacement.

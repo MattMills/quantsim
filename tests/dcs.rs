@@ -53,6 +53,7 @@ fn the_closed_form_two_qubit_count_matches_the_built_circuit() {
                 depth,
                 t_gates: 0,
                 seed: 1,
+                doping: dcs::Doping::Uniform,
             }
             .census()
             .two_qubit_gates;
@@ -357,5 +358,63 @@ fn the_path_sum_axis_does_not_certify_this_family_classical() {
         projected > 185.5,
         "projected h* at the experiment's wall count is {projected}, \
          which would beat the paper's stabilizer-rank estimate — check this"
+    );
+}
+
+/// **Separability is a property of where the magic sits, not of how much
+/// there is.** A `T`'s axis is transported backwards through the frame,
+/// so its reach is the backward cone to the circuit's input — about
+/// `2L` qubits wide for magic at layer `L`. Early magic is narrow; and
+/// narrow cones still chain into one component unless separated by a
+/// spatial gap wider than they are.
+///
+/// Both halves of that rule are asserted here, because either one alone
+/// is not enough and the failure mode of believing otherwise is
+/// measuring the wrong corner.
+#[test]
+fn the_magic_separates_when_it_is_both_early_and_banded() {
+    let e = Dcs::experiment();
+    let spectrum = |d: Dcs| -> Vec<usize> {
+        let emb = quantsim::upembed::gadgetize(&d.circuit()).unwrap();
+        quantsim::upembed::magic_components(&emb, d.qubits)
+    };
+    let cost = |s: &[usize]| -> f64 { s.iter().map(|&c| 2f64.powi(c as i32)).sum::<f64>().log2() };
+
+    // The experiment's own profile: one component, no factorization.
+    let uniform = spectrum(e);
+    assert_eq!(uniform, vec![dcs::EXPERIMENT_T_GATES]);
+
+    // Late is the *wrong* end — the cone reaches back over the whole
+    // circuit — so lateness alone does not separate.
+    let late = spectrum(e.with_doping(dcs::Doping::Late { layers: 2 }));
+    assert_eq!(late.len(), 1, "late magic has the long cone, not the short one");
+
+    // Banding alone does not separate either, if the magic is late.
+    let late_banded = spectrum(e.with_doping(dcs::Doping::Banded {
+        width: 8,
+        gap: 8,
+        layers: 2,
+        late: true,
+    }));
+    assert_eq!(late_banded.len(), 1, "a gap cannot stop a circuit-wide cone");
+
+    // Early alone already separates, because the cones are narrow enough
+    // that the brickwork's own idle sites break the chain.
+    let early = spectrum(e.with_doping(dcs::Doping::Early { layers: 2 }));
+    assert!(
+        early.len() > 20 && early[0] <= 8,
+        "early magic should fall apart: {early:?}"
+    );
+
+    // And the cost that follows is the point: the same count of T gates,
+    // priced by components instead of by total.
+    let placed: usize = early.iter().sum();
+    assert!(placed > 100, "the comparison needs real magic, got {placed}");
+    let by_components = cost(&early);
+    let by_stabilizer_rank = 0.3963 * placed as f64;
+    assert!(
+        by_components + 30.0 < by_stabilizer_rank,
+        "{placed} T gates: components price them at 2^{by_components:.1}, \
+         stabilizer rank at 2^{by_stabilizer_rank:.1} — expected a wide gap"
     );
 }

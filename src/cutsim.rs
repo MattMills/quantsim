@@ -278,6 +278,80 @@ pub fn amplitudes_at(circuit: &Circuit<C64>, p: &CutPlan, bits: &[u64]) -> Resul
     Ok(total)
 }
 
+/// The full amplitude vector, restricted to a chosen subset of branches.
+///
+/// The `2^k` sum is only worth paying in full if its terms carry
+/// comparable weight. They need not: each branch is
+/// `|ψ_A^p⟩ ⊗ |ψ_B^p⟩` with its own norm, and the norms are a
+/// *structural* property of the cut — computable per branch, before any
+/// amplitude is used. If the weight concentrates, the sum truncates, and
+/// a task that only needs fidelity `F` only needs the branches carrying
+/// `F` of the weight.
+///
+/// Returns `(branch weights, truncated amplitude vector)` with the
+/// weights in branch order. `keep` is the number of heaviest branches
+/// retained; pass `usize::MAX` for the exact sum.
+///
+/// Exponential in the width by construction — this is the measuring
+/// instrument for the truncation question, not a way to run it at scale.
+pub fn branch_weights_and_vector(
+    circuit: &Circuit<C64>,
+    p: &CutPlan,
+    keep: usize,
+) -> Result<(Vec<f64>, Vec<C64>)> {
+    let segs = segments(circuit, p)?;
+    let k = p.crossings.len();
+    let n = p.qubits;
+    let hi_w = n - p.cut;
+    let minus = [C64::new(1.0, 0.0), C64::new(-1.0, 0.0)];
+
+    // First pass: every branch's weight, ‖ψ_A^p‖·‖ψ_B^p‖.
+    let mut halves: Vec<(Vec<C64>, Vec<C64>)> = Vec::new();
+    let mut weights = Vec::with_capacity(1 << k);
+    for path in 0..(1u64 << k) {
+        crate::guard::checkpoint()?;
+        let mut a = crate::backend::DenseState::<C64>::new(p.cut)?;
+        for j in 0..=k {
+            segs.low[j].run(&mut a)?;
+            if j < k {
+                a.project(segs.pivots[j].0, (path >> j) & 1 == 1, 1.0);
+            }
+        }
+        let mut b = crate::backend::DenseState::<C64>::new(hi_w)?;
+        for j in 0..=k {
+            segs.high[j].run(&mut b)?;
+            if j < k && (path >> j) & 1 == 1 {
+                b.apply_diagonal(&minus, &[segs.pivots[j].1])?;
+            }
+        }
+        let va: Vec<C64> = (0..(1u64 << p.cut)).map(|i| a.amplitude(i)).collect();
+        let vb: Vec<C64> = (0..(1u64 << hi_w)).map(|i| b.amplitude(i)).collect();
+        let na: f64 = va.iter().map(|z| z.norm_sqr()).sum::<f64>().sqrt();
+        let nb: f64 = vb.iter().map(|z| z.norm_sqr()).sum::<f64>().sqrt();
+        weights.push(na * nb);
+        halves.push((va, vb));
+    }
+
+    // Second pass: sum only the heaviest `keep` branches.
+    let mut order: Vec<usize> = (0..halves.len()).collect();
+    order.sort_by(|&i, &j| weights[j].partial_cmp(&weights[i]).unwrap());
+    order.truncate(keep.min(halves.len()));
+    let mut out = vec![C64::new(0.0, 0.0); 1usize << n];
+    for &idx in &order {
+        let (va, vb) = &halves[idx];
+        for (hi, zb) in vb.iter().enumerate() {
+            if zb.norm_sqr() == 0.0 {
+                continue;
+            }
+            let base = hi << p.cut;
+            for (lo, za) in va.iter().enumerate() {
+                out[base | lo] += *za * *zb;
+            }
+        }
+    }
+    Ok((weights, out))
+}
+
 /// One amplitude — [`amplitudes_at`] with a single target.
 pub fn amplitude(circuit: &Circuit<C64>, p: &CutPlan, bits: u64) -> Result<C64> {
     Ok(amplitudes_at(circuit, p, &[bits])?[0])

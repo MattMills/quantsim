@@ -597,6 +597,69 @@ pub fn magic_axes(emb: &UpEmbedding) -> Vec<(Mask, Mask)> {
         .collect()
 }
 
+/// Components of the magic's **own** overlap graph over the data
+/// register — separability with no observable in it.
+///
+/// [`cluster_spectrum`] answers "what does this readout cost", and the
+/// observable is part of that: a weight-1 `Z` at the end of a deep
+/// circuit has a backward cone covering every qubit, so it joins every
+/// component and the spectrum collapses to one. That is the honest cost
+/// of *that question*, but it hides whether the magic itself is
+/// separable.
+///
+/// This drops the observable and asks only whether the `T` gates reach
+/// each other. Two are linked when their transported axes share a data
+/// qubit, and `Σ 2^{component}` is what the magic would cost given an
+/// observable local enough not to bridge them.
+///
+/// The reach is **backward**. The frame carries `V† Z_a V`, so a `T`'s
+/// axis propagates toward the circuit's *input*: magic at layer `L` has
+/// a cone about `2L` wide, and it is EARLY magic that is narrow. Narrow
+/// is necessary and not sufficient — on a line, magic on every qubit
+/// chains into one component however narrow each cone is — so
+/// separation needs a spatial gap wider than `2L` as well. Both halves
+/// of that rule are measured in `examples/dcs_separability.rs`.
+pub fn magic_components(emb: &UpEmbedding, data_qubits: usize) -> Vec<usize> {
+    let axes = magic_axes(emb);
+    let supports: Vec<Mask> = axes
+        .iter()
+        .map(|(x, z)| {
+            let mut m = Mask::zero();
+            for q in 0..data_qubits {
+                if x.bit(q) || z.bit(q) {
+                    m.set(q);
+                }
+            }
+            m
+        })
+        .collect();
+    let m = supports.len();
+    let mut parent: Vec<usize> = (0..m).collect();
+    fn find(p: &mut [usize], mut i: usize) -> usize {
+        while p[i] != i {
+            p[i] = p[p[i]];
+            i = p[i];
+        }
+        i
+    }
+    for i in 0..m {
+        for j in (i + 1)..m {
+            if supports[i].intersects(&supports[j]) {
+                let (a, b) = (find(&mut parent, i), find(&mut parent, j));
+                parent[a] = b;
+            }
+        }
+    }
+    let mut sizes: HashMap<usize, usize> = HashMap::new();
+    for i in 0..m {
+        let r = find(&mut parent, i);
+        *sizes.entry(r).or_insert(0) += 1;
+    }
+    let mut out: Vec<usize> = sizes.into_values().collect();
+    out.sort_unstable_by(|a, b| b.cmp(a));
+    out
+}
+
 /// `⟨0^m| U† O U |0^m⟩` through the up-embedded frame.
 ///
 /// `t + 1` Clifford transports, then a contraction factorized over the
