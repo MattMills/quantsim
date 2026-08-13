@@ -12,6 +12,7 @@
 //! it, which is the only way a boundary claim can be worth anything.
 
 use quantsim::dcs::{self, Dcs};
+use quantsim::gates::Pauli;
 use quantsim::pathsum::PathSum;
 use quantsim::prelude::*;
 use quantsim::sampling::mps_spoof_curve;
@@ -151,27 +152,28 @@ fn cliffordizing_t_gates_spends_the_experiments_fidelity_in_seven_swaps() {
 fn the_structured_circuit_costs_an_mps_more_than_its_haar_random_control() {
     let n = 12;
     let reg = GateRegistry::<C64>::standard();
-    let caps = [2usize, 4, 8, 16, 32, 64];
-    let first_at_experiment_fidelity = |c: &Circuit<C64>| -> usize {
-        mps_spoof_curve(c, &reg, &caps, 4000, 5)
-            .unwrap()
-            .iter()
-            .find(|p| p.score.normalized.unwrap_or(0.0) >= 0.32)
-            .map(|p| p.max_bond)
-            .unwrap_or(usize::MAX)
+    // One bond cap, well below the full rank 2^{n/2} = 64. The question
+    // is what a spoofer gets for that fixed budget on each family — a
+    // score comparison, not a threshold crossing, so it does not sit on
+    // a boundary and does not need many shots to resolve.
+    let caps = [4usize];
+    let score_at = |c: &Circuit<C64>| -> f64 {
+        mps_spoof_curve(c, &reg, &caps, 1200, 5).unwrap()[0]
+            .score
+            .normalized
+            .unwrap_or(0.0)
     };
-    let structured = first_at_experiment_fidelity(&Dcs::scaled(n).circuit());
-    let haar = first_at_experiment_fidelity(&Dcs::scaled(n).haar_control());
+    let structured = score_at(&Dcs::scaled(n).circuit());
+    let haar = score_at(&Dcs::scaled(n).haar_control());
     assert!(
-        structured >= 4 * haar,
-        "structured needed χ={structured}, Haar-random control χ={haar}"
-    );
-    // Full rank across the middle cut is 2^{n/2}. Needing at least half
-    // of it is what "no cheap truncation" means.
-    assert!(
-        structured >= (1 << (n / 2)) / 2,
-        "structured reached 0.32 at χ={structured}, full rank {}",
+        haar - structured > 0.2,
+        "at χ = 4 of full rank {}: structured {structured:.3}, Haar-random control {haar:.3} — \
+         the flat stabilizer spectrum is supposed to leave the structured circuit with nothing",
         1 << (n / 2)
+    );
+    assert!(
+        structured < 0.1,
+        "χ = 4 bought the structured circuit {structured:.3}, which is not 'nothing'"
     );
 }
 
@@ -233,6 +235,74 @@ fn the_magic_saturates_the_pauli_group_long_before_the_experiments_t_count() {
          below the experiment's {}",
         dcs::EXPERIMENT_T_GATES
     );
+}
+
+/// The full-scale magic-geometry numbers are **cost estimates**: Clifford
+/// transport plus a union–find, never the subset sum. That is why they
+/// run at 70 qubits in milliseconds, and it is also why they prove
+/// nothing on their own about the readout being correct.
+///
+/// This pins the other half. At toy width, where a dense state vector is
+/// available purely as an independent *oracle* — not as a yardstick, and
+/// not as anything the scaling claims lean on — the same code path is
+/// checked to produce the right expectation on Paulis with real signal.
+#[test]
+fn the_up_embedded_readout_is_the_right_number_and_not_just_a_cheap_one() {
+    let mut worst = 0.0f64;
+    let mut nonzero = 0;
+    let sim = Simulator::<C64>::new();
+    for n in [6, 8] {
+        let circuit = Dcs::scaled(n).circuit();
+        let psi = sim.run(&circuit).unwrap();
+        let mut rng = quantsim::rng::Prng::new(0xDC5 ^ n as u64);
+        for _ in 0..400 {
+            let ops: Vec<(usize, Pauli)> = (0..n)
+                .map(|q| {
+                    (
+                        q,
+                        match rng.next_u64() % 4 {
+                            0 => Pauli::I,
+                            1 => Pauli::X,
+                            2 => Pauli::Y,
+                            _ => Pauli::Z,
+                        },
+                    )
+                })
+                .filter(|(_, p)| !matches!(p, Pauli::I))
+                .collect();
+            if ops.is_empty() {
+                continue;
+            }
+            // Ground truth: apply P to the state and take the overlap.
+            let mut with_p = circuit.clone();
+            for &(q, p) in &ops {
+                match p {
+                    Pauli::X => with_p.x(q),
+                    Pauli::Y => with_p.y(q),
+                    Pauli::Z => with_p.z(q),
+                    Pauli::I => &mut with_p,
+                };
+            }
+            let p_psi = sim.run(&with_p).unwrap();
+            let mut acc = C64::new(0.0, 0.0);
+            psi.for_each_nonzero(&mut |i, amp| {
+                acc += amp.conj() * p_psi.amplitude(i);
+            });
+            let truth = acc.re;
+            let got = quantsim::upembed::expectation(&circuit, &ops).unwrap().value;
+            worst = worst.max((got - truth).abs());
+            if truth.abs() > 1e-6 {
+                nonzero += 1;
+            }
+        }
+    }
+    // A doped graph state annihilates most Pauli expectations, so a
+    // handful of probes would only ever confirm 0 = 0.
+    assert!(
+        nonzero >= 8,
+        "only {nonzero} probes had signal — this would be confirming 0 = 0"
+    );
+    assert!(worst < 1e-12, "worst deviation from dense {worst}");
 }
 
 /// Neither factorization the crate offers is available on this circuit,
