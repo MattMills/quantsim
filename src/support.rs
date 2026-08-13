@@ -547,6 +547,30 @@ impl WidePauli {
         }
     }
 
+    /// From a pair of [`Mask`](crate::pathsum::Mask) supports.
+    ///
+    /// The link between the two unbounded Pauli representations in this
+    /// crate. `Mask` is what the path sum and
+    /// [`crate::upembed`] carry, and what
+    /// [`crate::dcs::rotation_axes`] returns; `Support` is what the wide
+    /// walk needs. Without this the only register-unbounded *producer*
+    /// of Pauli axes and the only register-unbounded *consumer* of them
+    /// could not be composed, which is a gap in the plumbing rather than
+    /// in the mathematics.
+    pub fn from_masks(x: &crate::pathsum::Mask, z: &crate::pathsum::Mask) -> WidePauli {
+        let build = |m: &crate::pathsum::Mask| {
+            let mut s = Support::empty();
+            for i in m.iter() {
+                s = s.with(i);
+            }
+            s
+        };
+        WidePauli {
+            x: build(x),
+            z: build(z),
+        }
+    }
+
     /// To the crate's bounded key, if it fits.
     pub fn to_key(&self) -> Option<(u64, u64)> {
         (self.x.fits_u64() && self.z.fits_u64()).then(|| (self.x.to_u64(), self.z.to_u64()))

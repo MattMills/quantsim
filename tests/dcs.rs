@@ -418,3 +418,70 @@ fn the_magic_separates_when_it_is_both_early_and_banded() {
          stabilizer rank at 2^{by_stabilizer_rank:.1} — expected a wide gap"
     );
 }
+
+/// **The anticommutation partition is frame-invariant, so no Clifford
+/// reframing can improve it.**
+///
+/// The hope was that one big anticommutation component in the natural
+/// frame might fall apart in a better-chosen one — `coupling` documents
+/// that distinct components are symplectically orthogonal and factorize
+/// however much their supports overlap, so the partition is what any
+/// block method is bounded by.
+///
+/// It cannot fall apart, and the reason is a two-line argument rather
+/// than a measurement. Clifford conjugation preserves the symplectic
+/// form, so `ω(P_a, P_b)` — and hence every edge of the anticommutation
+/// graph, and hence the whole partition — is identical in every frame.
+///
+/// The corollary is what makes it worth a test: two Paulis with disjoint
+/// qubit support commute, so every anticommutation edge is also a
+/// support-overlap edge. The support partition is therefore always a
+/// *coarsening* of the anticommutation partition, in every frame. The
+/// anticommutation count is a floor on both, and on this circuit it is 1.
+#[test]
+fn no_clifford_frame_can_split_this_circuits_magic() {
+    let axes = dcs::rotation_axes(&Dcs::experiment().circuit()).unwrap();
+    let lab = dcs::anticommutation_components(&axes);
+    assert_eq!(lab, vec![dcs::EXPERIMENT_T_GATES], "one component in the lab frame");
+
+    // Conjugating every axis by the same Clifford leaves the symplectic
+    // form alone. Rather than build frames, apply the invariance
+    // directly: H on a qubit swaps that qubit's x and z bits in every
+    // axis at once, which is exactly conjugation by H, and the partition
+    // must not move.
+    let mut rng = quantsim::rng::Prng::new(4242);
+    let mut framed = axes.clone();
+    for _ in 0..200 {
+        let q = (rng.next_u64() % 70) as usize;
+        for (x, z) in framed.iter_mut() {
+            let (bx, bz) = (x.bit(q), z.bit(q));
+            if bx != bz {
+                if bx {
+                    x.clear(q);
+                    z.set(q);
+                } else {
+                    z.clear(q);
+                    x.set(q);
+                }
+            }
+        }
+    }
+    assert_eq!(
+        dcs::anticommutation_components(&framed),
+        lab,
+        "conjugation preserves ω, so the partition is a frame invariant"
+    );
+
+    // And the coarsening relation, on a profile where both are nontrivial.
+    let separable = Dcs::experiment().with_doping(dcs::Doping::Early { layers: 2 });
+    let sep_axes = dcs::rotation_axes(&separable.circuit()).unwrap();
+    let anti = dcs::anticommutation_components(&sep_axes);
+    let emb = quantsim::upembed::gadgetize(&separable.circuit()).unwrap();
+    let support = quantsim::upembed::magic_components(&emb, separable.qubits);
+    assert!(
+        support.len() <= anti.len(),
+        "support partition ({} blocks) must coarsen the anticommutation one ({} blocks)",
+        support.len(),
+        anti.len()
+    );
+}
