@@ -91,6 +91,7 @@
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::circuit::{Circuit, Op};
 use crate::error::{Error, Result};
@@ -140,6 +141,17 @@ pub fn turn_from_dyadic(numerator: i64, log2_denominator: u32) -> Result<Turn> {
 /// the guarantee. Refusing a representable-but-absurd angle is the safe
 /// failure; silently rounding an arbitrary one is not.
 pub const MAX_DYADIC_DEPTH: u32 = 30;
+
+/// Rule applications one [`PathSum::try_reduce`] will perform before
+/// giving up.
+///
+/// Named and public because it is a *ceiling*, and a reduction that
+/// stops here has not found a normal form — it has run out of budget,
+/// which [`PathSum::reduction_cut_short`] reports. An earlier version
+/// held this as an unnamed local and returned silently, so a Clifford
+/// circuit that exhausted it looked like a circuit with surviving
+/// topology. It is not.
+pub const MAX_REDUCTION_STEPS: u32 = 4_000_000;
 
 /// The exact turn for `theta` radians, or a refusal.
 ///
@@ -352,7 +364,12 @@ pub struct PathSum {
     /// Per qubit: the affine output form `(parity mask, constant)`.
     forms: Vec<(Mask, bool)>,
     /// The phase polynomial: monomial → turn.
-    poly: HashMap<Term, Turn>,
+    ///
+    /// Keys are shared: reduction snapshots the key set once per rule
+    /// fire, and at research widths a `Mask` is hundreds of words, so a
+    /// deep copy per snapshot is what dominated reduction. `Rc` makes
+    /// the snapshot a refcount bump.
+    poly: HashMap<Rc<Term>, Turn>,
     /// Scale: the state carries a factor `2^{e_half / 2}`.
     e_half: i64,
     /// Global phase, in turns.
@@ -367,6 +384,9 @@ pub struct PathSum {
     inputs: usize,
     /// Rule-V splits performed — the reduction's measured work.
     splits: u64,
+    /// The last reduction stopped on the guard's deadline, not on the
+    /// rules running dry.
+    cut_short: bool,
 }
 
 /// Why a surviving internal variable resisted elimination — the output
@@ -421,6 +441,7 @@ impl PathSum {
             zero: false,
             inputs: 0,
             splits: 0,
+            cut_short: false,
         }
     }
 
@@ -583,7 +604,7 @@ impl PathSum {
             self.phase = self.phase.wrapping_add(coeff);
             return;
         }
-        match self.poly.entry(term) {
+        match self.poly.entry(Rc::new(term)) {
             Entry::Occupied(mut o) => {
                 let v = o.get().wrapping_add(coeff);
                 if v == 0 {
@@ -816,7 +837,7 @@ impl PathSum {
     pub fn from_circuit(circuit: &Circuit<C64>) -> Result<PathSum> {
         let mut ps = PathSum::new(circuit.num_qubits());
         ps.apply_circuit(circuit, false)?;
-        ps.reduce();
+        ps.try_reduce()?;
         Ok(ps)
     }
 
@@ -939,10 +960,12 @@ impl PathSum {
     /// Substitute `y_p := parity(mask) ⊕ c` everywhere.
     fn substitute(&mut self, p: usize, mask: &Mask, c: bool) {
         let pm = Mask::single(p);
-        let items: Vec<(Term, Turn)> = self.poly.drain().collect();
+        let items: Vec<(Rc<Term>, Turn)> = self.poly.drain().collect();
         for (term, coeff) in items {
             if !term.iter().any(|m| m.bit(p)) {
-                self.add_term(term, coeff);
+                // Drained, so the snapshot holds the only reference and
+                // the unwrap is a move rather than a copy.
+                self.add_term(Rc::try_unwrap(term).unwrap_or_else(|rc| (*rc).clone()), coeff);
                 continue;
             }
             let factors: Vec<(Mask, bool)> = term
@@ -985,10 +1008,10 @@ impl PathSum {
     /// swung by two orders of magnitude.
     fn split(&mut self) -> bool {
         let internal = self.active.without(&self.live_union());
-        let mut found: Option<(Term, Mask)> = None;
+        let mut found: Option<(Rc<Term>, Mask)> = None;
         let mut best = (usize::MAX, usize::MAX);
         for term in self.poly.keys() {
-            for k in term {
+            for k in term.iter() {
                 if k.count() < 2 || !k.intersects(&internal) {
                     continue;
                 }
@@ -1040,7 +1063,9 @@ impl PathSum {
     fn pass(&mut self) -> bool {
         let mut fired = false;
         loop {
-            if self.zero {
+            // A sweep can outlast the whole budget on a wide circuit, so
+            // the deadline is observed here and not only between sweeps.
+            if self.zero || crate::guard::checkpoint().is_err() {
                 return fired;
             }
             let live = self.live_union();
@@ -1050,11 +1075,11 @@ impl PathSum {
                 return fired;
             }
             // variable -> positions in `keys` of the monomials mentioning it
-            let keys: Vec<Term> = self.poly.keys().cloned().collect();
+            let keys: Vec<Rc<Term>> = self.poly.keys().cloned().collect();
             let mut index: HashMap<usize, Vec<usize>> = HashMap::new();
             for (ki, t) in keys.iter().enumerate() {
                 let mut seen = Mask::zero();
-                for m in t {
+                for m in t.iter() {
                     for v in m.and(&candidates).iter() {
                         if !seen.bit(v) {
                             seen.set(v);
@@ -1074,7 +1099,7 @@ impl PathSum {
                     fired = true;
                     break;
                 };
-                let terms: Vec<(Term, Turn)> = at
+                let terms: Vec<(Rc<Term>, Turn)> = at
                     .iter()
                     .filter_map(|&ki| self.poly.get(&keys[ki]).map(|c| (keys[ki].clone(), *c)))
                     .collect();
@@ -1185,10 +1210,47 @@ impl PathSum {
 
     /// Reduce to normal form: sweep E and G, split when they stall, stop
     /// when neither can fire.
+    ///
+    /// Best-effort against an armed [`crate::guard`] budget: reduction is
+    /// the crate's one kernel whose *time* can run away while `h*` stays
+    /// flat (rule V trades one monomial for three, and the polynomial —
+    /// not the variable count — is what grows), so it checkpoints and
+    /// stops early rather than stalling. Stopping early is sound: what
+    /// survives is still an exact path sum, only less reduced, so `h*`
+    /// reads as an over-estimate. [`reduction_cut_short`] says whether
+    /// that happened; [`try_reduce`] refuses instead.
+    ///
+    /// [`reduction_cut_short`]: PathSum::reduction_cut_short
+    /// [`try_reduce`]: PathSum::try_reduce
     pub fn reduce(&mut self) {
-        let mut guard = 200_000u32;
-        while guard > 0 && !self.zero {
-            guard -= 1;
+        let _ = self.try_reduce();
+    }
+
+    /// [`reduce`](Self::reduce), refusing rather than truncating: a
+    /// reduction that stops on the wall-clock budget or on
+    /// [`MAX_REDUCTION_STEPS`] surfaces as an error instead of quietly
+    /// returning a half-reduced sum.
+    ///
+    /// Both stopping conditions matter and neither is a fixpoint. A
+    /// Clifford circuit has `h* = 0`, so *any* nonzero `h*` on one is
+    /// this loop giving up — and it must say so, or a run out of steps
+    /// reads as a discovery.
+    pub fn try_reduce(&mut self) -> Result<()> {
+        self.cut_short = false;
+        let mut steps = MAX_REDUCTION_STEPS;
+        while !self.zero {
+            if steps == 0 {
+                self.cut_short = true;
+                return Err(Error::InvalidState(format!(
+                    "pathsum: reduction hit {MAX_REDUCTION_STEPS} rule applications without \
+                     reaching a fixpoint; h* is an over-estimate, not a normal form"
+                )));
+            }
+            steps -= 1;
+            if let Err(e) = crate::guard::checkpoint() {
+                self.cut_short = true;
+                return Err(e);
+            }
             if self.pass() {
                 continue;
             }
@@ -1196,6 +1258,15 @@ impl PathSum {
                 break;
             }
         }
+        Ok(())
+    }
+
+    /// Whether the last reduction stopped on the guard's deadline or on
+    /// the step cap rather than on the rules running dry — in which case
+    /// `h*` is an over-estimate of what this rewrite system would have
+    /// reached, and not a normal form.
+    pub fn reduction_cut_short(&self) -> bool {
+        self.cut_short
     }
 }
 
@@ -1212,7 +1283,7 @@ impl PathSum {
         }
         let mut used = Mask::zero();
         for t in self.poly.keys() {
-            for m in t {
+            for m in t.iter() {
                 for v in m.iter() {
                     used.set(v);
                 }
@@ -1245,10 +1316,26 @@ impl PathSum {
     /// `⟨bits|ψ⟩`, by substituting the output constraints and summing
     /// over only the variables that survive — `O(2^{h*})`, not `O(2^n)`.
     pub fn amplitude(&self, bits: u64) -> C64 {
+        self.amplitude_by(&|q| bits >> q & 1 == 1)
+    }
+
+    /// `⟨bits|ψ⟩` for a register too wide to index with a `u64`.
+    ///
+    /// Identical to [`amplitude`](Self::amplitude) in every respect but
+    /// the outcome's type. The path sum itself has no width ceiling —
+    /// [`Mask`] is a growable bitset and `h*` is a property of the
+    /// circuit's topology, not of its register — so the `u64` in
+    /// `amplitude` is a convenience for the common case, not a bound on
+    /// the representation. Above 64 qubits this is the readout.
+    pub fn amplitude_mask(&self, bits: &Mask) -> C64 {
+        self.amplitude_by(&|q| bits.bit(q))
+    }
+
+    fn amplitude_by(&self, want_bit: &dyn Fn(usize) -> bool) -> C64 {
         let mut ps = self.clone();
         for q in 0..ps.qubits {
             let (m, c) = ps.forms[q].clone();
-            let want = bits >> q & 1 == 1;
+            let want = want_bit(q);
             if m.is_zero() {
                 if c != want {
                     return C64::new(0.0, 0.0);

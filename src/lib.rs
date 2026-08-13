@@ -82,6 +82,7 @@ pub mod conformance;
 pub mod coupling;
 pub mod crossview;
 pub mod cut;
+pub mod dcs;
 pub mod discovery;
 pub mod dyadic;
 pub mod e8;
