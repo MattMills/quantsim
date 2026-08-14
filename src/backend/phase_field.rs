@@ -52,10 +52,36 @@ use crate::math::GateMatrix;
 use crate::padic::lcm;
 use crate::scalar::C64;
 
-/// Largest root-of-unity order a single gate entry may have before the
-/// state is materialized. Covers Clifford+T (8), every eighth-turn
-/// rotation, and the qudit phases the crate ships.
+/// Largest **non-dyadic** root-of-unity order the linear scan will
+/// identify. Covers Clifford+T (8), every eighth-turn rotation, and
+/// the qudit phases the crate ships. Dyadic orders are found by a
+/// separate doubling search up to `2^`[`MAX_DYADIC_ROOT_DEPTH`], so
+/// the QFT's `π/2^{n−1}` angles stay in class far past this cap.
 pub const MAX_ROOT_ORDER: u64 = 4096;
+
+/// Deepest dyadic root order recognized (`2^30`); past this the
+/// double's spacing approaches the tolerance and identification would
+/// start accepting non-dyadic angles.
+pub const MAX_DYADIC_ROOT_DEPTH: u32 = 30;
+
+/// Acceptance tolerance for the dyadic fast path. Deliberately far
+/// tighter than [`ROOT_TOL`]: at depth 30 the dyadic grid's spacing is
+/// ~9e-10 turns, so a 1e-9 acceptance would identify *every* angle as
+/// a deep dyadic root. Genuine dyadic angles (`π/2^k` — every QFT
+/// `cp`) are exact powers-of-two divisions in `f64`, so they land on
+/// the grid **bitwise** and pass at 1e-13; anything else falls through
+/// to the linear scan and behaves exactly as before.
+const DYADIC_ROOT_TOL: f64 = 1e-13;
+
+/// Greatest common divisor (binary-free, both args ≥ 1).
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let t = a % b;
+        a = b;
+        b = t;
+    }
+    a
+}
 
 /// Largest phase modulus the field form will grow to by `lcm` before
 /// giving up and materializing.
@@ -240,7 +266,12 @@ impl PhaseFieldState {
         }
     }
 
-    /// The smallest `q ≤ MAX_ROOT_ORDER` with `z = ω_q^k`, and that `k`.
+    /// The smallest `q` with `z = ω_q^k`, and that `k`. Dyadic orders
+    /// are found first by an `O(30)` doubling search (verified in the
+    /// complex plane and reduced by gcd, so a genuinely dyadic angle —
+    /// every QFT `cp` — costs 30 steps and may have order up to
+    /// `2^`[`MAX_DYADIC_ROOT_DEPTH`]); non-dyadic orders fall back to
+    /// the linear scan up to [`MAX_ROOT_ORDER`].
     fn as_root(z: C64) -> Option<(u64, u64)> {
         if (z.norm() - 1.0).abs() > ROOT_TOL {
             return None;
@@ -248,6 +279,22 @@ impl PhaseFieldState {
         let mut turn = z.im.atan2(z.re) / std::f64::consts::TAU;
         if turn < 0.0 {
             turn += 1.0;
+        }
+        // Dyadic fast path: candidate k/2^d, verified strictly against
+        // z itself so a near-miss falls through to the general scan.
+        for d in 0..=MAX_DYADIC_ROOT_DEPTH {
+            let q = 1u64 << d;
+            let k = (turn * q as f64).round();
+            if k < 0.0 {
+                continue;
+            }
+            let k = (k as u64) % q.max(1);
+            let back = crate::math::cis(std::f64::consts::TAU * k as f64 / q as f64);
+            if (z - back).norm() < DYADIC_ROOT_TOL {
+                let g = gcd(k.max(1), q);
+                let (q, k) = if k == 0 { (1, 0) } else { (q / g, k / g) };
+                return Some((q, k));
+            }
         }
         for q in 1..=MAX_ROOT_ORDER {
             let k = turn * q as f64;
@@ -271,10 +318,7 @@ impl PhaseFieldState {
                 return None;
             }
         }
-        Some((
-            order,
-            roots.iter().map(|&(q, k)| k * (order / q)).collect(),
-        ))
+        Some((order, roots.iter().map(|&(q, k)| k * (order / q)).collect()))
     }
 
     /// Whether a matrix is exactly the diagonal it looks like.
@@ -376,6 +420,85 @@ impl PhaseFieldState {
         Ok(true)
     }
 
+    /// Whether a single-qubit matrix is the Pauli X.
+    fn is_x(matrix: &GateMatrix<C64>) -> bool {
+        if matrix.dim() != 2 {
+            return false;
+        }
+        let o = C64::new(1.0, 0.0);
+        matrix.get(0, 0).norm() < ROOT_TOL
+            && matrix.get(1, 1).norm() < ROOT_TOL
+            && (matrix.get(0, 1) - o).norm() < ROOT_TOL
+            && (matrix.get(1, 0) - o).norm() < ROOT_TOL
+    }
+
+    /// Whether a two-qubit matrix is the SWAP.
+    fn is_swap(matrix: &GateMatrix<C64>) -> bool {
+        if matrix.dim() != 4 {
+            return false;
+        }
+        let o = C64::new(1.0, 0.0);
+        let want = |r: usize, c: usize| -> C64 {
+            if (r, c) == (0, 0) || (r, c) == (1, 2) || (r, c) == (2, 1) || (r, c) == (3, 3) {
+                o
+            } else {
+                C64::new(0.0, 0.0)
+            }
+        };
+        (0..4).all(|r| (0..4).all(|c| (matrix.get(r, c) - want(r, c)).norm() < ROOT_TOL))
+    }
+
+    /// Apply an X in the field form: a pinned qubit flips its value; a
+    /// free qubit substitutes `y → 1 − y` through the polynomial
+    /// (multilinear stays multilinear). Exact, `O(monomials)`.
+    fn try_x(&mut self, qubit: usize) -> bool {
+        let Repr::Field(f) = &mut self.repr else {
+            return false;
+        };
+        let bit = 1u64 << qubit;
+        if f.pinned_mask & bit != 0 {
+            f.pinned_bits ^= bit;
+            return true;
+        }
+        // P = A + y·B  →  A + (1−y)·B = (A + B) − y·B: for every
+        // monomial containing y, add its coefficient one level down and
+        // negate it in place.
+        let modulus = f.modulus;
+        let affected: Vec<(u64, u64)> = f
+            .poly
+            .iter()
+            .filter(|(&m, _)| m & bit != 0)
+            .map(|(&m, &c)| (m, c))
+            .collect();
+        for (m, c) in affected {
+            f.add_term(m & !bit, c);
+            f.add_term(m, (modulus - c) % modulus);
+            f.add_term(m, (modulus - c) % modulus);
+        }
+        true
+    }
+
+    /// Apply a SWAP in the field form: a pure relabeling of the two
+    /// qubits through the pinned subcube and every monomial mask.
+    /// Exact, `O(monomials)`.
+    fn try_swap(&mut self, a: usize, b: usize) -> bool {
+        let Repr::Field(f) = &mut self.repr else {
+            return false;
+        };
+        let swap_bits = |x: u64| -> u64 {
+            let ba = (x >> a) & 1;
+            let bb = (x >> b) & 1;
+            let mut y = x & !(1u64 << a) & !(1u64 << b);
+            y |= ba << b;
+            y |= bb << a;
+            y
+        };
+        f.pinned_mask = swap_bits(f.pinned_mask);
+        f.pinned_bits = swap_bits(f.pinned_bits);
+        f.poly = f.poly.drain().map(|(m, c)| (swap_bits(m), c)).collect();
+        true
+    }
+
     /// Apply a Hadamard that frees a pinned qubit, or report that it
     /// cannot be applied in the field form.
     fn try_free_hadamard(&mut self, qubit: usize) -> bool {
@@ -418,6 +541,13 @@ impl Backend<C64> for PhaseFieldState {
             } else if qubits.len() == 1
                 && Self::is_hadamard(matrix)
                 && self.try_free_hadamard(qubits[0])
+            {
+                return Ok(());
+            } else if qubits.len() == 1 && Self::is_x(matrix) && self.try_x(qubits[0]) {
+                return Ok(());
+            } else if qubits.len() == 2
+                && Self::is_swap(matrix)
+                && self.try_swap(qubits[0], qubits[1])
             {
                 return Ok(());
             }
