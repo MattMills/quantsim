@@ -253,6 +253,24 @@ The remaining rungs, in dependency order:
   transport to `MeraState` (or retiring the distinction) remains, as
   does a non-greedy truncation order (the pinned seed where orderings
   trade places is the test case).
+- **The atlas axis for `bulk` needs octave-aligned sampling.** A probe
+  was measured and backed out: the dyadic capacity tree makes memory a
+  **sawtooth** in width — skewed cuts at non-power-of-two sizes cap
+  rank by the short side (random family: ~2× under `mera` at
+  n = 10, 12; equal within 1% at n = 4, 8) — and a four-point fit
+  across an octave misreads the sawtooth as `size^4.7` while the true
+  per-step factor is 1.7×, leaving certification to the
+  contention-fragile time law (the verdict flipped under parallel test
+  execution; solo it held). Either the scan samples the axis at
+  power-of-two sizes or the fit learns sawtooth envelopes; both keep
+  the finding: bulk at pow2 widths **is** mera's cost, and the skew
+  discount between octaves is real structure, not error.
+- **The post-reroot crossing ceiling, measured.** Growth is O(1)
+  (4 µs for grow #31 at width 32), but the *first entangling gate*
+  across a freshly created root cut materializes the live block —
+  2^33 elements refused by the guard at width 33 — so streaming
+  growth patterns must keep entanglement inside the pre-reroot span,
+  and the path-updates rung above is what removes the ceiling.
 - **Interior release / renumbering** — `release` is boundary-only
   (stack discipline); releasing an interior qubit means renumbering
   the leaf map, and the honest cost of the re-alignment should be

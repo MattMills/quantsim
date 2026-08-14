@@ -338,6 +338,14 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
             )
         },
     ));
+    // The bulk register is deliberately NOT an axis yet: its dyadic
+    // capacity tree makes memory a sawtooth in width (skewed cuts at
+    // non-power-of-two sizes cap rank by the short side — measured:
+    // ~2× under mera at n = 10, 12 while equal at n = 8), and a
+    // four-point fit across an octave misclassifies the sawtooth as
+    // polynomial, leaving certification to the contention-fragile time
+    // law. The axis needs octave-aligned sampling first — see the
+    // roadmap's clock/bulk rungs.
     // The phase-field representation: cost is the phase polynomial's
     // monomial count, and the assumption is that the circuit stays
     // diagonal-with-root-of-unity-entries over an affine subcube. A gate
