@@ -516,3 +516,33 @@ fn static_structure_costs_no_events_and_stays_at_the_parts() {
         );
     }
 }
+
+#[test]
+fn qft_controlled_phases_collapse_instead_of_merging() {
+    // The QFT's structural secret, exploited: every cp fires while its
+    // control is still a basis state, so the pinned-region collapse
+    // applies the whole cp triangle without a single merge — only the
+    // trailing swap layer (a genuine matrix kernel) merges its pairs.
+    // Memory stays at the sum of tiny regions where the old
+    // merge-first path saturated to 2^n.
+    let n = 8;
+    let state = sim().run_on("mosaic", &library::qft(n)).unwrap();
+    let m = state.as_any().downcast_ref::<MosaicState<C64>>().unwrap();
+    assert_eq!(m.collapses(), n * (n - 1) / 2, "every cp collapsed");
+    let merges = m.events().iter().filter(|e| e.kind == "merge").count();
+    assert_eq!(merges, n / 2, "only the swap layer merged");
+    let dense = sim().run(&library::qft(n)).unwrap();
+    assert_matches_dense(m, dense.as_ref(), n, "qft on the collapsing mosaic");
+
+    // At width 16 the old path held 2^16 amplitudes; the collapse
+    // holds pair regions.
+    let state = sim().run_on("mosaic", &library::qft(16)).unwrap();
+    let m = state.as_any().downcast_ref::<MosaicState<C64>>().unwrap();
+    assert_eq!(m.collapses(), 16 * 15 / 2);
+    assert!(
+        m.memory_bytes() < 8 * 1024,
+        "qft(16) must stay at the sum of pair regions: {} B",
+        m.memory_bytes()
+    );
+    assert_close(m.total_abs_sqr(), 1.0, 1e-9);
+}

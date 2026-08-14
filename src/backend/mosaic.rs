@@ -152,6 +152,7 @@ pub struct MosaicState<S: Scalar> {
     policy: MosaicPolicy,
     events: Vec<MosaicEvent>,
     conversions_bytes: usize,
+    collapses: usize,
 }
 
 impl<S: Scalar> MosaicState<S> {
@@ -179,6 +180,7 @@ impl<S: Scalar> MosaicState<S> {
             policy: MosaicPolicy::default(),
             events: Vec::new(),
             conversions_bytes: 0,
+            collapses: 0,
         })
     }
 
@@ -220,6 +222,7 @@ impl<S: Scalar> MosaicState<S> {
             policy,
             events: Vec::new(),
             conversions_bytes: 0,
+            collapses: 0,
         })
     }
 
@@ -246,6 +249,52 @@ impl<S: Scalar> MosaicState<S> {
     /// Total bytes moved through representation conversions.
     pub fn conversions_bytes(&self) -> usize {
         self.conversions_bytes
+    }
+
+    /// How many cross-region diagonals were applied **without any
+    /// merge** because every region but one held a basis state — the
+    /// pinned-region collapse. On the QFT this is every controlled
+    /// phase.
+    pub fn collapses(&self) -> usize {
+        self.collapses
+    }
+
+    /// The policy in effect.
+    pub fn policy(&self) -> &MosaicPolicy {
+        &self.policy
+    }
+
+    /// Replace the policy (elections and pressure rules apply from the
+    /// next gate on).
+    pub fn set_policy(&mut self, policy: MosaicPolicy) {
+        self.policy = policy;
+    }
+
+    /// A region's single basis index, when the region provably holds
+    /// exactly one basis state and the check is affordable in its
+    /// representation (sparse at any width; dense up to 16 qubits —
+    /// enumeration-priced representations are not scanned).
+    fn pinned_index(&self, region: usize) -> Option<u64> {
+        let r = &self.regions[region];
+        match r.state.name() {
+            "sparse" => {}
+            "dense" if r.qubits.len() <= 16 => {}
+            _ => return None,
+        }
+        let mut found: Option<u64> = None;
+        let mut multiple = false;
+        r.state.for_each_nonzero(&mut |i, _| {
+            if found.is_some() {
+                multiple = true;
+            } else {
+                found = Some(i);
+            }
+        });
+        if multiple {
+            None
+        } else {
+            found
+        }
     }
 
     /// Construct a fresh backend by candidate name at `width`.
@@ -529,8 +578,73 @@ impl<S: Scalar> Backend<S> for MosaicState<S> {
         self.dispatch(qubits, &|s, local| s.apply(matrix, local))
     }
 
+    /// Diagonals get the **pinned-region collapse** before any merge:
+    /// when every touched region but at most one provably holds a
+    /// single basis state, the diagonal restricted to those basis
+    /// values is a lower-arity diagonal on the one free region — exact,
+    /// and no regions merge. On the QFT every controlled phase has a
+    /// basis-state control at the moment it fires, so the whole
+    /// `cp` triangle collapses and the register stays a product.
     fn apply_diagonal(&mut self, entries: &[S], qubits: &[usize]) -> Result<()> {
         validate_apply_diagonal(self.n, entries, qubits)?;
+        let touched: Vec<usize> = qubits.iter().map(|&q| self.region_of(q)).collect();
+        let mut distinct = touched.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        if distinct.len() >= 2 {
+            let pins: Vec<Option<u64>> = distinct.iter().map(|&r| self.pinned_index(r)).collect();
+            let free: Vec<usize> = distinct
+                .iter()
+                .zip(&pins)
+                .filter(|(_, p)| p.is_none())
+                .map(|(&r, _)| r)
+                .collect();
+            if free.len() <= 1 {
+                // Base index from the pinned regions' basis bits at the
+                // touched positions; free bit positions collect the
+                // reduced diagonal's sub-index.
+                let mut base = 0usize;
+                let mut free_qubits: Vec<usize> = Vec::new();
+                let mut free_bits: Vec<usize> = Vec::new();
+                for (b, &q) in qubits.iter().enumerate() {
+                    let r = touched[b];
+                    let slot = distinct.iter().position(|&d| d == r).expect("in set");
+                    match pins[slot] {
+                        Some(idx) => {
+                            let local = self.regions[r].local(q);
+                            if (idx >> local) & 1 == 1 {
+                                base |= 1 << b;
+                            }
+                        }
+                        None => {
+                            free_qubits.push(q);
+                            free_bits.push(b);
+                        }
+                    }
+                }
+                let reduced: Vec<S> = (0..1usize << free_bits.len())
+                    .map(|j| {
+                        let mut idx = base;
+                        for (pos, &b) in free_bits.iter().enumerate() {
+                            if (j >> pos) & 1 == 1 {
+                                idx |= 1 << b;
+                            }
+                        }
+                        entries[idx]
+                    })
+                    .collect();
+                self.collapses += 1;
+                if free_qubits.is_empty() {
+                    // Every region pinned: the diagonal is one scalar
+                    // phase; fold it into the first touched region.
+                    let phase = reduced[0];
+                    let q = qubits[0];
+                    return self
+                        .dispatch(&[q], &|s, local| s.apply_diagonal(&[phase, phase], local));
+                }
+                return self.dispatch(&free_qubits, &|s, local| s.apply_diagonal(&reduced, local));
+            }
+        }
         self.dispatch(qubits, &|s, local| s.apply_diagonal(entries, local))
     }
 
@@ -602,6 +716,7 @@ impl<S: Scalar> Backend<S> for MosaicState<S> {
         }];
         self.events.clear();
         self.conversions_bytes = 0;
+        self.collapses = 0;
         Ok(())
     }
 
