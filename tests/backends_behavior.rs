@@ -76,7 +76,9 @@ fn sampling_matches_probabilities_and_is_backend_independent() {
     }
     // Same seed, other representations: byte-identical counts, because
     // sampling accumulates weights in basis order on every backend.
-    for name in ["sparse", "adaptive", "factored", "mps", "mera", "bulk", "mosaic"] {
+    for name in [
+        "sparse", "adaptive", "factored", "mps", "mera", "bulk", "mosaic",
+    ] {
         let state = run_named(name, &c);
         let counts = state.sample(8192, &mut Prng::new(42)).unwrap();
         assert_eq!(counts, dense_counts, "{name} sampling differs from dense");

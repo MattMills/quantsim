@@ -209,7 +209,11 @@ fn where_the_cone_buys_nothing_the_up_embedding_still_does() {
     let mut cone = ConeResolver::new(c.clone(), &reg, Inner::Dense);
     let cheap = cone.expectation(&ops).unwrap();
     assert_eq!(cheap.cost.qubits, n, "an all-to-all layer has no outside");
-    assert_eq!(cheap.cost.compression(), 1.0, "and therefore no compression");
+    assert_eq!(
+        cheap.cost.compression(),
+        1.0,
+        "and therefore no compression"
+    );
 
     let mut up = UpEmbedResolver::new(c.clone());
     let a = up.expectation(&ops).unwrap();
@@ -373,7 +377,10 @@ fn a_clifford_perturbation_is_absorbed_and_a_magic_one_is_refused() {
     };
     match up.response(5, 3, magic, &ops) {
         Err(Error::InvalidState(msg)) => {
-            assert!(msg.contains("Clifford"), "the refusal should say why: {msg}")
+            assert!(
+                msg.contains("Clifford"),
+                "the refusal should say why: {msg}"
+            )
         }
         other => panic!("expected a refusal, got {other:?}"),
     }
@@ -546,7 +553,12 @@ fn a_circuit_whose_magic_cancels_needs_no_gadgets_at_all() {
     for k in [4usize, 8, 32] {
         let c = cancelling(3, k);
         let t = upembed::magic_events(&c).unwrap();
-        assert_eq!(t, 2 * k, "the gate list really does carry {} T gates", 2 * k);
+        assert_eq!(
+            t,
+            2 * k,
+            "the gate list really does carry {} T gates",
+            2 * k
+        );
         assert_eq!(
             pathsum::operator(&c).unwrap().internal_vars(),
             0,

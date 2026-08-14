@@ -55,8 +55,10 @@ fn the_artin_action_realizes_the_braid_group() {
     for n in 3..=5 {
         // braid relations
         for i in 0..n - 2 {
-            let a = BraidWord::from_letters(n, &[i as i32 + 1, i as i32 + 2, i as i32 + 1]).unwrap();
-            let b = BraidWord::from_letters(n, &[i as i32 + 2, i as i32 + 1, i as i32 + 2]).unwrap();
+            let a =
+                BraidWord::from_letters(n, &[i as i32 + 1, i as i32 + 2, i as i32 + 1]).unwrap();
+            let b =
+                BraidWord::from_letters(n, &[i as i32 + 2, i as i32 + 1, i as i32 + 2]).unwrap();
             assert!(a.equals(&b), "braid relation at {i} on {n} strands");
         }
         // far commutation
@@ -111,7 +113,10 @@ fn the_cayley_ball_grows_and_is_deduplicated() {
         assert!(w[1] > w[0]);
     }
     let free_words = |r: u32| 1 + 4 * ((3u64.pow(r) - 1) / 2);
-    assert!((b3[3] as u64) < free_words(3), "relations must collapse words");
+    assert!(
+        (b3[3] as u64) < free_words(3),
+        "relations must collapse words"
+    );
 }
 
 // ── periodic navigation words ────────────────────────────────────────
@@ -158,7 +163,9 @@ fn a_periodic_path_is_an_infinite_path_from_a_finite_period() {
     assert_eq!(p.prefix(8), vec![0, 2, 1, 0, 2, 1, 0, 2]);
     assert_eq!(p.step(3_000_000), p.step(0));
     assert!(p.is_primitive());
-    assert!(!PeriodicPath::new(2, vec![0, 1, 0, 1]).unwrap().is_primitive());
+    assert!(!PeriodicPath::new(2, vec![0, 1, 0, 1])
+        .unwrap()
+        .is_primitive());
     // rotations are the same orbit, and only rotations are
     let a = PeriodicPath::new(3, vec![0, 2, 1]).unwrap();
     let b = PeriodicPath::new(3, vec![2, 1, 0]).unwrap();
@@ -253,7 +260,10 @@ fn an_orbit_junction_is_either_free_or_total_and_lexicographic_order_decides() {
         }
     }
     // both regimes actually occur in the sample
-    assert!(seamless > 20 && merged > 20, "{seamless} free, {merged} merged");
+    assert!(
+        seamless > 20 && merged > 20,
+        "{seamless} free, {merged} merged"
+    );
     // and the merge is genuinely unbounded, not a local repair
     assert!(
         longest_interface > 12,
@@ -290,8 +300,12 @@ fn an_orbit_junction_is_either_free_or_total_and_lexicographic_order_decides() {
     // and cutting mid-period is itself a different seam: the same orbit
     // joined to itself at a truncated length stops being free.
     let canonical = PeriodicPath::new(2, vec![0, 1, 1]).unwrap();
-    assert!(orbit_junction(&canonical, 18, &canonical, 18).unwrap().seamless());
-    assert!(!orbit_junction(&canonical, 20, &canonical, 20).unwrap().seamless());
+    assert!(orbit_junction(&canonical, 18, &canonical, 18)
+        .unwrap()
+        .seamless());
+    assert!(!orbit_junction(&canonical, 20, &canonical, 20)
+        .unwrap()
+        .seamless());
 
     // the pinned asymmetry: swapping the two orbits changes the regime,
     // so a junction is a property of the *ordered* pair
@@ -572,7 +586,12 @@ fn mat_exp_agrees_with_the_braid_generators_and_is_unitary() {
     }
     // exp(0) = I
     let z = GateMatrix::<C64>::zeros(4).unwrap();
-    assert!(max_gap(&mat_exp(&z).unwrap(), &GateMatrix::<C64>::identity(4).unwrap()) < 1e-15);
+    assert!(
+        max_gap(
+            &mat_exp(&z).unwrap(),
+            &GateMatrix::<C64>::identity(4).unwrap()
+        ) < 1e-15
+    );
 }
 
 #[test]

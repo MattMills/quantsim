@@ -38,7 +38,9 @@ fn word(n: usize, gates: usize, t_share: u64, seed: u64) -> Circuit<C64> {
 fn dense_of(c: &Circuit<C64>) -> Vec<C64> {
     let sim: Simulator = Simulator::new();
     let s = sim.run(c).unwrap();
-    (0..1u64 << c.num_qubits()).map(|b| s.amplitude(b)).collect()
+    (0..1u64 << c.num_qubits())
+        .map(|b| s.amplitude(b))
+        .collect()
 }
 
 fn worst_deviation(c: &Circuit<C64>) -> f64 {
@@ -294,10 +296,9 @@ fn a_gate_outside_the_fragment_is_refused_by_name() {
     c.gate("h", vec![], vec![0]);
     c.gate("rz", vec![0.3], vec![0]); // 0.3 rad is not dyadic
     match PathSum::from_circuit(&c) {
-        Err(Error::InvalidState(msg)) => assert!(
-            msg.contains("dyadic"),
-            "the refusal should say why: {msg}"
-        ),
+        Err(Error::InvalidState(msg)) => {
+            assert!(msg.contains("dyadic"), "the refusal should say why: {msg}")
+        }
         other => panic!("expected a refusal, got {other:?}"),
     }
 
@@ -338,7 +339,12 @@ fn dense_equal(a: &Circuit<C64>, b: &Circuit<C64>) -> bool {
                 }
             }
             for op in c.ops() {
-                if let Op::Named { name, params, qubits } = op {
+                if let Op::Named {
+                    name,
+                    params,
+                    qubits,
+                } = op
+                {
                     full.gate(name, params.clone(), qubits.clone());
                 }
             }

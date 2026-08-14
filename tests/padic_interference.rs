@@ -132,8 +132,7 @@ fn character_is_the_root_of_unity_order_everywhere() {
             assert_eq!(c.antiphase(), c.order == 2);
             // and the antiphase claim is the physics: the amplitude cancels
             if c.antiphase() {
-                let sum = C64::new(1.0, 0.0)
-                    + cis(std::f64::consts::TAU * delta as f64 / m as f64);
+                let sum = C64::new(1.0, 0.0) + cis(std::f64::consts::TAU * delta as f64 / m as f64);
                 assert!(sum.norm() < 1e-12, "antiphase did not cancel: {sum:?}");
             }
         }
@@ -215,11 +214,7 @@ fn coarsest_first_decides_fastest_and_sequential_slowest() {
     let cmp = compare_diagonals(&radix, 20_000, 0xC0FFEE);
     assert_eq!(cmp.full_depth, 10);
     let get = |name: &str| cmp.orderings.iter().find(|o| o.0 == name).unwrap().1;
-    let (coarse, inter, seq) = (
-        get("coarsest-first"),
-        get("interleaved"),
-        get("sequential"),
-    );
+    let (coarse, inter, seq) = (get("coarsest-first"), get("interleaved"), get("sequential"));
     assert!(coarse < inter, "{coarse} !< {inter}");
     assert!(inter < seq, "{inter} !< {seq}");
     // every ordering is far below the full depth: the character is cheap
@@ -483,7 +478,11 @@ fn the_golden_ratio_is_the_worst_approximable_geometry() {
         assert!(g.max_phase_error > 0.0);
 
         // every other tested irrational is approximated at least as well
-        for x in [2f64.sqrt().fract(), std::f64::consts::PI.fract(), 3f64.sqrt().fract()] {
+        for x in [
+            2f64.sqrt().fract(),
+            std::f64::consts::PI.fract(),
+            3f64.sqrt().fract(),
+        ] {
             let o = geometry_radix(&[x], budget).unwrap();
             let oq = o.radix.modulus() as f64;
             assert!(

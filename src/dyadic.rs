@@ -412,8 +412,7 @@ pub fn dyadic_cone(
         let s = &backward[col];
         let mut acc = C64::new(0.0, 0.0);
         let mut weighted = 0.0f64;
-        let evaluate_two_sided =
-            cfg.two_sided_max_terms == 0 || s.len() <= cfg.two_sided_max_terms;
+        let evaluate_two_sided = cfg.two_sided_max_terms == 0 || s.len() <= cfg.two_sided_max_terms;
         for (key, c) in s.terms() {
             let e = pauli_on_state(state, key)?;
             acc += c * e;
@@ -479,7 +478,9 @@ pub fn dyadic_cone(
             // The front's advance across this node, in qubits: the
             // future's reach grows as the walk runs backward, so this is
             // how far it moved while crossing the node's own gates.
-            let advance = future[a].count_ones().saturating_sub(future[b].count_ones()) as usize;
+            let advance = future[a]
+                .count_ones()
+                .saturating_sub(future[b].count_ones()) as usize;
             nodes.push(Node {
                 level,
                 index,
@@ -558,4 +559,3 @@ pub fn prune_two_sided(
     }
     Ok((kept, dropped, spent))
 }
-

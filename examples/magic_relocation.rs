@@ -253,7 +253,11 @@ fn main() -> Result<()> {
     println!("  h* <= #H structurally and magic enters only by obstructing the");
     println!("  elimination of variables the Hadamards already made.\n");
     let skel = skeleton(8, 4, 11);
-    let hs = skel.ops().iter().filter(|o| matches!(o, Op::Named { name, .. } if name == "h")).count();
+    let hs = skel
+        .ops()
+        .iter()
+        .filter(|o| matches!(o, Op::Named { name, .. } if name == "h"))
+        .count();
     println!("   n=8, {hs} Hadamards held byte-identical across every row");
     println!("      t    h*    h*/#H    h*/t");
     for t in [1usize, 4, 16, 64] {
@@ -272,7 +276,11 @@ fn main() -> Result<()> {
     println!("      n     #H     h*    h*/n");
     for n in [8usize, 32, 128] {
         let sk = skeleton(n, 2, 11);
-        let hg = sk.ops().iter().filter(|o| matches!(o, Op::Named { name, .. } if name == "h")).count();
+        let hg = sk
+            .ops()
+            .iter()
+            .filter(|o| matches!(o, Op::Named { name, .. } if name == "h"))
+            .count();
         let h = pathsum::operator(&with_magic(&sk, n, 5))?.internal_vars();
         println!("   {n:5} {hg:6} {h:6}   {:.3}", h as f64 / n as f64);
     }

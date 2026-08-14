@@ -195,16 +195,24 @@ impl Line {
 pub fn debug_transport(x: u64, z: u64, steps: &[CliffordStep]) -> (u64, u64, bool) {
     let mut line = Line::identity();
     for i in 0..64 {
-        if x >> i & 1 == 1 { line.x.set(i); }
-        if z >> i & 1 == 1 { line.z.set(i); }
+        if x >> i & 1 == 1 {
+            line.x.set(i);
+        }
+        if z >> i & 1 == 1 {
+            line.z.set(i);
+        }
     }
     let before = line.x.and(&line.z).count() as u32;
     let out = line.transport(steps);
     let after = out.x.and(&out.z).count() as u32;
     let mut xo = 0u64;
     let mut zo = 0u64;
-    for i in out.x.iter() { xo |= 1 << i; }
-    for i in out.z.iter() { zo |= 1 << i; }
+    for i in out.x.iter() {
+        xo |= 1 << i;
+    }
+    for i in out.z.iter() {
+        zo |= 1 << i;
+    }
     // undo the raw-convention correction to recover the Hermitian sign
     let neg = (out.quarters + 4 - (after + 4 - before % 4) % 4) % 4 == 2;
     (xo, zo, neg)
@@ -258,7 +266,6 @@ impl UpEmbedding {
     pub fn steps(&self) -> &[CliffordStep] {
         &self.steps
     }
-
 }
 
 /// Re-express a Clifford+T circuit one dimension up.
@@ -293,9 +300,9 @@ pub fn gadgetize(circuit: &Circuit<C64>) -> Result<UpEmbedding> {
     }
 
     let magic = |steps: &mut Vec<CliffordStep>,
-                     ancillas: &mut Vec<Ancilla>,
-                     q: usize,
-                     dagger: bool|
+                 ancillas: &mut Vec<Ancilla>,
+                 q: usize,
+                 dagger: bool|
      -> Result<()> {
         let wire = data + ancillas.len();
         steps.push(CliffordStep::Cx(q, wire));

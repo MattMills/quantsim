@@ -360,9 +360,7 @@ mod tests {
         let mut s = BraidedState::new(qubits).unwrap();
         let count = Realization::Majorana.generator_count(qubits);
         for k in 0..steps {
-            let (g, targets) = Realization::Majorana
-                .local_gate(k % count, qubits)
-                .unwrap();
+            let (g, targets) = Realization::Majorana.local_gate(k % count, qubits).unwrap();
             s.apply(&g, &targets).unwrap();
         }
         s
@@ -372,7 +370,11 @@ mod tests {
     fn a_braid_circuit_is_free_at_widths_no_dense_matrix_reaches() {
         for qubits in [8usize, 20, 40] {
             let s = braid_run(qubits, 400);
-            assert!(s.is_pure_braid(), "{qubits} qubits: {} escapes", s.escapes());
+            assert!(
+                s.is_pure_braid(),
+                "{qubits} qubits: {} escapes",
+                s.escapes()
+            );
             assert_eq!(
                 s.stored_support(),
                 1,

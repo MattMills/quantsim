@@ -80,7 +80,11 @@ fn a_preparation_circuit_really_makes_the_state_its_generators_describe() {
         let frame = DecouplingFrame::from_steps(steps, n);
         let stab = frame.input_stabilizer();
         let gens = stab.block_generators((1u64 << n) - 1);
-        assert_eq!(gens.len(), n, "seed {seed}: a full-width group has n generators");
+        assert_eq!(
+            gens.len(),
+            n,
+            "seed {seed}: a full-width group has n generators"
+        );
 
         let prep = preparation(&gens, n).unwrap();
         let mut state = DenseState::<C64>::new(n).unwrap();
@@ -96,7 +100,9 @@ fn a_preparation_circuit_really_makes_the_state_its_generators_describe() {
                 })
                 .collect();
             let want = if g.negative { -1.0 } else { 1.0 };
-            let got = pauli_expectation(&state as &dyn Backend<C64>, &ops).unwrap().re;
+            let got = pauli_expectation(&state as &dyn Backend<C64>, &ops)
+                .unwrap()
+                .re;
             assert!(
                 (got - want).abs() < 1e-12,
                 "seed {seed}: generator {g:?} has expectation {got}, wanted {want}"
@@ -216,7 +222,12 @@ fn the_frame_restores_the_gate_widths_the_scrambler_destroyed() {
         );
 
         let frame = decoupling_frame(skey, &scr, n).unwrap();
-        let framed_max = frame.rewrite(&scr).iter().map(|r| r.weight()).max().unwrap();
+        let framed_max = frame
+            .rewrite(&scr)
+            .iter()
+            .map(|r| r.weight())
+            .max()
+            .unwrap();
         assert_eq!(
             framed_max, lab_max,
             "n={n}: the frame should recover the original two-locality, got {framed_max}"
@@ -240,7 +251,11 @@ fn heterogeneous(wide: usize, deep_w: usize, shallow: usize, deep: usize) -> Vec
     }
     for s in 0..deep {
         for q in 0..deep_w - 1 {
-            rots.push(Rotation::rzz(wide + q, wide + q + 1, 0.37 + 0.01 * s as f64));
+            rots.push(Rotation::rzz(
+                wide + q,
+                wide + q + 1,
+                0.37 + 0.01 * s as f64,
+            ));
         }
         for q in 0..deep_w {
             rots.push(Rotation::rx(wide + q, 0.29 + 0.005 * s as f64));
@@ -321,8 +336,18 @@ fn three_representations_agree_where_no_global_state_vector_fits() {
     let d = propagate_blocked(skey, &scr, n, BlockSolver::Dense).unwrap();
     let m = propagate_blocked(skey, &scr, n, BlockSolver::Mps { max_bond: 64 }).unwrap();
 
-    assert!((p.value - d.value).abs() < 1e-11, "{} vs {}", p.value, d.value);
-    assert!((m.value - d.value).abs() < 1e-11, "{} vs {}", m.value, d.value);
+    assert!(
+        (p.value - d.value).abs() < 1e-11,
+        "{} vs {}",
+        p.value,
+        d.value
+    );
+    assert!(
+        (m.value - d.value).abs() < 1e-11,
+        "{} vs {}",
+        m.value,
+        d.value
+    );
     assert_eq!(p.blocks.len(), k);
     assert_eq!(p.widest_block, w);
     // the whole computation held less than a single 24-qubit vector would
@@ -376,11 +401,17 @@ fn an_entangled_framed_input_is_refused_rather_than_multiplied_out() {
             }
             Err(e) => {
                 refused += 1;
-                assert!(!engineered.separable_input, "seed {seed}: refused a separable input");
+                assert!(
+                    !engineered.separable_input,
+                    "seed {seed}: refused a separable input"
+                );
                 assert!(format!("{e}").contains("entangled"), "{e}");
             }
         }
     }
     assert!(refused > 0, "the refusal branch was never exercised");
-    assert!(posed > 0, "the product branch was never exercised: {posed}/{refused}");
+    assert!(
+        posed > 0,
+        "the product branch was never exercised: {posed}/{refused}"
+    );
 }

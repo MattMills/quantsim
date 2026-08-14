@@ -255,7 +255,11 @@ impl Mask {
             return true;
         }
         let rest = i % 64;
-        rest != 0 && self.0.get(full).is_some_and(|w| w & ((1u64 << rest) - 1) != 0)
+        rest != 0
+            && self
+                .0
+                .get(full)
+                .is_some_and(|w| w & ((1u64 << rest) - 1) != 0)
     }
 
     /// Intersection.
@@ -273,7 +277,8 @@ impl Mask {
     pub fn without(&self, other: &Mask) -> Mask {
         let mut out = Mask(Vec::with_capacity(self.0.len()));
         for i in 0..self.0.len() {
-            out.0.push(self.0[i] & !other.0.get(i).copied().unwrap_or(0));
+            out.0
+                .push(self.0[i] & !other.0.get(i).copied().unwrap_or(0));
         }
         out.trim();
         out
@@ -547,7 +552,9 @@ impl PathSum {
                 continue;
             }
             let stall = if !shape_ok {
-                Stall::Shape { degree: worst_degree }
+                Stall::Shape {
+                    degree: worst_degree,
+                }
             } else if let Some(c) = bad_coupling {
                 Stall::Coupling(c)
             } else if (self_c == 0 || self_c == HALF)
@@ -930,7 +937,6 @@ impl PathSum {
         }
         Ok(())
     }
-
 }
 
 // ── reduction ────────────────────────────────────────────────────────
@@ -1008,7 +1014,9 @@ impl PathSum {
             return false;
         };
         let inner = k.and(&internal);
-        let Some(pv) = inner.lowest() else { return false };
+        let Some(pv) = inner.lowest() else {
+            return false;
+        };
         let p = Mask::single(pv);
         let r = k.xor(&p);
         let rest: Vec<Mask> = term.iter().filter(|m| **m != k).cloned().collect();
@@ -1333,8 +1341,6 @@ impl PathSum {
     pub fn phase(&self) -> Turn {
         self.phase
     }
-
-
 
     /// Apply a circuit's gates, optionally inverted.
     pub fn apply_circuit(&mut self, circuit: &Circuit<C64>, dagger: bool) -> Result<()> {

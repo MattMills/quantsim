@@ -44,7 +44,9 @@ fn the_transform_is_its_own_inverse_up_to_scale() {
     let mut rng = Prng::new(3);
     for k in 1..=8usize {
         let n = 1usize << k;
-        let v: Vec<f64> = (0..n).map(|_| (rng.next_u64() % 1000) as f64 - 500.0).collect();
+        let v: Vec<f64> = (0..n)
+            .map(|_| (rng.next_u64() % 1000) as f64 - 500.0)
+            .collect();
         let mut w = v.clone();
         fwht(&mut w);
         fwht(&mut w);
@@ -129,7 +131,10 @@ fn an_unfired_difference_contributes_exactly_zero() {
                 );
             }
         }
-        assert!(unfired > 0, "n={n}: nothing was skipped, so nothing is proved");
+        assert!(
+            unfired > 0,
+            "n={n}: nothing was skipped, so nothing is proved"
+        );
     }
 }
 
@@ -205,11 +210,7 @@ fn the_entanglement_complex_separates_product_from_entangled() {
     let st = sim.run(&ghz(n)).unwrap();
     let cv = CrossView::of(&*st).unwrap();
     let complex = cv.entanglement_complex(1e-9);
-    assert_eq!(
-        complex.len(),
-        n * (n - 1) / 2,
-        "GHZ correlates every pair"
-    );
+    assert_eq!(complex.len(), n * (n - 1) / 2, "GHZ correlates every pair");
     for (_, _, c) in complex {
         assert!((c - 1.0).abs() < 1e-12, "GHZ pairs correlate exactly: {c}");
     }

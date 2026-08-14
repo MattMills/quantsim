@@ -17,11 +17,23 @@ use quantsim::support::Support;
 fn measured_mps(g: &CutGraph, order: &[usize]) -> Result<(usize, usize)> {
     let n = g.sites();
     let mut pos = vec![0usize; n];
-    for (k, &s) in order.iter().enumerate() { pos[s] = k; }
+    for (k, &s) in order.iter().enumerate() {
+        pos[s] = k;
+    }
     let mut c = Circuit::new(n);
-    for q in 0..n { c.gate("h", vec![], vec![q]); }
-    for &(i, j) in g.bonds() { c.gate("cz", vec![], vec![pos[i], pos[j]]); }
-    let mut st = MpsState::<C64>::with_config(n, MpsConfig { max_bond: 1 << 20, trunc_tol: 1e-14 })?;
+    for q in 0..n {
+        c.gate("h", vec![], vec![q]);
+    }
+    for &(i, j) in g.bonds() {
+        c.gate("cz", vec![], vec![pos[i], pos[j]]);
+    }
+    let mut st = MpsState::<C64>::with_config(
+        n,
+        MpsConfig {
+            max_bond: 1 << 20,
+            trunc_tol: 1e-14,
+        },
+    )?;
     let reg = GateRegistry::<C64>::standard();
     for bg in c.bind(&reg)?.gates() {
         match &bg.kernel {
@@ -37,14 +49,20 @@ use quantsim::prelude::*;
 fn sweep(arities: &[usize]) -> Result<(usize, usize, usize, usize, usize, Vec<String>)> {
     let n = arities.len();
     let mut pairs = Vec::new();
-    for i in 0..n { for j in (i+1)..n { pairs.push((i, j)); } }
+    for i in 0..n {
+        for j in (i + 1)..n {
+            pairs.push((i, j));
+        }
+    }
     let (mut cases, mut schur_tight, mut cap_tight, mut char_exact) = (0, 0, 0, 0);
     let mut refined_exact = 0usize;
     let mut failures = Vec::new();
     for mask in 0..1u32 << pairs.len() {
         let mut g = CutGraph::new(arities.to_vec())?;
         for (b, &(i, j)) in pairs.iter().enumerate() {
-            if mask >> b & 1 == 1 { g.bond(i, j)?; }
+            if mask >> b & 1 == 1 {
+                g.bond(i, j)?;
+            }
         }
         for bits in 1..(1u32 << n) - 1 {
             let cut: Support = (0..n).filter(|&i| bits >> i & 1 == 1).collect();
@@ -55,28 +73,55 @@ fn sweep(arities: &[usize]) -> Result<(usize, usize, usize, usize, usize, Vec<St
             assert!(exact as u128 <= schur, "SCHUR VIOLATED");
             assert!(exact as u128 <= cap, "CAPACITY VIOLATED");
             cases += 1;
-            if exact as u128 == schur { schur_tight += 1; }
-            if exact as u128 == cap { cap_tight += 1; }
+            if exact as u128 == schur {
+                schur_tight += 1;
+            }
+            if exact as u128 == cap {
+                cap_tight += 1;
+            }
             let refined = g.predicted_rank(&cut)?;
             assert!(exact as u128 <= refined, "REFINED BOUND VIOLATED: arities {:?} bonds {:?} cut {cut:?}: exact {exact} refined {refined}", arities, g.bonds());
-            if exact as u128 == refined { refined_exact += 1; }
-            else if failures.len() < 8 {
+            if exact as u128 == refined {
+                refined_exact += 1;
+            } else if failures.len() < 8 {
                 failures.push(format!("REFINED  arities {:?} bonds {:?} cut {:?}: exact {} refined {} (cap {} chars {})",
                     arities, g.bonds(), &cut, exact, refined, cap, chars));
             }
-            if exact == chars { char_exact += 1; }
-            else if false {
-                failures.push(format!("arities {:?} bonds {:?} cut {:?}: exact {} chars {} cap {} schur {}",
-                    arities, g.bonds(), &cut, exact, chars, cap, schur));
+            if exact == chars {
+                char_exact += 1;
+            } else if false {
+                failures.push(format!(
+                    "arities {:?} bonds {:?} cut {:?}: exact {} chars {} cap {} schur {}",
+                    arities,
+                    g.bonds(),
+                    &cut,
+                    exact,
+                    chars,
+                    cap,
+                    schur
+                ));
             }
             // matchings should saturate Schur
             if g.is_matching(&cut) && exact as u128 != schur && !g.crossing(&cut).is_empty() {
-                failures.push(format!("MATCHING NOT SATURATING: arities {:?} bonds {:?} cut {:?}: {} vs {}",
-                    arities, g.bonds(), &cut, exact, schur));
+                failures.push(format!(
+                    "MATCHING NOT SATURATING: arities {:?} bonds {:?} cut {:?}: {} vs {}",
+                    arities,
+                    g.bonds(),
+                    &cut,
+                    exact,
+                    schur
+                ));
             }
         }
     }
-    Ok((cases, schur_tight, cap_tight, char_exact, refined_exact, failures))
+    Ok((
+        cases,
+        schur_tight,
+        cap_tight,
+        char_exact,
+        refined_exact,
+        failures,
+    ))
 }
 
 fn main() -> Result<()> {
@@ -89,21 +134,48 @@ fn main() -> Result<()> {
     let mut all_fail = Vec::new();
     for arities in [
         // pairwise coprime
-        vec![2,3,5], vec![3,5,7], vec![2,5,9], vec![2,3,5,7], vec![3,4,5,7], vec![2,9,5,7],
+        vec![2, 3, 5],
+        vec![3, 5, 7],
+        vec![2, 5, 9],
+        vec![2, 3, 5, 7],
+        vec![3, 4, 5, 7],
+        vec![2, 9, 5, 7],
         // sharing a factor somewhere
-        vec![2,3,4], vec![2,3,6], vec![2,4,8], vec![2,3,5,4], vec![2,3,2,3], vec![6,2,3,2],
-        vec![2,2,2,2], vec![3,3,3,3], vec![4,2,2,3],
+        vec![2, 3, 4],
+        vec![2, 3, 6],
+        vec![2, 4, 8],
+        vec![2, 3, 5, 4],
+        vec![2, 3, 2, 3],
+        vec![6, 2, 3, 2],
+        vec![2, 2, 2, 2],
+        vec![3, 3, 3, 3],
+        vec![4, 2, 2, 3],
     ] {
         let (cases, st, ct, ce, re, mut f) = sweep(&arities)?;
-        let coprime = (0..arities.len()).all(|i| (i+1..arities.len()).all(|j| {
-            let (mut a, mut b) = (arities[i], arities[j]);
-            while b != 0 { let t = b; b = a % b; a = t; }
-            a == 1
-        }));
-        println!("   {:14} {cases:6} {:7.0}% {:9.0}% {:10.0}% {:13.0}%   {}",
-            format!("{:?}", arities), 100.0*st as f64/cases as f64, 100.0*ct as f64/cases as f64,
-            100.0*ce as f64/cases as f64, 100.0*re as f64/cases as f64,
-            if coprime { "pairwise coprime" } else { "shares a factor" });
+        let coprime = (0..arities.len()).all(|i| {
+            (i + 1..arities.len()).all(|j| {
+                let (mut a, mut b) = (arities[i], arities[j]);
+                while b != 0 {
+                    let t = b;
+                    b = a % b;
+                    a = t;
+                }
+                a == 1
+            })
+        });
+        println!(
+            "   {:14} {cases:6} {:7.0}% {:9.0}% {:10.0}% {:13.0}%   {}",
+            format!("{:?}", arities),
+            100.0 * st as f64 / cases as f64,
+            100.0 * ct as f64 / cases as f64,
+            100.0 * ce as f64 / cases as f64,
+            100.0 * re as f64 / cases as f64,
+            if coprime {
+                "pairwise coprime"
+            } else {
+                "shares a factor"
+            }
+        );
         all_fail.append(&mut f);
     }
     println!("\n  Site count drives this, not arithmetic: every 3-site row is ~100%");
@@ -115,8 +187,12 @@ fn main() -> Result<()> {
     println!("  It states: \"whether rank = |{{θ(d_A) mod 1}}| holds in full");
     println!("  generality is a named develop item, not yet claimed.\" It does not.");
     println!("  Cases where the character count is NOT the rank:\n");
-    if all_fail.is_empty() { println!("   (none found)"); }
-    for f in all_fail.iter().take(10) { println!("   {f}"); }
+    if all_fail.is_empty() {
+        println!("   (none found)");
+    }
+    for f in all_fail.iter().take(10) {
+        println!("   {f}");
+    }
 
     // the source theory's named cases
     println!("\n  The minimal counterexample is four qubits, bonds (0,1) and (0,2),");
@@ -142,23 +218,37 @@ fn main() -> Result<()> {
         let cut = CutGraph::cut_of(&cut_sites);
         let coprime = {
             let (mut a, mut b) = (arities[0], arities[1]);
-            while b != 0 { let t = b; b = a % b; a = t; }
+            while b != 0 {
+                let t = b;
+                b = a % b;
+                a = t;
+            }
             a == 1
         };
-        println!("   {:11}  exact {:3}  Schur {:3}  {}",
-            format!("{:?}", arities), g.exact_rank(&cut)?, g.schur_bound(&cut),
+        println!(
+            "   {:11}  exact {:3}  Schur {:3}  {}",
+            format!("{:?}", arities),
+            g.exact_rank(&cut)?,
+            g.schur_bound(&cut),
             if g.exact_rank(&cut)? as u128 == g.schur_bound(&cut) {
-                if coprime { "saturates (coprime, CRT)" } else { "saturates (positional)" }
-            } else { "COLLAPSES (divisibility chain)" });
+                if coprime {
+                    "saturates (coprime, CRT)"
+                } else {
+                    "saturates (positional)"
+                }
+            } else {
+                "COLLAPSES (divisibility chain)"
+            }
+        );
     }
     println!();
     println!("── the source theory's worked cases ──\n");
-    let mut g = CutGraph::new(vec![6,2,3])?;
-    g.bond(0,1)?.bond(0,2)?;
+    let mut g = CutGraph::new(vec![6, 2, 3])?;
+    g.bond(0, 1)?.bond(0, 2)?;
     println!("   [6,2,3] bonds 0-1,0-2, cut {{0}}: schur {} cap {} chars {} exact {}  (theory: rank 6, saturates by capacity)",
         g.schur_bound(&CutGraph::cut_of(&[0])), g.capacity_bound(&CutGraph::cut_of(&[0])), g.character_count(&CutGraph::cut_of(&[0]))?, g.exact_rank(&CutGraph::cut_of(&[0]))?);
     let mut g = CutGraph::uniform(4, 2)?;
-    g.bond(0,1)?.bond(1,2)?.bond(2,3)?.bond(3,0)?;
+    g.bond(0, 1)?.bond(1, 2)?.bond(2, 3)?.bond(3, 0)?;
     println!("   qubit 4-cycle, cut {{0,2}}:      schur {} cap {} chars {} exact {}  (theory: 3 against bound 16)",
         g.schur_bound(&CutGraph::cut_of(&[0, 2])), g.capacity_bound(&CutGraph::cut_of(&[0, 2])), g.character_count(&CutGraph::cut_of(&[0, 2]))?, g.exact_rank(&CutGraph::cut_of(&[0, 2]))?);
 
@@ -168,29 +258,42 @@ fn main() -> Result<()> {
     println!("  chain means paying the WORST one — that is the cutwidth, and");
     println!("  d^cutwidth is the bond dimension an MPS is forced to. Checked");
     println!("  against quantsim's own MpsState:\n");
-    println!("   geometry              sites   cutwidth   edge bound   GF(2) exact   measured   swaps");
+    println!(
+        "   geometry              sites   cutwidth   edge bound   GF(2) exact   measured   swaps"
+    );
     let mut rows: Vec<(String, CutGraph, Vec<usize>)> = Vec::new();
     for n in [4usize, 8, 12] {
-        let g = CutGraph::chain(n, 2)?; let o = g.natural_order();
+        let g = CutGraph::chain(n, 2)?;
+        let o = g.natural_order();
         rows.push((format!("chain({n})"), g, o));
     }
     for n in [4usize, 8] {
-        let g = CutGraph::ring(n, 2)?; let o = g.natural_order();
+        let g = CutGraph::ring(n, 2)?;
+        let o = g.natural_order();
         rows.push((format!("ring({n})"), g, o));
     }
     for k in [2usize, 4, 8] {
-        let g = CutGraph::bundle(k, 4, 2)?; let o = g.natural_order();
+        let g = CutGraph::bundle(k, 4, 2)?;
+        let o = g.natural_order();
         rows.push((format!("bundle({k} strands)"), g, o));
     }
-    for (r, c) in [(2usize,3usize),(2,5),(3,3),(3,4),(4,4)] {
+    for (r, c) in [(2usize, 3usize), (2, 5), (3, 3), (3, 4), (4, 4)] {
         let g = CutGraph::weave(r, c, 2)?;
         let o = CutGraph::weave_order(r, c);
         rows.push((format!("weave({r}x{c})"), g, o));
     }
     for (label, g, order) in rows {
         let (meas, swaps) = measured_mps(&g, &order)?;
-        println!("   {:22}{:5} {:10} {:12} {:13} {:9} {:7}", label, g.sites(),
-            g.cutwidth(&order), g.mps_bond_bound(&order), g.qubit_bond_exact(&order)?, meas, swaps);
+        println!(
+            "   {:22}{:5} {:10} {:12} {:13} {:9} {:7}",
+            label,
+            g.sites(),
+            g.cutwidth(&order),
+            g.mps_bond_bound(&order),
+            g.qubit_bond_exact(&order)?,
+            meas,
+            swaps
+        );
     }
     println!("\n  Three things to read off. First, the THRESHOLD: a bundle stays at");
     println!("  cutwidth 1 for any number of strands — one crossing direction is");
@@ -210,11 +313,17 @@ fn main() -> Result<()> {
     println!("── and the point of a graph-only predictor ──\n");
     let n = 100_000usize;
     let mut chain = CutGraph::uniform(n, 3)?;
-    for q in 0..n - 1 { chain.bond(q, q + 1)?; }
+    for q in 0..n - 1 {
+        chain.bond(q, q + 1)?;
+    }
     let cut: Support = (0..n / 2).collect();
     println!("   a {n}-site qutrit chain, cut in half:");
-    println!("     crossing bonds {}   Schur bound {}   Betti {}",
-        chain.crossing(&cut).len(), chain.schur_bound(&cut), chain.betti());
+    println!(
+        "     crossing bonds {}   Schur bound {}   Betti {}",
+        chain.crossing(&cut).len(),
+        chain.schur_bound(&cut),
+        chain.betti()
+    );
     println!("     sites built 0, amplitudes touched 0, matrix entries 0");
     println!("\n   The exact verifier refuses this, correctly — it would need a");
     println!("   3^50000 matrix. The BOUND does not care: it is the crossing edge");

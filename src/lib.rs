@@ -105,8 +105,8 @@ pub mod pathsum;
 pub mod phase;
 pub mod polarity;
 pub mod qudit;
-pub mod radixweb;
 pub mod query;
+pub mod radixweb;
 pub mod recursive;
 pub mod reflexive;
 pub mod registry;
@@ -138,14 +138,6 @@ pub mod prelude {
         MosaicEvent, MosaicPolicy, MosaicState, MpsConfig, MpsState, PauliString, PhaseFieldState,
         PhysicalOp, Realization, SparseState, Topology, UnfoldProgram, UnfoldStep,
     };
-    pub use crate::braided::{
-        bch_residual, bracket, cayley_ball, commutator_residual, distinct_orbits,
-        fibonacci_generators, free_lie_dim, lyndon_count, lyndon_factorization, majorana_bilinears,
-        majorana_generators, majorana_operators, mat_exp, mutual_encoding, necklace_count,
-        orbit_closure, projective_order, realized_rank, run_path, verify_relations, BraidRelations,
-        BraidWord, FreeWord, LedgerStep, MutualEncoding, OrbitClosure, PeriodicPath,
-        RealizedAlgebra, RecursionLedger, ResidualLaw,
-    };
     pub use crate::blocks::{
         preparation, propagate_blocked, propagate_blocked_with, BlockOutcome, BlockSolver,
         BlockedReport, Preparation,
@@ -154,6 +146,14 @@ pub mod prelude {
         advantage_scan, classify_law, fit_law, resource_profile, select_by_scaling, AxisProbe,
         AxisScan, FamilyScan, Law, LawFit, ResourceProfile, ScalingChoice, ScalingSelection,
         Verdict,
+    };
+    pub use crate::braided::{
+        bch_residual, bracket, cayley_ball, commutator_residual, distinct_orbits,
+        fibonacci_generators, free_lie_dim, lyndon_count, lyndon_factorization, majorana_bilinears,
+        majorana_generators, majorana_operators, mat_exp, mutual_encoding, necklace_count,
+        orbit_closure, projective_order, realized_rank, run_path, verify_relations, BraidRelations,
+        BraidWord, FreeWord, LedgerStep, MutualEncoding, OrbitClosure, PeriodicPath,
+        RealizedAlgebra, RecursionLedger, ResidualLaw,
     };
     pub use crate::causal::{
         backward_cone, causal_diamond, dual_time_amplitude, DiamondReport, DualTimeResolution,
@@ -168,12 +168,12 @@ pub mod prelude {
     pub use crate::conformance::{
         random_registry_circuit, verify_backend, ConformanceConfig, ConformanceReport,
     };
-    pub use crate::crossview::{fwht, fwht_c, CrossView};
-    pub use crate::cut::{CutGraph, MAX_EXACT_DIM, MAX_EXACT_ORDER};
     pub use crate::coupling::{
         coupling_of, decoupling_frame, propagate_engineered, scramble, support_blocks, Coupling,
         DecouplingFrame, EngineeredReport, Stabilizer,
     };
+    pub use crate::crossview::{fwht, fwht_c, CrossView};
+    pub use crate::cut::{CutGraph, MAX_EXACT_DIM, MAX_EXACT_ORDER};
     pub use crate::discovery::{
         discover_stabilizers, stabilizes_state, state_deviation_up_to_phase, verify_transparent,
         Insertion, StabilizerCheck, TransparencyReport,
@@ -191,9 +191,10 @@ pub mod prelude {
         SelectionReport, Workload,
     };
     pub use crate::heisenberg::{
-        auto_cut, cut_sweep, propagate, propagate_basis, propagate_bidirectional, propagate_factored,
-        tfim_energy_basis, tfim_trotter, AxisSpan, BasisReport, FactoredPauliSum, FactoredReport,
-        Forward, Journal, Meeting, PauliSum, Propagation, Rotation, Step, XSpan,
+        auto_cut, cut_sweep, propagate, propagate_basis, propagate_bidirectional,
+        propagate_factored, tfim_energy_basis, tfim_trotter, AxisSpan, BasisReport,
+        FactoredPauliSum, FactoredReport, Forward, Journal, Meeting, PauliSum, Propagation,
+        Rotation, Step, XSpan,
     };
     pub use crate::horizon::{horizon, Horizon, AXES};
     pub use crate::library;
@@ -225,8 +226,8 @@ pub mod prelude {
         DualAlgebraReport, QuditStats, SandwichOp, SandwichTerm,
     };
     pub use crate::reflexive::{
-        deviation, replay, Adaptive, DriveLaw, Emission, Gradient, Program, Proportional, Reflexive,
-        Run, Target,
+        deviation, replay, Adaptive, DriveLaw, Emission, Gradient, Program, Proportional,
+        Reflexive, Run, Target,
     };
     pub use crate::registry::GateRegistry;
     pub use crate::rng::Prng;
