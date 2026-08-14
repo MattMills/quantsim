@@ -167,10 +167,20 @@ host:
   factored backend today — 1.6 KiB at t=32 — composing that with the
   tableau would make the resource cheap to hold *and* consume in the
   same run, collapsing the Upfront/JustInTime gap),
-  **log compaction** (tableau →
-  minimal Clifford circuit synthesis, replacing replay of the full log —
-  measurement repairs now prepend to the log, so long adaptive runs
-  raise its value),
+  **log compaction** (the storage half is done: kernels are interned —
+  each distinct gate matrix stored once and shared across the log —
+  which corrected the frame's log-diluted memory fit from 1.75^n to an
+  honest 1.85^n on random 3n² and flipped Clifford brickwork's memory
+  law from size^2 to constant, 19.3 KiB → 4.8 KiB. The replay half —
+  tableau → minimal Clifford circuit synthesis, replacing replay of the
+  full log — remains, and measurement repairs prepending to the log
+  keep raising its value for long adaptive runs; note synthesis
+  reproduces the tableau only up to global phase, which replay
+  currently preserves exactly),
+  **packed stored state** (the other constant: at saturated support the
+  sparse map's per-entry overhead runs ~6× a flat array — the frame's
+  remaining byte gap to dense on random circuits, 412 KiB vs 64 KiB at
+  n = 12, lives here, not in the log any more),
   **per-factor multi-qubit frames** (frames over a factor's whole region —
   can absorb CX-like inject/remove pairs, making parity signal threads
   representation-free), and **MPS bond gauges** (the tensor-network
