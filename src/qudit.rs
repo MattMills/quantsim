@@ -803,6 +803,22 @@ impl<A: Scalar> Backend<C64> for AlgebraicRegister<A> {
             self.stats.native_site_gates += 1;
             return self.inner.apply_diagonal(&embedded, qubits);
         }
+        // The kernel class must never change the execution class: an
+        // algebra-sector diagonal (a `t` or an `s` the binder recognized)
+        // takes the same sandwich path its matrix form would, counters
+        // included.
+        let algebra_only = qubits.iter().all(|&q| q >= self.site_qubits);
+        if algebra_only && self.sandwich_native && A::DIM <= self.synthesis_dim_cap {
+            let dim = entries.len();
+            let mut data = vec![C64::new(0.0, 0.0); dim * dim];
+            for (i, &z) in entries.iter().enumerate() {
+                data[i * dim + i] = z;
+            }
+            let matrix = GateMatrix::from_vec(dim, data).expect("diagonal embeds as a square");
+            if self.try_sandwich_apply(&matrix, qubits)? {
+                return Ok(());
+            }
+        }
         // Diagonals never mix branches: phase each stored coordinate.
         let kc = 1usize << self.algebra_qubits;
         let gathered = self.gather();
