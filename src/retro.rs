@@ -37,14 +37,48 @@
 //! Transport is Clifford-only and [`compile_clifford`] refuses anything
 //! else by name (a `t` would gadgetize an ancilla — the honest boundary
 //! of exact Pauli-frame retrocorrection).
+//!
+//! One clause the syndrome can never supply: the **sign**. Dynamics
+//! that anticommute with a fault flip its residual to `−P`, and every
+//! generator expectation is blind to that — on hardware the sign is an
+//! unobservable global phase, but a branched record makes slice phases
+//! physical (the clock's phase-faithfulness contract). The record
+//! resolves what the syndrome cannot: each slice must equal its
+//! predecessor pushed through the segment, the last uncorrupted slice
+//! anchors the chain, and one amplitude comparison per slice names the
+//! sign. Syndromes name the correction up to sign; the record's own
+//! consistency names the sign.
+//!
+//! The torus ([`ToricCode`]) is the multi-node currency: `2L²` qubits,
+//! **two** logical wires per physical set, so one transversal CX
+//! between two nodes raises two logical Bell links at once — and a
+//! logical link is a rank-2 Schmidt decomposition across the node cut,
+//! which is exactly what a selector qudit holds: branches that are
+//! *products* of per-node code states, the selector carrying the
+//! entanglement, `log₂(selector rank)` = links.
 
 use crate::backend::{conjugate_by_step, Backend, CliffordStep, PauliString};
 use crate::circuit::Circuit;
+use crate::coupling::Stabilizer;
 use crate::error::{Error, Result};
 use crate::gates::Pauli;
 use crate::registry::GateRegistry;
 use crate::scalar::C64;
 use crate::upembed;
+
+/// What the syndrome and decoding machinery asks of a code: its
+/// generators and where its qubits live. [`SurfaceCode`] and
+/// [`ToricCode`] both answer; everything downstream — [`syndromes`],
+/// [`signature`], [`Decoder`] — is generic over it.
+pub trait Code {
+    /// All stabilizer generators (redundant generators welcome — the
+    /// syndrome just grows a consistent bit).
+    fn generators(&self) -> Vec<PauliString>;
+    /// First register index of this code's qubits.
+    fn offset(&self) -> usize;
+    /// Number of data qubits.
+    fn qubits(&self) -> usize;
+}
 
 /// One rotated surface-code patch: `d²` data qubits starting at
 /// `offset` in the enclosing register.
@@ -189,44 +223,7 @@ impl SurfaceCode {
         if x_bar {
             rows.push(self.logical_x.x);
         }
-        // F2 RREF with the lowest set bit as pivot.
-        let mut reduced: Vec<u64> = Vec::new();
-        for mut row in rows {
-            loop {
-                if row == 0 {
-                    break;
-                }
-                let pivot = row.trailing_zeros();
-                match reduced.iter().position(|&r| r.trailing_zeros() == pivot) {
-                    Some(i) => row ^= reduced[i],
-                    None => {
-                        reduced.push(row);
-                        break;
-                    }
-                }
-            }
-        }
-        // Back-substitute so each pivot appears in exactly one row.
-        for i in 0..reduced.len() {
-            let pivot_bit = 1u64 << reduced[i].trailing_zeros();
-            for j in 0..reduced.len() {
-                if i != j && reduced[j] & pivot_bit != 0 {
-                    reduced[j] ^= reduced[i];
-                }
-            }
-        }
-        let mut c = Circuit::new(num_qubits);
-        for row in reduced {
-            let pivot = row.trailing_zeros() as usize;
-            c.h(pivot);
-            let mut rest = row & !(1u64 << pivot);
-            while rest != 0 {
-                let q = rest.trailing_zeros() as usize;
-                rest &= rest - 1;
-                c.cx(pivot, q);
-            }
-        }
-        c
+        css_encoder(rows, num_qubits)
     }
 
     /// Transversal CX onto another patch: physical `CX(self_q → other_q)`
@@ -243,6 +240,197 @@ impl SurfaceCode {
         }
         Ok(())
     }
+}
+
+impl Code for SurfaceCode {
+    fn generators(&self) -> Vec<PauliString> {
+        SurfaceCode::generators(self)
+    }
+    fn offset(&self) -> usize {
+        self.offset
+    }
+    fn qubits(&self) -> usize {
+        SurfaceCode::qubits(self)
+    }
+}
+
+/// The toric code on an `L × L` torus: `2L²` qubits on edges, every
+/// vertex an X-check and every face a Z-check (one of each redundant),
+/// so **two** logical qubits survive — the two non-contractible cycle
+/// pairs of the torus. One physical set, two logical wires: the node
+/// currency of a logical network.
+///
+/// Edge indexing at `offset`: the horizontal edge east of vertex
+/// `(r, c)` is `offset + 2(rL + c)`, the vertical edge south of it is
+/// `offset + 2(rL + c) + 1`.
+#[derive(Clone, Debug)]
+pub struct ToricCode {
+    l: usize,
+    offset: usize,
+    x_gens: Vec<PauliString>,
+    z_gens: Vec<PauliString>,
+    logical_x: [PauliString; 2],
+    logical_z: [PauliString; 2],
+}
+
+impl ToricCode {
+    /// The `L × L` toric code (`L ≥ 2`) at qubit `offset`.
+    pub fn new(l: usize, offset: usize) -> Result<Self> {
+        if l < 2 {
+            return Err(Error::InvalidState(format!(
+                "toric code: side must be ≥ 2, got {l}"
+            )));
+        }
+        if offset + 2 * l * l > 64 {
+            return Err(Error::InvalidState(format!(
+                "toric code: patch [{offset}, {}) exceeds the 64-qubit Pauli mask",
+                offset + 2 * l * l
+            )));
+        }
+        let h = |r: usize, c: usize| -> u64 { 1u64 << (offset + 2 * ((r % l) * l + (c % l))) };
+        let v = |r: usize, c: usize| -> u64 { 1u64 << (offset + 2 * ((r % l) * l + (c % l)) + 1) };
+        let mut x_gens = Vec::new();
+        let mut z_gens = Vec::new();
+        for r in 0..l {
+            for c in 0..l {
+                // Vertex (r, c): its east/west horizontal and
+                // south/north vertical edges.
+                x_gens.push(x_string(
+                    h(r, c) | h(r, c + l - 1) | v(r, c) | v(r + l - 1, c),
+                ));
+                // Face south-east of vertex (r, c): its bounding edges.
+                z_gens.push(z_string(h(r, c) | h(r + 1, c) | v(r, c) | v(r, c + 1)));
+            }
+        }
+        // Homology, orientation by orientation: an X̄ is a cycle of the
+        // DUAL lattice (it must cross every plaquette 0 or 2 times; X
+        // commutes with the vertex checks for free), a Z̄ is a cycle of
+        // the direct lattice (even at every vertex; free against the
+        // plaquettes). Pair 1 lives on horizontal edges — Z̄₁ the
+        // direct row-0 cycle, X̄₁ the dual column-0 cut — and pair 2
+        // transposes onto vertical edges. Each pair overlaps in exactly
+        // one edge (anticommutes); everything crosses orientations
+        // disjointly (commutes).
+        let mut x1 = 0u64;
+        let mut z1 = 0u64;
+        let mut x2 = 0u64;
+        let mut z2 = 0u64;
+        for k in 0..l {
+            z1 |= h(0, k);
+            x1 |= h(k, 0);
+            z2 |= v(k, 0);
+            x2 |= v(0, k);
+        }
+        Ok(ToricCode {
+            l,
+            offset,
+            x_gens,
+            z_gens,
+            logical_x: [x_string(x1), x_string(x2)],
+            logical_z: [z_string(z1), z_string(z2)],
+        })
+    }
+
+    /// Torus side; the code distance is `L`.
+    pub fn side(&self) -> usize {
+        self.l
+    }
+
+    /// Logical X̄ᵢ for `i ∈ {0, 1}`.
+    pub fn logical_x(&self, i: usize) -> PauliString {
+        self.logical_x[i]
+    }
+
+    /// Logical Z̄ᵢ for `i ∈ {0, 1}`.
+    pub fn logical_z(&self, i: usize) -> PauliString {
+        self.logical_z[i]
+    }
+
+    /// The encoding circuit from `|0…0⟩`: `|0̄0̄⟩`, with `plus[i]`
+    /// selecting `|+̄⟩` for logical `i` (the CSS construction over the
+    /// vertex generators extended by the chosen X̄s).
+    pub fn encoder(&self, num_qubits: usize, plus: [bool; 2]) -> Circuit<C64> {
+        let mut rows: Vec<u64> = self.x_gens.iter().map(|g| g.x).collect();
+        for (i, &p) in plus.iter().enumerate() {
+            if p {
+                rows.push(self.logical_x[i].x);
+            }
+        }
+        css_encoder(rows, num_qubits)
+    }
+
+    /// Transversal CX onto another torus: pairwise physical CX, which
+    /// is the logical CX on **both** logical wires at once — one
+    /// physical operation, two network links.
+    pub fn transversal_cx(&self, other: &ToricCode, c: &mut Circuit<C64>) -> Result<()> {
+        if self.l != other.l {
+            return Err(Error::InvalidState(format!(
+                "transversal cx: sides differ ({} vs {})",
+                self.l, other.l
+            )));
+        }
+        for q in 0..self.qubits() {
+            c.cx(self.offset + q, other.offset + q);
+        }
+        Ok(())
+    }
+}
+
+impl Code for ToricCode {
+    fn generators(&self) -> Vec<PauliString> {
+        let mut all = self.x_gens.clone();
+        all.extend(self.z_gens.iter().copied());
+        all
+    }
+    fn offset(&self) -> usize {
+        self.offset
+    }
+    fn qubits(&self) -> usize {
+        2 * self.l * self.l
+    }
+}
+
+/// CSS preparation by F2 row reduction: bring the X-type support rows
+/// to reduced echelon form (dependent rows fall out on their own);
+/// each surviving row with pivot `p` and rest `R` becomes `H(p)` then
+/// `CX(p → r)` for `r ∈ R`.
+fn css_encoder(rows: Vec<u64>, num_qubits: usize) -> Circuit<C64> {
+    let mut reduced: Vec<u64> = Vec::new();
+    for mut row in rows {
+        loop {
+            if row == 0 {
+                break;
+            }
+            let pivot = row.trailing_zeros();
+            match reduced.iter().position(|&r| r.trailing_zeros() == pivot) {
+                Some(i) => row ^= reduced[i],
+                None => {
+                    reduced.push(row);
+                    break;
+                }
+            }
+        }
+    }
+    for i in 0..reduced.len() {
+        let pivot_bit = 1u64 << reduced[i].trailing_zeros();
+        for j in 0..reduced.len() {
+            if i != j && reduced[j] & pivot_bit != 0 {
+                reduced[j] ^= reduced[i];
+            }
+        }
+    }
+    let mut c = Circuit::new(num_qubits);
+    for row in reduced {
+        let pivot = row.trailing_zeros() as usize;
+        c.h(pivot);
+        let mut rest = row & !(1u64 << pivot);
+        while rest != 0 {
+            let q = rest.trailing_zeros() as usize;
+            rest &= rest - 1;
+            c.cx(pivot, q);
+        }
+    }
+    c
 }
 
 /// A Pauli mask pair as per-qubit observable ops for
@@ -269,7 +457,7 @@ fn ops_of(p: PauliString) -> Vec<(usize, Pauli)> {
 /// Every generator's expectation on `state` — deterministic `±1` for a
 /// state that is one Pauli away from the code space. The simulator's
 /// syndrome extraction: no ancillas, no randomness, nothing disturbed.
-pub fn syndromes(state: &dyn Backend<C64>, code: &SurfaceCode) -> Result<Vec<f64>> {
+pub fn syndromes(state: &dyn Backend<C64>, code: &impl Code) -> Result<Vec<f64>> {
     code.generators()
         .iter()
         .map(|g| Ok(crate::backend::pauli_expectation(state, &ops_of(*g))?.re))
@@ -280,7 +468,7 @@ pub fn syndromes(state: &dyn Backend<C64>, code: &SurfaceCode) -> Result<Vec<f64
 /// refusing (by value) any expectation that is not within `tol` of
 /// `±1` — a state that is not one Pauli off the code space is not a
 /// syndrome, and this instrument will not round it into one.
-pub fn syndrome_bits(state: &dyn Backend<C64>, code: &SurfaceCode, tol: f64) -> Result<Vec<bool>> {
+pub fn syndrome_bits(state: &dyn Backend<C64>, code: &impl Code, tol: f64) -> Result<Vec<bool>> {
     syndromes(state, code)?
         .into_iter()
         .map(|s| {
@@ -302,7 +490,7 @@ pub fn syndrome_bits(state: &dyn Backend<C64>, code: &SurfaceCode, tol: f64) -> 
 /// generator, set where the string anticommutes. This is the
 /// *prediction* half of the module — computable from the string alone,
 /// before any state is read.
-pub fn signature(code: &SurfaceCode, p: PauliString) -> Vec<bool> {
+pub fn signature(code: &impl Code, p: PauliString) -> Vec<bool> {
     code.generators()
         .iter()
         .map(|g| !g.commutes_with(p))
@@ -311,46 +499,68 @@ pub fn signature(code: &SurfaceCode, p: PauliString) -> Vec<bool> {
 
 /// A lookup decoder whose table is measured from the code itself:
 /// every weight-1 Pauli on the patch, enumerated through
-/// [`signature`] and inverted. Complete for single faults (weight 1 ≤
-/// `(d−1)/2`); anything outside the table is refused by name.
+/// [`signature`] and inverted — and the decoder **knows the difference
+/// between degeneracy and ambiguity**. Two faults sharing a signature
+/// whose product lies in the stabilizer group are one correction
+/// (either restores exactly); two faults whose product is a *logical*
+/// poison that signature, and decoding it refuses by name — that is
+/// what running out of distance actually means, stated instead of
+/// guessed through.
 pub struct Decoder {
-    table: Vec<(Vec<bool>, PauliString)>,
+    table: Vec<(Vec<bool>, Option<PauliString>)>,
 }
 
 impl Decoder {
-    /// Build the measured table for one patch.
-    pub fn new(code: &SurfaceCode) -> Self {
-        let mut table = Vec::new();
+    /// Build the measured table for one code.
+    pub fn new(code: &impl Code) -> Self {
+        let group = Stabilizer::new(code.generators());
+        let mut table: Vec<(Vec<bool>, Option<PauliString>)> = Vec::new();
         for q in 0..code.qubits() {
-            let bit = 1u64 << (code.offset + q);
-            for p in [x_string(bit), z_string(bit), {
+            let bit = 1u64 << (code.offset() + q);
+            for p in [
+                x_string(bit),
+                z_string(bit),
                 PauliString {
                     x: bit,
                     z: bit,
                     negative: false,
-                }
-            }] {
+                },
+            ] {
                 let sig = signature(code, p);
-                if sig.iter().any(|&b| b) && !table.iter().any(|(s, _)| *s == sig) {
-                    table.push((sig, p));
+                if sig.iter().all(|&b| !b) {
+                    continue;
+                }
+                match table.iter_mut().find(|(s, _)| *s == sig) {
+                    None => table.push((sig, Some(p))),
+                    Some((_, entry)) => {
+                        if let Some(prior) = entry {
+                            // Same signature: degenerate only if the
+                            // difference is a stabilizer element.
+                            let product = (p.x ^ prior.x, p.z ^ prior.z);
+                            if group.expectation(product) == 0.0 {
+                                *entry = None; // a logical separates them
+                            }
+                        }
+                    }
                 }
             }
         }
         Decoder { table }
     }
 
-    /// Distinct correctable syndrome signatures in the table.
+    /// Unambiguously correctable syndrome signatures in the table.
     pub fn len(&self) -> usize {
-        self.table.len()
+        self.table.iter().filter(|(_, e)| e.is_some()).count()
     }
 
-    /// Whether the table is empty (it never is for a valid patch).
+    /// Whether the table is empty (it never is for a valid code).
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
 
-    /// The correction for a syndrome, or a loud refusal for a syndrome
-    /// beyond the table — never a guess.
+    /// The correction for a syndrome; a loud refusal for a syndrome
+    /// beyond the table, and a *different* loud refusal for one the
+    /// code's distance cannot disambiguate — never a guess either way.
     pub fn decode(&self, syndrome: &[bool]) -> Result<PauliString> {
         if syndrome.iter().all(|&b| !b) {
             return Ok(PauliString {
@@ -359,18 +569,22 @@ impl Decoder {
                 negative: false,
             });
         }
-        self.table
-            .iter()
-            .find(|(s, _)| s == syndrome)
-            .map(|&(_, p)| p)
-            .ok_or_else(|| {
-                Error::InvalidState(
-                    "decode: syndrome outside the weight-1 table — the fault \
-                     exceeds what distance and this decoder certify; refused \
-                     rather than guessed"
-                        .into(),
-                )
-            })
+        match self.table.iter().find(|(s, _)| s == syndrome) {
+            Some((_, Some(p))) => Ok(*p),
+            Some((_, None)) => Err(Error::InvalidState(
+                "decode: this syndrome is logically ambiguous at this \
+                 distance — two faults separated by a logical operator \
+                 produce it, and a guess would silently rewrite the \
+                 logical state; refused"
+                    .into(),
+            )),
+            None => Err(Error::InvalidState(
+                "decode: syndrome outside the weight-1 table — the fault \
+                 exceeds what distance and this decoder certify; refused \
+                 rather than guessed"
+                    .into(),
+            )),
+        }
     }
 }
 

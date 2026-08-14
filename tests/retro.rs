@@ -367,3 +367,346 @@ fn one_reading_at_the_end_of_the_record_repairs_every_slice() {
         other => panic!("expected the shared-wall refusal, got {other:?}"),
     }
 }
+
+// ── the torus: two logical wires per physical set ────────────────────
+
+#[test]
+fn the_torus_carries_two_logical_qubits_and_knows_its_distance() {
+    let reg = GateRegistry::<C64>::standard();
+    for l in [2usize, 3] {
+        let t = ToricCode::new(l, 0).unwrap();
+        let gens = quantsim::retro::Code::generators(&t);
+        for (i, a) in gens.iter().enumerate() {
+            for b in gens.iter().skip(i + 1) {
+                assert!(a.commutes_with(*b), "L={l}: generators commute");
+            }
+        }
+        assert_eq!(
+            Stabilizer::new(gens.clone()).rank(),
+            2 * l * l - 2,
+            "L={l}: one redundant check per type → k = 2"
+        );
+        for i in 0..2 {
+            for g in &gens {
+                assert!(g.commutes_with(t.logical_x(i)) && g.commutes_with(t.logical_z(i)));
+            }
+            assert!(!t.logical_x(i).commutes_with(t.logical_z(i)));
+            assert!(t.logical_x(i).commutes_with(t.logical_z(1 - i)));
+        }
+        // Encoders land in the code space in every basis combination.
+        for plus in [[false, false], [true, false], [true, true]] {
+            let mut s = SparseState::<C64>::new(t.qubits()).unwrap();
+            run(&t.encoder(t.qubits(), plus), &mut s, &reg);
+            for v in syndromes(&s, &t).unwrap() {
+                assert!((v - 1.0).abs() < 1e-9, "L={l} {plus:?}");
+            }
+            for (i, &in_plus) in plus.iter().enumerate() {
+                let logical = if in_plus {
+                    t.logical_x(i)
+                } else {
+                    t.logical_z(i)
+                };
+                assert!((exp_of(&s, logical) - 1.0).abs() < 1e-9);
+            }
+        }
+    }
+
+    // The decoder measures the distance dichotomy itself. At L = 2
+    // every weight-1 X and Z fault is LOGICALLY ambiguous — two faults
+    // separated by a logical share each signature — and the decoder
+    // refuses them by name: distance 2 detects and never corrects.
+    // The Y faults decode: their X- and Z-side collisions are each
+    // stabilizer-degenerate, so the combination is invisible.
+    let t2 = ToricCode::new(2, 0).unwrap();
+    let dec2 = Decoder::new(&t2);
+    for q in 0..t2.qubits() {
+        let bit = 1u64 << q;
+        for p in [pauli(bit, 0), pauli(0, bit)] {
+            match dec2.decode(&signature(&t2, p)) {
+                Err(Error::InvalidState(msg)) => {
+                    assert!(msg.contains("ambiguous"), "{msg}")
+                }
+                other => panic!("L=2 weight-1 X/Z must be ambiguous, got {other:?}"),
+            }
+        }
+        assert!(dec2.decode(&signature(&t2, pauli(bit, bit))).is_ok());
+    }
+    // At L = 3 every weight-1 fault decodes.
+    let t3 = ToricCode::new(3, 0).unwrap();
+    let dec3 = Decoder::new(&t3);
+    for q in 0..t3.qubits() {
+        let bit = 1u64 << q;
+        for p in [pauli(bit, 0), pauli(0, bit), pauli(bit, bit)] {
+            assert!(dec3.decode(&signature(&t3, p)).is_ok());
+        }
+    }
+}
+
+#[test]
+fn the_selector_qudit_carries_the_logical_network() {
+    // Two toric nodes, one transversal CX: TWO logical Bell links from
+    // one physical operation. The same state, two ways: flat (physical
+    // entanglement across the node cut) and Schmidt-branched (each
+    // branch a PRODUCT of per-node code states, the selector carrying
+    // the links). They agree amplitude for amplitude; the selector's
+    // Schmidt rank is 2^links; and each mosaic branch holds the nodes
+    // as separate regions because no branch circuit ever crosses the
+    // cut.
+    let reg = GateRegistry::<C64>::standard();
+    let a = ToricCode::new(2, 0).unwrap();
+    let b = ToricCode::new(2, 8).unwrap();
+    let map: Vec<usize> = (0..16).collect();
+
+    let mut flat_c = a.encoder(16, [true, true]);
+    flat_c.append(&b.encoder(16, [false, false]), &map);
+    a.transversal_cx(&b, &mut flat_c).unwrap();
+    let mut flat = SparseState::<C64>::new(16).unwrap();
+    run(&flat_c, &mut flat, &reg);
+    for i in 0..2 {
+        let xx = a.logical_x(i).times(b.logical_x(i)).unwrap();
+        let zz = a.logical_z(i).times(b.logical_z(i)).unwrap();
+        assert!((exp_of(&flat, xx) - 1.0).abs() < 1e-9, "link {i} X̄X̄");
+        assert!((exp_of(&flat, zz) - 1.0).abs() < 1e-9, "link {i} Z̄Z̄");
+    }
+
+    let w = c64(0.5, 0.0);
+    let mut branches: Vec<(usize, C64, Box<dyn Backend<C64>>)> = Vec::new();
+    for sel in 0..4usize {
+        let mut c = a.encoder(16, [false, false]);
+        c.append(&b.encoder(16, [false, false]), &map);
+        for (i, on) in [(0usize, sel & 1 != 0), (1, sel & 2 != 0)] {
+            if on {
+                for code in [&a, &b] {
+                    let mut rest = code.logical_x(i).x;
+                    while rest != 0 {
+                        let q = rest.trailing_zeros() as usize;
+                        rest &= rest - 1;
+                        c.gate("x", vec![], vec![q]);
+                    }
+                }
+            }
+        }
+        let mut m = quantsim::backend::MosaicState::<C64>::new(16).unwrap();
+        run(&c, &mut m, &reg);
+        assert_eq!(
+            m.layout().len(),
+            2,
+            "branch {sel}: the node cut is never crossed"
+        );
+        branches.push((sel, w, Box::new(m)));
+    }
+    let net = BranchedRegister::from_branches(16, 4, branches).unwrap();
+    assert_eq!(net.selector_schmidt_rank().unwrap(), 4, "2^(two links)");
+    let mut dev = 0.0f64;
+    for i in 0..(1u64 << 16) {
+        let d = flat.amplitude(i) - net.amplitude(i);
+        dev = dev.max((d.re * d.re + d.im * d.im).sqrt());
+    }
+    assert!(dev < 1e-12, "the selector holds the links exactly: {dev:e}");
+    assert!(
+        net.memory_bytes() < flat.memory_bytes(),
+        "products under a selector undercut the flat cut: {} vs {}",
+        net.memory_bytes(),
+        flat.memory_bytes()
+    );
+}
+
+#[test]
+fn distributed_retrocorrection_across_the_logical_network() {
+    // Sequential separate physical sets with integrated logical
+    // entanglement, and a fault repaired across the whole record. Four
+    // slices: encode both nodes; transversal CX (both links up);
+    // node-A logical era; node-B logical era — after the link is made,
+    // NO segment touches both nodes. A Y fault lands on node B after
+    // slice 2. The end-of-record syndromes fire on node B ONLY (node-
+    // local dynamics kept it node-local), node B's own decoder names
+    // the fault, the correction transports back through the B-era
+    // untouched by node A's — and every slice returns to the clean
+    // history with the link signs' bookkeeping intact.
+    let reg = GateRegistry::<C64>::standard();
+    let a = ToricCode::new(2, 0).unwrap();
+    let b = ToricCode::new(2, 8).unwrap();
+    let map: Vec<usize> = (0..16).collect();
+
+    let mut seg1 = a.encoder(16, [true, true]);
+    seg1.append(&b.encoder(16, [false, false]), &map);
+    let mut seg2: Circuit<C64> = Circuit::new(16);
+    a.transversal_cx(&b, &mut seg2).unwrap();
+    let mut seg3: Circuit<C64> = Circuit::new(16); // node A only: X̄₀ᴬ
+    {
+        let mut rest = a.logical_x(0).x;
+        while rest != 0 {
+            let q = rest.trailing_zeros() as usize;
+            rest &= rest - 1;
+            seg3.gate("x", vec![], vec![q]);
+        }
+    }
+    let mut seg4: Circuit<C64> = Circuit::new(16); // node B only: Z̄₁ᴮ
+    {
+        let mut rest = b.logical_z(1).z;
+        while rest != 0 {
+            let q = rest.trailing_zeros() as usize;
+            rest &= rest - 1;
+            seg4.gate("z", vec![], vec![q]);
+        }
+    }
+    let segs = [&seg1, &seg2, &seg3, &seg4];
+    let steps4 = compile_clifford(&seg4).unwrap();
+
+    let err = pauli(1 << 9, 1 << 9); // Y on a node-B edge
+    let lived = |upto: usize| -> Box<dyn Backend<C64>> {
+        let mut s = SparseState::<C64>::new(16).unwrap();
+        for (i, seg) in segs.iter().enumerate() {
+            if i < upto {
+                run(seg, &mut s, &reg);
+            }
+            if i == 1 && upto > 2 {
+                apply_pauli(&mut s, err, &reg).unwrap();
+            }
+        }
+        Box::new(s)
+    };
+    let clean = |upto: usize| -> SparseState<C64> {
+        let mut s = SparseState::<C64>::new(16).unwrap();
+        for (i, seg) in segs.iter().enumerate() {
+            if i < upto {
+                run(seg, &mut s, &reg);
+            }
+        }
+        s
+    };
+    let w = c64(0.5, 0.0);
+    let mut record = BranchedRegister::from_branches(
+        16,
+        4,
+        vec![
+            (0, w, lived(1)),
+            (1, w, lived(2)),
+            (2, w, lived(3)),
+            (3, w, lived(4)),
+        ],
+    )
+    .unwrap();
+
+    let unflag = |record: &BranchedRegister<C64>, sel: usize| -> SparseState<C64> {
+        let mut entries = Vec::new();
+        for i in 0..(1u64 << 16) {
+            let amp = record.flagged_amplitude(sel, i);
+            if amp.abs_sqr() > 0.0 {
+                entries.push((i, amp * c64(2.0, 0.0)));
+            }
+        }
+        let mut s = SparseState::<C64>::new(16).unwrap();
+        s.load(&entries).unwrap();
+        s
+    };
+
+    // Node A's syndromes are clean at the end — the fault stayed
+    // node-local because nothing after the link touched both nodes.
+    let end = unflag(&record, 3);
+    let syn_a = syndrome_bits(&end, &a, 1e-9).unwrap();
+    let syn_b = syndrome_bits(&end, &b, 1e-9).unwrap();
+    assert!(syn_a.iter().all(|&s| !s), "node A never saw the fault");
+    assert!(syn_b.iter().any(|&s| s));
+
+    // Node B's own decoder names it (a Y at L = 2 decodes), and the
+    // correction transported back through node B's era is what acts on
+    // slice 3; node A's era never enters the transport at all.
+    let c_end = Decoder::new(&b).decode(&syn_b).unwrap();
+    let c_past = transport_back(c_end, std::slice::from_ref(&steps4));
+    record.apply_at(3, |s| apply_pauli(s, c_end, &reg)).unwrap();
+    record
+        .apply_at(2, |s| apply_pauli(s, c_past, &reg))
+        .unwrap();
+
+    // Syndromes never see a sign: the B-era's Z̄₁ᴮ shares an edge with
+    // the fault, so conjugation flipped the residual to −Y — and the
+    // sign-blind correction leaves a global −1 on the repaired slices,
+    // which a branched record makes PHYSICAL (the phase-faithfulness
+    // contract). The syndrome cannot know the sign; the record can:
+    // each slice must equal its predecessor pushed through the
+    // segment, the uncorrupted slice anchors the chain, and one
+    // amplitude comparison per slice names the sign.
+    for sel in [2usize, 3] {
+        let mut pushed = unflag(&record, sel - 1);
+        run(segs[sel], &mut pushed, &reg);
+        let slice = unflag(&record, sel);
+        let mut probe: Option<(u64, C64)> = None;
+        pushed.for_each_nonzero(&mut |i, amp| {
+            if probe.is_none() {
+                probe = Some((i, amp));
+            }
+        });
+        let (i, want) = probe.unwrap();
+        let got = slice.amplitude(i);
+        if (want + got).norm() < (want - got).norm() {
+            record
+                .apply_at(sel, |s| {
+                    let m = c64(-1.0, 0.0);
+                    s.apply_diagonal(&[m, m], &[0])
+                })
+                .unwrap();
+        }
+    }
+
+    for sel in 0..4usize {
+        let want = clean(sel + 1);
+        let mut dev = 0.0f64;
+        want.for_each_nonzero(&mut |i, w_amp| {
+            let got = record.flagged_amplitude(sel, i) * c64(2.0, 0.0);
+            let d = w_amp - got;
+            dev = dev.max((d.re * d.re + d.im * d.im).sqrt());
+        });
+        assert!(dev < 1e-12, "slice {sel} restored: {dev:e}");
+    }
+
+    // The links' sign history across the record, exactly as the
+    // logical algebra demands: X̄₀ᴬ flips link 0's Z̄Z̄ at slice 3,
+    // Z̄₁ᴮ flips link 1's X̄X̄ at slice 4, products stay +1.
+    let link = |i: usize| {
+        (
+            a.logical_x(i).times(b.logical_x(i)).unwrap(),
+            a.logical_z(i).times(b.logical_z(i)).unwrap(),
+        )
+    };
+    let (xx0, zz0) = link(0);
+    let (xx1, zz1) = link(1);
+    for (sel, e_xx0, e_zz0, e_xx1, e_zz1) in [
+        (1usize, 1.0, 1.0, 1.0, 1.0),
+        (2, 1.0, -1.0, 1.0, 1.0),
+        (3, 1.0, -1.0, -1.0, 1.0),
+    ] {
+        let s = unflag(&record, sel);
+        assert!(
+            (exp_of(&s, xx0) - e_xx0).abs() < 1e-9,
+            "slice {sel} link0 X̄X̄"
+        );
+        assert!(
+            (exp_of(&s, zz0) - e_zz0).abs() < 1e-9,
+            "slice {sel} link0 Z̄Z̄"
+        );
+        assert!(
+            (exp_of(&s, xx1) - e_xx1).abs() < 1e-9,
+            "slice {sel} link1 X̄X̄"
+        );
+        assert!(
+            (exp_of(&s, zz1) - e_zz1).abs() < 1e-9,
+            "slice {sel} link1 Z̄Z̄"
+        );
+    }
+
+    // And the honest wall: the same fault landing BEFORE the link
+    // spreads through the CX onto node A as a weight-1 Z — which at
+    // distance 2 is logically ambiguous, and node A's decoder refuses
+    // to guess.
+    let mut early = SparseState::<C64>::new(16).unwrap();
+    run(&seg1, &mut early, &reg);
+    apply_pauli(&mut early, err, &reg).unwrap();
+    run(&seg2, &mut early, &reg);
+    let syn_a_early = syndrome_bits(&early, &a, 1e-9).unwrap();
+    assert!(syn_a_early.iter().any(|&s| s), "the CX spread it to node A");
+    match Decoder::new(&a).decode(&syn_a_early) {
+        Err(Error::InvalidState(msg)) => assert!(msg.contains("ambiguous"), "{msg}"),
+        other => panic!("distance 2 must refuse the spread fault, got {other:?}"),
+    }
+}

@@ -461,12 +461,38 @@ reading exactly, one decode yields weight-1 corrections per patch, and
 every slice returns to the clean history at machine epsilon — with the
 logical entanglement graph's sign history (+1/+1 → −1/−1 across the
 logical Pauli era) intact. 77 KB for the 3-slice 18-qubit record
-against 4.2 MB per dense slice. Remaining rungs: weight->1 decoding
-(matching over the syndrome graph), measurement-conditioned records
-(retrocorrection through frame repairs), constraint-driven compression
-(the code space as a backend bet: 2^k logical amplitudes for a 2^n
-register), and the non-Clifford boundary (transport through magic via
-the up-embedding's ancilla frame rather than refusal).
+against 4.2 MB per dense slice.
+
+The toric extension — SHIPPED — makes it a **logical network**: the
+`ToricCode` carries two logical wires per physical set (the torus's
+non-contractible cycle pairs, X̄ on dual cuts and Z̄ on direct cycles),
+one transversal CX between nodes raises two logical Bell links at
+once, and the links live in the selector: the Schmidt-branched form
+(four mosaic branches, each a *product* of per-node code states, the
+node cut never crossed) equals the flat state to 1.4e-17 with selector
+rank 4 = 2^links at 4.7 KB against 12.8 KB flat sparse and 1 MB dense.
+Sequential node-local eras keep faults node-local — the end-of-record
+syndromes fire on the faulted node only, its own decoder names the
+correction, transport through the other node's era is the identity —
+and the four-slice record restores to exactly 0e0. Two honest clauses
+came out of the build, both now instrumented: the decoder distinguishes
+**degeneracy from logical ambiguity** by asking the stabilizer group
+(at L = 2 every weight-1 X/Z syndrome is ambiguous and refused by name
+— distance 2 detects, never corrects — while every weight-1 Y decodes),
+and syndromes are **sign-blind** (dynamics anticommuting with a fault
+flip its residual to −P, physical in a branched record) — resolved by
+the record itself: each slice must equal its predecessor pushed through
+the segment, the last clean slice anchors the chain, one amplitude
+comparison names the sign.
+
+Remaining rungs: weight->1 decoding (matching over the syndrome graph),
+measurement-conditioned records (retrocorrection through frame
+repairs), constraint-driven compression (the code space as a backend
+bet: 2^k logical amplitudes for a 2^n register), multi-node scaling
+past two tori (the selector's branch count is 2^links — the next
+representation question is holding the LINK GRAPH rather than its
+Schmidt expansion), and the non-Clifford boundary (transport through
+magic via the up-embedding's ancilla frame rather than refusal).
 
 ## Further non-Cayley–Dickson explorations
 
