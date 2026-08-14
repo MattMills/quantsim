@@ -189,7 +189,10 @@ fn most_stalls_are_structural_and_every_alignment_stall_is_an_eighth() {
         }
     }
     let share = align as f64 / total as f64;
-    println!("alignment stalls: {align} of {total} ({:.0}%)", 100.0 * share);
+    println!(
+        "alignment stalls: {align} of {total} ({:.0}%)",
+        100.0 * share
+    );
     assert!(total > 50, "corpus too small to conclude from");
     assert!(
         align > 0,
@@ -338,7 +341,10 @@ fn every_structural_stall_sits_in_the_cubic_stratum() {
                 cubic_stalls += 1;
             }
         }
-        println!("   {label:16} h*={:3}  cubic stalls={cubic_stalls}", ps.internal_vars());
+        println!(
+            "   {label:16} h*={:3}  cubic stalls={cubic_stalls}",
+            ps.internal_vars()
+        );
     }
 }
 
@@ -418,7 +424,11 @@ fn the_cubic_stratum_is_sparse_so_reaching_it_is_not_a_storage_problem() {
 /// substitution target, not the scalar algebra and not the signature.
 #[test]
 fn cubic_stalls_are_half_turn_constraints_rather_than_gauss_sums() {
-    for (label, n) in [("cubic n=16", 16usize), ("cubic n=32", 32), ("cubic n=64", 64)] {
+    for (label, n) in [
+        ("cubic n=16", 16usize),
+        ("cubic n=32", 32),
+        ("cubic n=64", 64),
+    ] {
         let ps = pathsum::operator(&cubic(n, 2, 11)).unwrap();
         let mut seen = 0usize;
         for (v, st) in ps.stall_census() {

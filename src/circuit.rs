@@ -201,6 +201,15 @@ impl<S: Scalar> Circuit<S> {
 
     /// Resolve names against `registry`, validate every operation, and
     /// produce a runnable [`BoundCircuit`].
+    ///
+    /// A resolved matrix whose off-diagonal entries are all **exactly**
+    /// zero binds as a [`GateKernel::Diagonal`] — `rz`, `p`, `s`, `t`,
+    /// `z`, `cp`, `cz`, … reach every backend's `O(states)` diagonal
+    /// path instead of arriving as dense matrices each backend must
+    /// re-inspect (or fail to). Exact zeros only: nothing float-fuzzy
+    /// changes class, and a backend that overrides neither path sees
+    /// identical numerics (the default `apply_diagonal` materializes
+    /// the same matrix back).
     pub fn bind(&self, registry: &GateRegistry<S>) -> Result<BoundCircuit<S>> {
         let mut gates = Vec::with_capacity(self.ops.len());
         for op in &self.ops {
@@ -230,7 +239,7 @@ impl<S: Scalar> Circuit<S> {
                     debug_assert_eq!(matrix.dim(), 1 << qubits.len());
                     gates.push(BoundGate {
                         label: name.clone(),
-                        kernel: GateKernel::Matrix(matrix),
+                        kernel: kernel_of(matrix),
                         qubits: qubits.clone(),
                     });
                 }
@@ -255,7 +264,7 @@ impl<S: Scalar> Circuit<S> {
                     }
                     gates.push(BoundGate {
                         label: label.clone(),
-                        kernel: GateKernel::Matrix(matrix.clone()),
+                        kernel: kernel_of(matrix.clone()),
                         qubits: qubits.clone(),
                     });
                 }
@@ -327,6 +336,20 @@ pub enum GateKernel<S: Scalar> {
     Matrix(GateMatrix<S>),
     /// A diagonal unitary, stored as its `2^k` diagonal entries.
     Diagonal(Vec<S>),
+}
+
+/// The kernel a matrix binds to: [`GateKernel::Diagonal`] when every
+/// off-diagonal entry is exactly zero, [`GateKernel::Matrix`] otherwise.
+fn kernel_of<S: Scalar>(matrix: GateMatrix<S>) -> GateKernel<S> {
+    let d = matrix.dim();
+    for r in 0..d {
+        for c in 0..d {
+            if r != c && matrix.get(r, c).abs_sqr() != 0.0 {
+                return GateKernel::Matrix(matrix);
+            }
+        }
+    }
+    GateKernel::Diagonal((0..d).map(|i| matrix.get(i, i)).collect())
 }
 
 /// A resolved gate application: kernel plus targets.

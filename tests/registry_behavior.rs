@@ -231,7 +231,10 @@ fn research_backend_via_registry() {
         .unwrap();
     assert_eq!(
         sim.backends().names(),
-        vec!["adaptive", "bundle", "counting", "dense", "factored", "mera", "mps", "sparse"]
+        vec![
+            "adaptive", "branched", "bulk", "bundle", "counting", "dense", "factored", "mera",
+            "mosaic", "mps", "sparse"
+        ]
     );
 
     let c = library::ghz(4);

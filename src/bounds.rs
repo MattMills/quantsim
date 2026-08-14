@@ -31,7 +31,7 @@
 
 use crate::backend::{
     Backend, CliffordFramedState, FactoredState, InterferenceState, MeraConfig, MeraState,
-    MpsConfig, MpsState, SparseState,
+    MosaicState, MpsConfig, MpsState, SparseState,
 };
 use crate::circuit::Circuit;
 use crate::error::Result;
@@ -335,6 +335,58 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
             (
                 format!("peak block {}", s.peak_block_elements()),
                 s.is_exact(),
+            )
+        },
+    ));
+    // The bulk register is deliberately NOT an axis yet: its dyadic
+    // capacity tree makes memory a sawtooth in width (skewed cuts at
+    // non-power-of-two sizes cap rank by the short side — measured:
+    // ~2× under mera at n = 10, 12 while equal at n = 8), and a
+    // four-point fit across an octave misclassifies the sawtooth as
+    // polynomial, leaving certification to the contention-fragile time
+    // law. The axis needs octave-aligned sampling first — see the
+    // roadmap's clock/bulk rungs.
+    //
+    // The mosaic: the multi-representation register from singleton
+    // regions, structure sculpted by the gates, merges chosen from
+    // measured predictions. Its assumption is that the circuit's
+    // portions each fit *some* lens in its policy (sparse/dense by
+    // default) — the composite axis whose certification would mean a
+    // family every fixed lens loses is still classically held by the
+    // partition. No capacity tree, so no sawtooth: the fit sees the
+    // policy's honest costs.
+    axes.push(probe(
+        "mosaic",
+        MosaicState::<C64>::new,
+        circuit,
+        &reg,
+        |s: &MosaicState<C64>| {
+            (
+                format!("{} regions, {} events", s.layout().len(), s.events().len()),
+                true,
+            )
+        },
+    ));
+    // The branched clock register, flat: one MOSAIC branch under a
+    // trivial selector, so on a circuit family the expectation is
+    // mosaic-plus-bookkeeping — the composition measured, not assumed:
+    // representation election below the selector, qudit dimension above
+    // it. The selector's own payoff (branch sharing across scale
+    // histories) has no gate-level trigger here; that measurement lives
+    // in the clock suite and the scale_time example.
+    axes.push(probe(
+        "branched",
+        |n| crate::clock::BranchedRegister::<C64>::new(n, 1),
+        circuit,
+        &reg,
+        |s: &crate::clock::BranchedRegister<C64>| {
+            (
+                format!(
+                    "{} branches, {} unique states",
+                    s.branch_count(),
+                    s.unique_state_count()
+                ),
+                true,
             )
         },
     ));

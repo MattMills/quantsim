@@ -219,6 +219,111 @@ pub fn qft<S: Scalar>(n: usize) -> Circuit<S> {
     c
 }
 
+/// The banded (approximate) QFT: [`qft`] with every controlled phase
+/// below `min_angle` pruned — exactly the tail-radix web
+/// [`radixweb::phase_web`](crate::radixweb::phase_web) derives and
+/// verifies for the binary profile, whose measured bandwidth saturates
+/// at fixed `min_angle` while the full triangle grows quadratically
+/// (Coppersmith's construction, from radix arithmetic). `min_angle =
+/// 0.0` is the exact [`qft`], op for op; the surviving `cp` count
+/// equals the web's off-diagonal coupling count, asserted in the
+/// radixweb suite.
+pub fn aqft<S: Scalar>(n: usize, min_angle: f64) -> Circuit<S> {
+    let mut c = Circuit::new(n);
+    for j in (0..n).rev() {
+        c.h(j);
+        for m in (0..j).rev() {
+            let angle = std::f64::consts::PI / (1u64 << (j - m)) as f64;
+            if angle < min_angle {
+                break; // angles only shrink as the control recedes
+            }
+            c.cp(m, j, angle);
+        }
+    }
+    for k in 0..n / 2 {
+        c.swap(k, n - 1 - k);
+    }
+    c
+}
+
+/// Nearest-neighbour variant of [`random_circuit`]: the same
+/// twelve-gate pool with every two-qubit operand pair drawn adjacent —
+/// the connectivity dial. Interaction range flipped the IQP verdict
+/// (`iqp(n, 2n, long_range)`); this applies the same knob to the
+/// universal pool.
+pub fn random_nn<S: Scalar>(n: usize, gates: usize, seed: u64) -> Circuit<S> {
+    assert!(n >= 2, "random_nn needs at least two qubits");
+    let mut rng = Prng::new(seed);
+    let mut c = Circuit::new(n);
+    let tau = std::f64::consts::TAU;
+    for _ in 0..gates {
+        let q0 = (rng.next_u64() % (n as u64 - 1)) as usize;
+        let q1 = q0 + 1;
+        match rng.next_u64() % 12 {
+            0 => c.h(q0),
+            1 => c.x(q0),
+            2 => c.t(q0),
+            3 => c.s(q0),
+            4 => c.sx(q0),
+            5 => c.rx(q0, rng.next_f64() * tau),
+            6 => c.ry(q0, rng.next_f64() * tau),
+            7 => c.rz(q0, rng.next_f64() * tau),
+            8 => c.cx(q0, q1),
+            9 => c.cz(q0, q1),
+            10 => c.cp(q0, q1, rng.next_f64() * tau),
+            _ => c.swap(q0, q1),
+        };
+    }
+    c
+}
+
+/// Dyadic-angle variant of [`random_circuit`]: the same pool and
+/// connectivity with every parametric angle snapped to the dyadic grid
+/// `π·k/32` — the angle dial that turns "refused by name" into
+/// "measurable" for the exact-fragment instruments (the path sum, the
+/// `D[ω]` ring, up-embedded readout).
+pub fn random_dyadic<S: Scalar>(n: usize, gates: usize, seed: u64) -> Circuit<S> {
+    assert!(n >= 2, "random_dyadic needs at least two qubits");
+    let mut rng = Prng::new(seed);
+    let mut c = Circuit::new(n);
+    let dyadic = |rng: &mut Prng| std::f64::consts::PI * (rng.next_u64() % 64) as f64 / 32.0;
+    for _ in 0..gates {
+        let mut pick_q = || (rng.next_u64() % n as u64) as usize;
+        let q0 = pick_q();
+        let mut q1 = pick_q();
+        while q1 == q0 {
+            q1 = pick_q();
+        }
+        match rng.next_u64() % 12 {
+            0 => c.h(q0),
+            1 => c.x(q0),
+            2 => c.t(q0),
+            3 => c.s(q0),
+            4 => c.sx(q0),
+            5 => {
+                let a = dyadic(&mut rng);
+                c.rx(q0, a)
+            }
+            6 => {
+                let a = dyadic(&mut rng);
+                c.ry(q0, a)
+            }
+            7 => {
+                let a = dyadic(&mut rng);
+                c.rz(q0, a)
+            }
+            8 => c.cx(q0, q1),
+            9 => c.cz(q0, q1),
+            10 => {
+                let a = dyadic(&mut rng);
+                c.cp(q0, q1, a)
+            }
+            _ => c.swap(q0, q1),
+        };
+    }
+    c
+}
+
 /// Inverse quantum Fourier transform on `n` qubits: the exact op-by-op
 /// reversal of [`qft`] with negated phases.
 pub fn iqft<S: Scalar>(n: usize) -> Circuit<S> {

@@ -207,12 +207,7 @@ impl FreeWord {
     /// The inverse word.
     pub fn inverse(&self) -> Self {
         FreeWord {
-            letters: self
-                .letters
-                .iter()
-                .rev()
-                .map(|&(i, s)| (i, -s))
-                .collect(),
+            letters: self.letters.iter().rev().map(|&(i, s)| (i, -s)).collect(),
         }
     }
 
@@ -275,9 +270,9 @@ impl BraidWord {
     pub fn from_letters(strands: usize, letters: &[i32]) -> Result<Self> {
         let mut w = BraidWord::identity(strands)?;
         for &l in letters {
-            let i = (l.unsigned_abs() as usize).checked_sub(1).ok_or_else(|| {
-                Error::InvalidState("braid letter 0 is not a generator".into())
-            })?;
+            let i = (l.unsigned_abs() as usize)
+                .checked_sub(1)
+                .ok_or_else(|| Error::InvalidState("braid letter 0 is not a generator".into()))?;
             w.push(i, if l < 0 { -1 } else { 1 })?;
         }
         Ok(w)
@@ -976,7 +971,11 @@ pub fn majorana_generators(strands: usize) -> Result<Vec<GateMatrix<C64>>> {
         let mut m = GateMatrix::<C64>::zeros(d)?;
         for r in 0..d {
             for c in 0..d {
-                let extra = if r == c { C64::new(1.0, 0.0) } else { C64::new(0.0, 0.0) };
+                let extra = if r == c {
+                    C64::new(1.0, 0.0)
+                } else {
+                    C64::new(0.0, 0.0)
+                };
                 m.set(r, c, (extra + prod.get(r, c)) * C64::new(inv, 0.0));
             }
         }
@@ -1192,10 +1191,7 @@ fn phase_free_key(m: &GateMatrix<C64>) -> Vec<i64> {
     data.iter()
         .flat_map(|z| {
             let w = *z / pivot;
-            [
-                (w.re * scale).round() as i64,
-                (w.im * scale).round() as i64,
-            ]
+            [(w.re * scale).round() as i64, (w.im * scale).round() as i64]
         })
         .collect()
 }
@@ -1321,12 +1317,7 @@ pub fn orbit_closure(
 /// the small matrices the bracket measurements use.
 pub fn mat_exp(m: &GateMatrix<C64>) -> Result<GateMatrix<C64>> {
     let d = m.dim();
-    let norm = m
-        .data()
-        .iter()
-        .map(|z| z.norm())
-        .fold(0.0f64, f64::max)
-        * d as f64;
+    let norm = m.data().iter().map(|z| z.norm()).fold(0.0f64, f64::max) * d as f64;
     let squarings = ((norm.max(1e-300)).log2().ceil().max(0.0) as u32 + 1).min(60);
     let scale = C64::new(1.0 / (1u64 << squarings) as f64, 0.0);
     let mut a = GateMatrix::<C64>::zeros(d)?;
@@ -1506,11 +1497,7 @@ pub struct RealizedAlgebra {
 fn real_rank(mats: &[GateMatrix<C64>], tol: f64) -> usize {
     let mut basis: Vec<Vec<f64>> = Vec::new();
     for m in mats {
-        let mut v: Vec<f64> = m
-            .data()
-            .iter()
-            .flat_map(|z| [z.re, z.im])
-            .collect();
+        let mut v: Vec<f64> = m.data().iter().flat_map(|z| [z.re, z.im]).collect();
         for b in &basis {
             let dot: f64 = v.iter().zip(b).map(|(x, y)| x * y).sum();
             for (x, y) in v.iter_mut().zip(b) {
@@ -1743,10 +1730,7 @@ fn state_key(state: &DenseState<C64>) -> Vec<i64> {
     amps.iter()
         .flat_map(|z| {
             let w = *z / pivot;
-            [
-                (w.re * scale).round() as i64,
-                (w.im * scale).round() as i64,
-            ]
+            [(w.re * scale).round() as i64, (w.im * scale).round() as i64]
         })
         .collect()
 }
@@ -1769,16 +1753,10 @@ mod tests {
     fn artin_action_satisfies_the_braid_relations() {
         for n in 3..=5 {
             for i in 0..n - 2 {
-                let a = BraidWord::from_letters(
-                    n,
-                    &[i as i32 + 1, i as i32 + 2, i as i32 + 1],
-                )
-                .unwrap();
-                let b = BraidWord::from_letters(
-                    n,
-                    &[i as i32 + 2, i as i32 + 1, i as i32 + 2],
-                )
-                .unwrap();
+                let a = BraidWord::from_letters(n, &[i as i32 + 1, i as i32 + 2, i as i32 + 1])
+                    .unwrap();
+                let b = BraidWord::from_letters(n, &[i as i32 + 2, i as i32 + 1, i as i32 + 2])
+                    .unwrap();
                 assert!(a.equals(&b), "braid relation failed at {i} on {n} strands");
             }
         }

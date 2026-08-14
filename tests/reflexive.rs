@@ -40,7 +40,11 @@ fn prepared(n: usize, reg: &GateRegistry<C64>, seed: u64) -> DenseState<C64> {
         c.gate("ry", vec![0.3 + 0.1 * (rng.next_u64() % 7) as f64], vec![q]);
     }
     for q in 0..n {
-        c.gate("rz", vec![0.2 + 0.13 * (rng.next_u64() % 9) as f64], vec![q]);
+        c.gate(
+            "rz",
+            vec![0.2 + 0.13 * (rng.next_u64() % 9) as f64],
+            vec![q],
+        );
     }
     for q in 0..n - 1 {
         c.gate("cx", vec![], vec![q, q + 1]);
@@ -277,8 +281,7 @@ fn a_controller_with_no_patience_pins_its_own_gain_at_the_floor() {
     let target = Target::x(0b000_0011, 0.5);
 
     let mut m = Reflexive::from_state(prepared(n, &reg, 1));
-    let mut impatient =
-        Adaptive::new(Gradient::new(target, 0.4), 0.2, 0.5, 4.0).with_patience(0);
+    let mut impatient = Adaptive::new(Gradient::new(target, 0.4), 0.2, 0.5, 4.0).with_patience(0);
     m.run(&mut impatient, &lay, 40).unwrap();
 
     let mut m = Reflexive::from_state(prepared(n, &reg, 1));
@@ -333,7 +336,10 @@ fn the_drive_lives_on_half_the_harmonics_by_a_selection_rule() {
     }
     let live = jac.iter().filter(|g| g.abs() > 1e-12).count();
     assert!(live <= 1 << (n - 1), "{live} exceeds the parity half");
-    assert!(live > 0, "nothing was steerable, so the test proves nothing");
+    assert!(
+        live > 0,
+        "nothing was steerable, so the test proves nothing"
+    );
 }
 
 // ── the same loop, with no register at all ───────────────────────────
@@ -459,7 +465,10 @@ fn the_register_free_jacobian_matches_finite_differences() {
         let (base, _) = p.expectation(&target, &exact());
         let candidates = p.harmonics();
         let (jac, _) = p.jacobian(&target, &candidates, &exact());
-        assert!(!jac.is_empty(), "nothing was steerable, so nothing is proved");
+        assert!(
+            !jac.is_empty(),
+            "nothing was steerable, so nothing is proved"
+        );
 
         let eps = 1e-6;
         for (s, g) in &jac {

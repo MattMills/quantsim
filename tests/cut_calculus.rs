@@ -3,8 +3,8 @@
 //! settles — in the negative.
 
 use quantsim::cut::CutGraph;
-use quantsim::support::Support;
 use quantsim::prelude::*;
+use quantsim::support::Support;
 
 /// Every graph on these arities, and every non-trivial cut.
 fn sweep(arities: &[usize], mut f: impl FnMut(&CutGraph, &Support)) {
@@ -125,7 +125,10 @@ fn a_wide_shared_vertex_saturates_and_a_narrow_one_collapses() {
     // disjointness, is the constraint.
     let mut wide = CutGraph::new(vec![6, 2, 3]).unwrap();
     wide.bond(0, 1).unwrap().bond(0, 2).unwrap();
-    assert!(!wide.is_matching(&CutGraph::cut_of(&[0])), "the bonds share site 0");
+    assert!(
+        !wide.is_matching(&CutGraph::cut_of(&[0])),
+        "the bonds share site 0"
+    );
     assert_eq!(
         wide.exact_rank(&CutGraph::cut_of(&[0])).unwrap(),
         6,
@@ -173,12 +176,21 @@ fn the_character_count_formula_is_false() {
     g.bond(0, 1).unwrap().bond(0, 2).unwrap();
     let cut = CutGraph::cut_of(&[1, 2]);
     assert_eq!(g.character_count(&cut).unwrap(), 3);
-    assert_eq!(g.exact_rank(&cut).unwrap(), 2, "the count over-states the rank");
+    assert_eq!(
+        g.exact_rank(&cut).unwrap(),
+        2,
+        "the count over-states the rank"
+    );
 
     // Counting on the other side repairs this one — but not in general.
     // Six distinct rows and six distinct columns, rank 4.
     let mut h = CutGraph::new(vec![2, 3, 2, 3]).unwrap();
-    h.bond(0, 2).unwrap().bond(0, 3).unwrap().bond(1, 2).unwrap();
+    h.bond(0, 2)
+        .unwrap()
+        .bond(0, 3)
+        .unwrap()
+        .bond(1, 2)
+        .unwrap();
     let cut = CutGraph::cut_of(&[0, 1]);
     assert_eq!(h.character_count(&cut).unwrap(), 6);
     assert_eq!(h.character_count(&CutGraph::cut_of(&[2, 3])).unwrap(), 6);
@@ -288,11 +300,22 @@ fn entanglement_onset_is_graph_connectivity() {
 #[test]
 fn the_betti_number_counts_independent_cycles() {
     let mut path = CutGraph::uniform(4, 2).unwrap();
-    path.bond(0, 1).unwrap().bond(1, 2).unwrap().bond(2, 3).unwrap();
+    path.bond(0, 1)
+        .unwrap()
+        .bond(1, 2)
+        .unwrap()
+        .bond(2, 3)
+        .unwrap();
     assert_eq!(path.betti(), 0);
 
     let mut triangle = CutGraph::uniform(3, 2).unwrap();
-    triangle.bond(0, 1).unwrap().bond(1, 2).unwrap().bond(2, 0).unwrap();
+    triangle
+        .bond(0, 1)
+        .unwrap()
+        .bond(1, 2)
+        .unwrap()
+        .bond(2, 0)
+        .unwrap();
     assert_eq!(triangle.betti(), 1);
 
     let mut theta = CutGraph::uniform(4, 2).unwrap();
@@ -335,11 +358,17 @@ fn provisioning_meets_a_demand_or_says_it_cannot() {
 
 #[test]
 fn a_malformed_graph_is_refused() {
-    assert!(CutGraph::new(vec![2, 1, 3]).is_err(), "arity 1 is not a qudit");
+    assert!(
+        CutGraph::new(vec![2, 1, 3]).is_err(),
+        "arity 1 is not a qudit"
+    );
     let mut g = CutGraph::uniform(3, 2).unwrap();
     assert!(g.bond(0, 0).is_err(), "a self-bond is a local phase");
     g.bond(0, 1).unwrap();
-    assert!(g.bond(1, 0).is_err(), "a duplicate bond is a different strength");
+    assert!(
+        g.bond(1, 0).is_err(),
+        "a duplicate bond is a different strength"
+    );
     assert!(g.bond(0, 9).is_err());
 }
 
@@ -437,7 +466,10 @@ fn a_second_transverse_direction_is_exponential_in_the_short_extent() {
         widths.push(g.qubit_bond_exact(&order).unwrap());
     }
     for w in widths.windows(2) {
-        assert!(w[1] > w[0], "the bond must grow with the short extent: {widths:?}");
+        assert!(
+            w[1] > w[0],
+            "the bond must grow with the short extent: {widths:?}"
+        );
     }
 }
 
@@ -451,7 +483,11 @@ fn the_gf2_rank_is_below_the_edge_count_when_crossings_are_dependent() {
     let order = CutGraph::weave_order(2, 3);
     assert_eq!(g.cutwidth(&order), 3, "three edges cross");
     assert_eq!(g.mps_bond_bound(&order), 8, "edge counting says 8");
-    assert_eq!(g.qubit_bond_exact(&order).unwrap(), 4, "the GF(2) rank says 4");
+    assert_eq!(
+        g.qubit_bond_exact(&order).unwrap(),
+        4,
+        "the GF(2) rank says 4"
+    );
     let (measured, _) = measured_mps(&g, &order);
     assert_eq!(measured, 4, "and the MPS agrees with the GF(2) rank");
 

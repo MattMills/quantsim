@@ -130,10 +130,7 @@ fn the_phase_field_axis_certifies_the_iqp_core_and_fails_on_the_full_circuit() {
     let pf = axis(&core, "phase-field");
     // polynomial in BOTH memory and wall-clock — the atlas's own bar
     assert!(
-        matches!(
-            pf.law,
-            Some(Law::Polynomial { .. }) | Some(Law::Constant)
-        ),
+        matches!(pf.law, Some(Law::Polynomial { .. }) | Some(Law::Constant)),
         "phase-field memory on the IQP core: {:?}",
         pf.law
     );
@@ -262,7 +259,10 @@ fn the_braided_footprint_is_flat_in_width_and_the_support_stays_one() {
     for _ in 0..20 {
         fib.apply(&g, &t).unwrap();
     }
-    assert!(fib.is_pure_braid(), "Fibonacci generators are still generators");
+    assert!(
+        fib.is_pure_braid(),
+        "Fibonacci generators are still generators"
+    );
     assert!(BraidedState::with_realization(3, Realization::Fibonacci).is_err());
 }
 
@@ -288,7 +288,10 @@ fn the_phase_field_class_is_exactly_where_it_says_it_is() {
     let mut d = DenseState::<C64>::new(n).unwrap();
     iqp_core(n).bind(&reg).unwrap().run(&mut d).unwrap();
     let dev = max_amplitude_deviation(&s as &dyn Backend<C64>, &d as &dyn Backend<C64>);
-    assert!(dev < 1e-14, "phase-field vs dense on the IQP core: {dev:.3e}");
+    assert!(
+        dev < 1e-14,
+        "phase-field vs dense on the IQP core: {dev:.3e}"
+    );
 
     // one more Hadamard on an already-free qubit leaves the class
     let mut leave: Circuit = Circuit::new(n);
@@ -387,8 +390,22 @@ fn the_heisenberg_query_matches_dense_without_a_state_vector() {
             }
             for q in 0..n {
                 for (p, ops) in [
-                    (PauliString { x: 0, z: 1 << q, negative: false }, vec![(q, Pauli::Z)]),
-                    (PauliString { x: 1 << q, z: 0, negative: false }, vec![(q, Pauli::X)]),
+                    (
+                        PauliString {
+                            x: 0,
+                            z: 1 << q,
+                            negative: false,
+                        },
+                        vec![(q, Pauli::Z)],
+                    ),
+                    (
+                        PauliString {
+                            x: 1 << q,
+                            z: 0,
+                            negative: false,
+                        },
+                        vec![(q, Pauli::X)],
+                    ),
                 ] {
                     let mine = b.expectation(p);
                     // quantized on a stabilizer state: exactly 0 or ±1
@@ -396,8 +413,7 @@ fn the_heisenberg_query_matches_dense_without_a_state_vector() {
                         mine == 0.0 || mine == 1.0 || mine == -1.0,
                         "expectation {mine} is not quantized"
                     );
-                    let reference =
-                        pauli_expectation(&d as &dyn Backend<C64>, &ops).unwrap().re;
+                    let reference = pauli_expectation(&d as &dyn Backend<C64>, &ops).unwrap().re;
                     worst = worst.max((mine - reference).abs());
                     checked += 1;
                 }
@@ -407,7 +423,10 @@ fn the_heisenberg_query_matches_dense_without_a_state_vector() {
         assert_eq!(b.stored_support(), 1);
     }
     assert!(checked >= 400, "only {checked} checks");
-    assert!(worst < 1e-14, "stateless expectation deviated by {worst:.3e}");
+    assert!(
+        worst < 1e-14,
+        "stateless expectation deviated by {worst:.3e}"
+    );
 }
 
 #[test]
@@ -416,7 +435,11 @@ fn the_observable_light_cone_is_ballistic_and_needs_no_state() {
     let n = 63;
     let mut s = BraidedState::new(n).unwrap();
     let centre = 31usize;
-    let z = PauliString { x: 0, z: 1 << centre, negative: false };
+    let z = PauliString {
+        x: 0,
+        z: 1 << centre,
+        negative: false,
+    };
     assert_eq!(s.observable_weight(z), 1);
 
     for t in 1..=12usize {
@@ -499,5 +522,49 @@ fn the_new_representations_take_part_in_backend_selection() {
         "phase-field {} vs dense {} at width 14",
         pf14.memory_bytes,
         de14.memory_bytes
+    );
+}
+
+#[test]
+fn the_phase_field_holds_the_qft_end_to_end() {
+    // The field's bet does not fail on the QFT at all once swap and X
+    // are recognized as the relabelings they are: every cp has a
+    // basis-state control (zero or one monomial each), every h frees a
+    // pinned qubit, the swap layer permutes labels. |0…0⟩ input: zero
+    // monomials — the state IS |+…+⟩ in closed form; a basis input
+    // contributes one monomial per set bit. Dyadic root recognition
+    // carries the π/2^{n−1} angles far past the old 4096 cap: width 20
+    // stays in class where dense would hold 2^20 amplitudes.
+    let s = sim_with_new_backends();
+    for n in [8usize, 12, 16, 20] {
+        let state = s.run_on("phase-field", &library::qft(n)).unwrap();
+        let pf = state.as_any().downcast_ref::<PhaseFieldState>().unwrap();
+        assert!(pf.is_field(), "qft({n}) must stay in the field class");
+        assert_eq!(pf.escapes(), 0, "qft({n}) escaped");
+        assert_eq!(pf.monomials(), Some(0), "qft|0…0⟩ is monomial-free");
+        assert_eq!(pf.free_qubits(), Some(n));
+        assert!(
+            state.memory_bytes() < 2048,
+            "qft({n}) field memory: {} B",
+            state.memory_bytes()
+        );
+    }
+
+    // Verified against dense where dense exists, including the swap
+    // layer and a basis input.
+    let n = 8;
+    let mut basis: Circuit<C64> = Circuit::new(n);
+    basis.x(1).x(4).x(6);
+    basis.append(&library::qft(n), &(0..n).collect::<Vec<_>>());
+    let dense = s.run(&basis).unwrap();
+    let field = s.run_on("phase-field", &basis).unwrap();
+    let pf = field.as_any().downcast_ref::<PhaseFieldState>().unwrap();
+    assert!(pf.is_field(), "basis-input qft must stay in class");
+    let dev = max_amplitude_deviation(dense.as_ref(), field.as_ref());
+    assert!(dev < 1e-9, "field deviates from dense: {dev}");
+    assert!(
+        pf.monomials().unwrap() >= 3,
+        "a basis input carries its phase ramp: {:?}",
+        pf.monomials()
     );
 }

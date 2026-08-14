@@ -417,8 +417,7 @@ fn interaction_range_flips_the_iqp_verdict() {
     match &nn.verdict {
         Verdict::Classical { via } => assert_eq!(
             via.iter().any(|v| v == "mps" || v == "factored"),
-            axis(&nn, "mps").certifies_classical()
-                || axis(&nn, "factored").certifies_classical(),
+            axis(&nn, "mps").certifies_classical() || axis(&nn, "factored").certifies_classical(),
             "the verdict names exactly the axes that certify: {via:?}"
         ),
         v => panic!("{v:?}"),
@@ -427,11 +426,7 @@ fn interaction_range_flips_the_iqp_verdict() {
     // memory ledger is bytes rather than wall-clock, so it is the half of
     // the claim that can be pinned outright.
     assert!(
-        axis(&nn, "mps")
-            .law
-            .as_ref()
-            .unwrap()
-            .is_subexponential(),
+        axis(&nn, "mps").law.as_ref().unwrap().is_subexponential(),
         "nearest-neighbour couplings keep the cut assumption alive: {:?}",
         axis(&nn, "mps").law
     );

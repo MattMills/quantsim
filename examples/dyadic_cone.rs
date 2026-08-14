@@ -53,33 +53,80 @@ fn main() -> Result<()> {
     let c = dyadic::dyadic_cone(obs, &rots, n, &cfg)?;
 
     println!("== a recursive, two-directional, interacting cone ==\n");
-    println!("  n={n}, {} rotations, observable Z_6, bisected {depth} times.", c.gates);
-    println!("  {} nodes: level k holds 2^k segments of {} / 2^k gates each.\n", c.nodes.len(), c.gates);
+    println!(
+        "  n={n}, {} rotations, observable Z_6, bisected {depth} times.",
+        c.gates
+    );
+    println!(
+        "  {} nodes: level k holds 2^k segments of {} / 2^k gates each.\n",
+        c.nodes.len(),
+        c.gates
+    );
 
     println!("  Every node contracts the answer at its OWN midpoint, so the tree");
     println!("  self-checks {} ways rather than one:\n", c.nodes.len());
-    println!("    spread across all {} nodes   {:.3e}", c.nodes.len(), c.value_spread());
-    println!("    the answer itself             {:+.12}\n", c.nodes[0].value);
+    println!(
+        "    spread across all {} nodes   {:.3e}",
+        c.nodes.len(),
+        c.value_spread()
+    );
+    println!(
+        "    the answer itself             {:+.12}\n",
+        c.nodes[0].value
+    );
 
     println!("── what the recursion conserves, and what it resolves ──\n");
     println!("  Children partition their parent's gates exactly. So EVERY additive");
     println!("  quantity is identical at every level — not a result, a check the");
     println!("  recursion performs on itself. If these drift, cells were lost.\n");
-    println!("    level              {}", (0..=depth).map(|l| format!("{l:>6}")).collect::<Vec<_>>().join(""));
-    println!("    segments           {}", (0..=depth).map(|l| format!("{:>6}", 1usize << l)).collect::<Vec<_>>().join(""));
-    println!("    gates per segment  {}", (0..=depth).map(|l| format!("{:>6}", c.gates / (1usize << l))).collect::<Vec<_>>().join(""));
+    println!(
+        "    level              {}",
+        (0..=depth)
+            .map(|l| format!("{l:>6}"))
+            .collect::<Vec<_>>()
+            .join("")
+    );
+    println!(
+        "    segments           {}",
+        (0..=depth)
+            .map(|l| format!("{:>6}", 1usize << l))
+            .collect::<Vec<_>>()
+            .join("")
+    );
+    println!(
+        "    gates per segment  {}",
+        (0..=depth)
+            .map(|l| format!("{:>6}", c.gates / (1usize << l)))
+            .collect::<Vec<_>>()
+            .join("")
+    );
     println!();
-    println!("    live-area density  {}   conserved", row(&c.density_by_level(), 4));
-    println!("    front velocity     {}   conserved", row(&c.velocity_by_level(), 4));
+    println!(
+        "    live-area density  {}   conserved",
+        row(&c.density_by_level(), 4)
+    );
+    println!(
+        "    front velocity     {}   conserved",
+        row(&c.velocity_by_level(), 4)
+    );
     println!();
     println!("  And what a coarse window averages away, a finer one separates. A");
     println!("  long segment holds the front's bursts together with the stretches");
     println!("  where it is saturated and cannot move, so the peak it reports is");
     println!("  too low — and climbs every time the window halves:\n");
-    println!("    PEAK velocity      {}   resolves", row(&c.peak_velocity_by_level(), 4));
-    println!("    mean diamond (q)   {}   resolves", row(&c.mean_diamond_by_level(), 2));
+    println!(
+        "    PEAK velocity      {}   resolves",
+        row(&c.peak_velocity_by_level(), 4)
+    );
+    println!(
+        "    mean diamond (q)   {}   resolves",
+        row(&c.mean_diamond_by_level(), 2)
+    );
     println!();
-    println!("    resolution gain    {:.2}x  — the finest scale against the coarsest", c.resolution_gain());
+    println!(
+        "    resolution gain    {:.2}x  — the finest scale against the coarsest",
+        c.resolution_gain()
+    );
     println!("\n  That is what the recursion is for. The conserved quantities are the");
     println!("  invariants it can be audited against; only the extremal ones carry");
     println!("  information that a single scale did not already have.\n");
@@ -95,8 +142,8 @@ fn main() -> Result<()> {
     for l in 0..=depth {
         let nodes = c.level(l);
         let one: f64 = nodes.iter().map(|x| x.l1).sum::<f64>() / nodes.len() as f64;
-        let two: f64 = nodes.iter().filter_map(|x| x.two_sided_l1).sum::<f64>()
-            / nodes.len() as f64;
+        let two: f64 =
+            nodes.iter().filter_map(|x| x.two_sided_l1).sum::<f64>() / nodes.len() as f64;
         let terms: usize = nodes.iter().map(|x| x.terms).sum::<usize>() / nodes.len();
         println!(
             "    {l:5}   {:5}   {terms:5}   {one:14.4}   {two:9.4}   {:.2}x",
@@ -104,7 +151,11 @@ fn main() -> Result<()> {
             if two > 0.0 { one / two } else { f64::INFINITY }
         );
     }
-    println!("\n    best node {:.2}x, mean {:.2}x\n", c.tightening(), c.mean_tightening());
+    println!(
+        "\n    best node {:.2}x, mean {:.2}x\n",
+        c.tightening(),
+        c.mean_tightening()
+    );
 
     println!("  And it is a bound, not a heuristic. Prune to a budget at the middle");
     println!("  cut, contract what is left, and compare against dense:\n");
@@ -125,17 +176,14 @@ fn main() -> Result<()> {
     let state = &fwd as &dyn Backend<C64>;
     let truth = {
         let d = dense_at(&rots, n)?;
-        (pauli_expectation(&d as &dyn Backend<C64>, &ops_of(obs, n))?
-            / axis_operator_phase(obs))
-        .re
+        (pauli_expectation(&d as &dyn Backend<C64>, &ops_of(obs, n))? / axis_operator_phase(obs)).re
     };
     println!("    budget     kept / total    certified     actual error   inside?");
     for budget in [0.0f64, 1e-4, 1e-3, 1e-2, 1e-1, 0.3] {
         let (kept, dropped, spent) = dyadic::prune_two_sided(&back, state, budget)?;
         let mut acc = C64::new(0.0, 0.0);
         for (key, coeff) in kept.terms() {
-            acc += coeff * (pauli_expectation(state, &ops_of(key, n))?
-                / axis_operator_phase(key));
+            acc += coeff * (pauli_expectation(state, &ops_of(key, n))? / axis_operator_phase(key));
         }
         let actual = (acc.re - truth).abs();
         println!(
@@ -156,7 +204,11 @@ fn main() -> Result<()> {
         let nodes = c.level(l);
         let show = nodes.len().min(4);
         for (i, nd) in nodes.iter().take(show).enumerate() {
-            let tag = if i == 0 { format!("{l:5}") } else { "     ".into() };
+            let tag = if i == 0 {
+                format!("{l:5}")
+            } else {
+                "     ".into()
+            };
             println!(
                 "  {tag}  {:3}   {:4}   {:5}q    {:9}   {:7}   {:5}",
                 nd.index,

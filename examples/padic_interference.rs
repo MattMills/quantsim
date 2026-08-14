@@ -35,7 +35,11 @@ fn main() -> Result<()> {
     println!("            M    err·M²      M    err·M²      M    err·M²");
     for &budget in &[8u64, 32, 128, 512, 2048] {
         let mut cells = String::new();
-        for x in [2f64.sqrt().fract(), std::f64::consts::PI.fract(), phi.fract()] {
+        for x in [
+            2f64.sqrt().fract(),
+            std::f64::consts::PI.fract(),
+            phi.fract(),
+        ] {
             let g = geometry_radix(&[x], budget)?;
             let m = g.radix.modulus() as f64;
             cells += &format!(" {:6} {:9.4}", g.radix.modulus(), g.max_path_error * m * m);
@@ -128,7 +132,10 @@ fn main() -> Result<()> {
 
     println!("\n== which CRT diagonal decides fastest ==\n");
     let cmp = compare_diagonals(&radix, 20_000, 0xC0FFEE);
-    println!("  ordering          mean steps   worst   (full depth {})", cmp.full_depth);
+    println!(
+        "  ordering          mean steps   worst   (full depth {})",
+        cmp.full_depth
+    );
     for (label, mean, worst) in &cmp.orderings {
         println!("  {label:<16}  {mean:10.3}  {worst:6}");
     }

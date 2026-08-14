@@ -322,12 +322,17 @@ fn influence_of(sum: &PauliSum, qubits: usize) -> (Vec<[f64; 3]>, f64) {
     for (key, coeff) in sum.terms() {
         let w = coeff.norm();
         l1 += w;
-        let touched = (key.0 | key.1) & ((1u64 << qubits) - 1).max(if qubits == 64 { u64::MAX } else { 0 });
+        let touched =
+            (key.0 | key.1) & ((1u64 << qubits) - 1).max(if qubits == 64 { u64::MAX } else { 0 });
         let mut bits = touched;
         while bits != 0 {
             let q = bits.trailing_zeros() as usize;
             bits &= bits - 1;
-            for (a, axis) in [(0usize, (1u64 << q, 0u64)), (1, (1 << q, 1 << q)), (2, (0, 1 << q))] {
+            for (a, axis) in [
+                (0usize, (1u64 << q, 0u64)),
+                (1, (1 << q, 1 << q)),
+                (2, (0, 1 << q)),
+            ] {
                 if !commutes(key, axis) {
                     field[q][a] += w;
                 }
@@ -453,14 +458,28 @@ pub fn horizon(
     let mut col = 0usize;
 
     while col < cuts.len() && cuts[col] == 0 {
-        settle(col, state.as_ref(), &cols, qubits, &mut commitment, &mut value)?;
+        settle(
+            col,
+            state.as_ref(),
+            &cols,
+            qubits,
+            &mut commitment,
+            &mut value,
+        )?;
         col += 1;
     }
     for (i, r) in rotations.iter().enumerate() {
         let (m, s) = r.gate()?;
         state.apply(&m, &s)?;
         while col < cuts.len() && cuts[col] == i + 1 {
-            settle(col, state.as_ref(), &cols, qubits, &mut commitment, &mut value)?;
+            settle(
+                col,
+                state.as_ref(),
+                &cols,
+                qubits,
+                &mut commitment,
+                &mut value,
+            )?;
             col += 1;
         }
     }

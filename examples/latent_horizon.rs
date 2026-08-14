@@ -22,7 +22,14 @@ fn draw(h: &Horizon, title: &str, cell: impl Fn(usize, usize) -> f64) {
     println!("  {title}");
     print!("        ");
     for (c, &g) in h.cuts.iter().enumerate() {
-        print!("{}", if c % 4 == 0 { char::from_digit((g * 10 / h.gates.max(1)) as u32 % 10, 10).unwrap() } else { ' ' });
+        print!(
+            "{}",
+            if c % 4 == 0 {
+                char::from_digit((g * 10 / h.gates.max(1)) as u32 % 10, 10).unwrap()
+            } else {
+                ' '
+            }
+        );
     }
     println!("   gate ⟶");
     for q in 0..h.qubits {
@@ -41,7 +48,11 @@ fn bar(v: f64, max: f64, width: usize) -> String {
     } else {
         0
     };
-    format!("{}{}", "█".repeat(n.min(width)), " ".repeat(width - n.min(width)))
+    format!(
+        "{}{}",
+        "█".repeat(n.min(width)),
+        " ".repeat(width - n.min(width))
+    )
 }
 
 fn emit_json(h: &Horizon, truncated: &Horizon) {
@@ -104,10 +115,7 @@ fn emit_json(h: &Horizon, truncated: &Horizon) {
     grid("commitment", &|c, q| h.commitment[c][q], false);
     grid("overlap", &|c, q| h.overlap(c, q), false);
     grid("blame", &|c, q| truncated.blame[c][q], false);
-    println!(
-        "  \"truncatedValue\": [{}]",
-        f(&truncated.value)
-    );
+    println!("  \"truncatedValue\": [{}]", f(&truncated.value));
     println!("}}");
 }
 
@@ -138,32 +146,49 @@ fn main() -> Result<()> {
     }
 
     println!("== the latent past and the latent future, as fields ==\n");
-    println!("  n={n}, {} rotations, observable Z_6, {} cuts sampled, exact.\n", h.gates, h.cuts.len());
+    println!(
+        "  n={n}, {} rotations, observable Z_6, {} cuts sampled, exact.\n",
+        h.gates,
+        h.cuts.len()
+    );
     println!("  A light cone is a SET of cells the answer can reach. The Heisenberg");
     println!("  walk carries more than that: at each cut the observable is a weighted");
     println!("  sum of Paulis, so how much of that weight touches a qubit is a NUMBER.");
     println!("  The cone is only this field's support.\n");
 
-    draw(&h, "latent future — Φ(t,q), the L1 weight that can still feel qubit q", |c, q| {
-        h.influence_max(c, q)
-    });
+    draw(
+        &h,
+        "latent future — Φ(t,q), the L1 weight that can still feel qubit q",
+        |c, q| h.influence_max(c, q),
+    );
     println!();
-    draw(&h, "latent past — r(t,q), the Bloch length the forward state has committed", |c, q| {
-        h.commitment[c][q]
-    });
+    draw(
+        &h,
+        "latent past — r(t,q), the Bloch length the forward state has committed",
+        |c, q| h.commitment[c][q],
+    );
     println!();
-    draw(&h, "their overlap — visible AND committed: what the answer is assembled from", |c, q| {
-        h.overlap(c, q)
-    });
+    draw(
+        &h,
+        "their overlap — visible AND committed: what the answer is assembled from",
+        |c, q| h.overlap(c, q),
+    );
 
     println!("\n  The two run opposite ways in time. The future's field opens backward");
     println!("  from the observable; the past's decays forward from |0..0>, which is");
     println!("  fully committed (every Bloch length exactly 1) and holds nothing");
     println!("  jointly. Their contraction is the answer — and it is the SAME NUMBER");
     println!("  at every cut:\n");
-    println!("    value at each cut, spread {:.2e} across all {} of them",
-        h.value_spread(), h.cuts.len());
-    println!("    first {:.12}   last {:.12}", h.value[0], h.value[h.value.len() - 1]);
+    println!(
+        "    value at each cut, spread {:.2e} across all {} of them",
+        h.value_spread(),
+        h.cuts.len()
+    );
+    println!(
+        "    first {:.12}   last {:.12}",
+        h.value[0],
+        h.value[h.value.len() - 1]
+    );
 
     println!("\n  What the field says that the cone cannot:\n");
     let fill = h.cone_fill();
@@ -171,7 +196,10 @@ fn main() -> Result<()> {
     println!("    cells above 10% influence      {}", h.count_cells(0.10));
     println!("    cells above 50% influence      {}", h.count_cells(0.50));
     println!("    cone fill (mean Φ inside it)   {fill:.3}   — a cone drawn as a set claims 1.000");
-    println!("    cells where Φ FELL             {}   — a cone can never do this", h.non_monotone_cells());
+    println!(
+        "    cells where Φ FELL             {}   — a cone can never do this",
+        h.non_monotone_cells()
+    );
     println!("\n  That last number is the interesting one. A cone only ever grows.");
     println!("  The field shrinks wherever anticommuting terms cancel against each");
     println!("  other, so a qubit's grip on the answer weakens WITHOUT it leaving");
@@ -180,7 +208,10 @@ fn main() -> Result<()> {
     println!("  the front — the last gate at which each qubit still matters:");
     for (q, f) in h.front().iter().enumerate() {
         match f {
-            Some(g) => println!("    q{q:<2}  gate {g:<4} {}", bar(*g as f64, h.gates as f64, 40)),
+            Some(g) => println!(
+                "    q{q:<2}  gate {g:<4} {}",
+                bar(*g as f64, h.gates as f64, 40)
+            ),
             None => println!("    q{q:<2}  never reached"),
         }
     }
@@ -208,11 +239,19 @@ fn main() -> Result<()> {
     println!("  and retrodictively, where a truncation spends its precision:\n");
     let t = &truncated;
     let total: f64 = t.blame[0].iter().sum();
-    println!("    threshold 1e-3: discarded Σ|c| = {total:.4}, invariant spread {:.2e}", t.value_spread());
-    println!("    (the exact walk's spread was {:.2e} — truncation is exactly the", h.value_spread());
+    println!(
+        "    threshold 1e-3: discarded Σ|c| = {total:.4}, invariant spread {:.2e}",
+        t.value_spread()
+    );
+    println!(
+        "    (the exact walk's spread was {:.2e} — truncation is exactly the",
+        h.value_spread()
+    );
     println!("     invariant ceasing to be invariant, which is a self-check no");
     println!("     single-cut method can perform on itself)\n");
-    let worst = (0..n).max_by(|&a, &b| t.blame[0][a].partial_cmp(&t.blame[0][b]).unwrap()).unwrap();
+    let worst = (0..n)
+        .max_by(|&a, &b| t.blame[0][a].partial_cmp(&t.blame[0][b]).unwrap())
+        .unwrap();
     for q in 0..n {
         println!(
             "    q{q:<2}  {:7.4}  {}{}",

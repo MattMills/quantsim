@@ -71,7 +71,9 @@ fn doped(n: usize, layers: usize, t_per_layer: usize) -> Circuit<C64> {
 fn dense_of(c: &Circuit<C64>) -> Result<Vec<C64>> {
     let sim: Simulator = Simulator::new();
     let s = sim.run(c)?;
-    Ok((0..1u64 << c.num_qubits()).map(|b| s.amplitude(b)).collect())
+    Ok((0..1u64 << c.num_qubits())
+        .map(|b| s.amplitude(b))
+        .collect())
 }
 
 fn main() -> Result<()> {
@@ -144,7 +146,8 @@ fn main() -> Result<()> {
         println!(
             "  {n:5} {g:7} {:8}   {el:>10.1?}   {:>10.1?}",
             ps.splits(),
-            el.checked_div(ps.splits().max(1) as u32).unwrap_or_default()
+            el.checked_div(ps.splits().max(1) as u32)
+                .unwrap_or_default()
         );
     }
     println!("\n  Read the three 64-qubit rows against the 16-qubit one: quadrupling");
@@ -202,7 +205,6 @@ fn main() -> Result<()> {
     println!("  the circuit that the reduction reports, not by the size of the");
     println!("  Hilbert space nobody asked to enumerate.\n");
 
-
     // ── the operator formulation ─────────────────────────────────────
     println!("── what needs no tableau ──\n");
     println!("  A stabilizer tableau represents a stabilizer STATE. It cannot hold");
@@ -213,18 +215,26 @@ fn main() -> Result<()> {
     println!("  it landed instead of being told.\n");
     println!("  Circuit equivalence, decided by reducing V-dagger . U:\n");
     println!("     identity                  verdict      residual h*");
-    let one = |gs: &[&str]| { let mut c = Circuit::<C64>::new(1);
-        for g in gs { c.gate(*g, vec![], vec![0]); } c };
+    let one = |gs: &[&str]| {
+        let mut c = Circuit::<C64>::new(1);
+        for g in gs {
+            c.gate(*g, vec![], vec![0]);
+        }
+        c
+    };
     for (label, a, b) in [
-        ("H.H = I", one(&["h","h"]), one(&[])),
-        ("T.T = S", one(&["t","t"]), one(&["s"])),
-        ("T^4 = Z", one(&["t","t","t","t"]), one(&["z"])),
-        ("T^8 = I", one(&["t";8]), one(&[])),
-        ("H.Z.H = X", one(&["h","z","h"]), one(&["x"])),
+        ("H.H = I", one(&["h", "h"]), one(&[])),
+        ("T.T = S", one(&["t", "t"]), one(&["s"])),
+        ("T^4 = Z", one(&["t", "t", "t", "t"]), one(&["z"])),
+        ("T^8 = I", one(&["t"; 8]), one(&[])),
+        ("H.Z.H = X", one(&["h", "z", "h"]), one(&["x"])),
         ("T vs S (differ)", one(&["t"]), one(&["s"])),
     ] {
         let (eq, h) = quantsim::pathsum::equivalent_verdict(&a, &b)?;
-        println!("     {label:24}  {:11}  {h:6}", if eq { "EQUAL" } else { "not proved" });
+        println!(
+            "     {label:24}  {:11}  {h:6}",
+            if eq { "EQUAL" } else { "not proved" }
+        );
     }
     println!("\n  Two of those rows are outside a tableau's vocabulary entirely:");
     println!("  T.T = S and T^8 = I are statements about non-Clifford operators.\n");
@@ -245,15 +255,35 @@ fn main() -> Result<()> {
             c.gate("h", vec![], vec![(i + 2) % 3]);
         }
         let op = quantsim::pathsum::operator(&c)?;
-        println!("     cancelling pairs, k={k:<4}          {:5} {:5}   {}", 2*k, op.internal_vars(),
-            if op.internal_vars() == 0 { "CLIFFORD, certified" } else { "magic survives" });
+        println!(
+            "     cancelling pairs, k={k:<4}          {:5} {:5}   {}",
+            2 * k,
+            op.internal_vars(),
+            if op.internal_vars() == 0 {
+                "CLIFFORD, certified"
+            } else {
+                "magic survives"
+            }
+        );
     }
     for n in [4usize, 16, 64] {
         let mut c = Circuit::<C64>::new(n);
-        for q in 0..n { for _ in 0..8 { c.gate("t", vec![], vec![q]); } }
+        for q in 0..n {
+            for _ in 0..8 {
+                c.gate("t", vec![], vec![q]);
+            }
+        }
         let op = quantsim::pathsum::operator(&c)?;
-        println!("     T^8 on every qubit, n={n:<4}       {:5} {:5}   {}", 8*n, op.internal_vars(),
-            if op.is_identity_up_to_phase() { "IDENTITY, certified" } else { "not identity" });
+        println!(
+            "     T^8 on every qubit, n={n:<4}       {:5} {:5}   {}",
+            8 * n,
+            op.internal_vars(),
+            if op.is_identity_up_to_phase() {
+                "IDENTITY, certified"
+            } else {
+                "not identity"
+            }
+        );
     }
     for k in [1usize, 2, 4, 8] {
         let mut c = Circuit::<C64>::new(3);
@@ -264,8 +294,16 @@ fn main() -> Result<()> {
             c.gate("t", vec![], vec![(i + 1) % 3]);
         }
         let op = quantsim::pathsum::operator(&c)?;
-        println!("     genuine magic, k={k:<4}             {:5} {:5}   {}", 2*k, op.internal_vars(),
-            if op.internal_vars() == 0 { "CLIFFORD, certified" } else { "magic survives" });
+        println!(
+            "     genuine magic, k={k:<4}             {:5} {:5}   {}",
+            2 * k,
+            op.internal_vars(),
+            if op.internal_vars() == 0 {
+                "CLIFFORD, certified"
+            } else {
+                "magic survives"
+            }
+        );
     }
     println!("\n  The contrast is the point. Magic that cancels is certified away at");
     println!("  any T-count; magic that does not is not. Neither answer was assumed");
@@ -287,7 +325,8 @@ fn main() -> Result<()> {
         ("rz(2pi/3)  not", std::f64::consts::TAU / 3.0),
     ] {
         let mut c = Circuit::new(1);
-        c.gate("h", vec![], vec![0]).gate("rz", vec![build], vec![0]);
+        c.gate("h", vec![], vec![0])
+            .gate("rz", vec![build], vec![0]);
         match PathSum::from_circuit(&c) {
             Ok(ps) => println!("    {label:18} accepted, h* = {}", ps.internal_vars()),
             Err(e) => println!("    {label:18} refused: {e}"),

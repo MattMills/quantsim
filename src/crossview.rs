@@ -112,7 +112,10 @@ impl CrossView {
         let scale = n as f64;
 
         // ⟨Z_S⟩ for every S: one transform of the probability diagonal.
-        let mut z: Vec<f64> = amplitudes.iter().map(|a| a.re * a.re + a.im * a.im).collect();
+        let mut z: Vec<f64> = amplitudes
+            .iter()
+            .map(|a| a.re * a.re + a.im * a.im)
+            .collect();
         fwht(&mut z);
 
         // ⟨X_A⟩ for every A: the XOR-autocorrelation of ψ, which the

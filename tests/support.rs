@@ -53,7 +53,8 @@ fn the_set_operations_are_the_set_operations() {
                 .collect()
         };
         let (a, b) = (pick(&mut rng), pick(&mut rng));
-        let (sa, sb): (Support, Support) = (a.iter().copied().collect(), b.iter().copied().collect());
+        let (sa, sb): (Support, Support) =
+            (a.iter().copied().collect(), b.iter().copied().collect());
         let (ha, hb): (HashSet<usize>, HashSet<usize>) =
             (a.iter().copied().collect(), b.iter().copied().collect());
 
@@ -254,7 +255,11 @@ fn the_wide_walk_agrees_with_the_bounded_one() {
         assert_eq!(narrow.sum.len(), w.sum.len(), "n={n}: term counts");
         for (k, c) in narrow.sum.terms() {
             let got = w.sum.get(&WidePauli::from_key(k));
-            assert_eq!((got.re, got.im), (c.re, c.im), "n={n}: coefficient of {k:?}");
+            assert_eq!(
+                (got.re, got.im),
+                (c.re, c.im),
+                "n={n}: coefficient of {k:?}"
+            );
         }
     }
 }
@@ -287,7 +292,10 @@ fn the_wide_walk_runs_where_the_bounded_one_cannot() {
         "a nearest-neighbour cone should stay narrow: weight {}",
         w.max_weight
     );
-    assert_eq!(w.discarded_l1, 0.0, "nothing needed discarding at this depth");
+    assert_eq!(
+        w.discarded_l1, 0.0,
+        "nothing needed discarding at this depth"
+    );
     // and every term's support is genuinely past the u64 ceiling's reach
     assert!(
         w.sum.terms().all(|(p, _)| p.to_key().is_none()),
@@ -319,7 +327,10 @@ fn the_walk_reports_what_it_discarded() {
         },
     );
     assert!(capped.sum.len() <= 64);
-    assert!(exact.sum.len() > capped.sum.len(), "the cap should have bitten");
+    assert!(
+        exact.sum.len() > capped.sum.len(),
+        "the cap should have bitten"
+    );
     assert!(
         capped.discarded_l1 > 0.0,
         "and the walk must say what it dropped"

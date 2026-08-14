@@ -3,6 +3,7 @@
 //! band costs to hold exactly.
 
 use quantsim::pathsum;
+use quantsim::prelude::*;
 use quantsim::radixweb::{
     bandwidth, digits, dyadic_share, full_web, phase_web, reversed_digits, segment,
     verify_factorization,
@@ -216,5 +217,53 @@ fn a_binary_chain_is_wholly_dyadic_and_one_odd_dimension_wrecks_it() {
         dyadic_share(&[3usize; 8]),
         0.0,
         "no segment of an all-ternary chain is a power of two"
+    );
+}
+
+#[test]
+fn the_banded_web_is_a_circuit_and_the_circuit_is_the_web() {
+    // library::aqft ties the derived web to the gate level: at
+    // min_angle = 0 it is qft op for op; at a finite band the cp count
+    // equals the web's off-diagonal coupling count exactly, and the
+    // approximation error against the exact QFT is measured — small,
+    // nonzero, and bought with a measured gate saving.
+    let n = 12;
+    assert_eq!(
+        library::aqft::<C64>(n, 0.0).len(),
+        library::qft::<C64>(n).len(),
+        "min_angle = 0 must be the exact qft"
+    );
+
+    let eps = std::f64::consts::TAU / 64.0;
+    let banded: Circuit<C64> = library::aqft(n, eps);
+    let cp_count = banded
+        .ops()
+        .iter()
+        .filter(|op| matches!(op, Op::Named { name, .. } if name == "cp"))
+        .count();
+    let off_diagonal = phase_web(&vec![2; n], eps)
+        .iter()
+        .filter(|c| c.inp > c.out)
+        .count();
+    assert_eq!(cp_count, off_diagonal, "the circuit IS the web");
+    let saved = library::qft::<C64>(n).len() - banded.len();
+    assert!(saved > 20, "the band must save gates: saved {saved}");
+
+    // The approximation, measured against the exact transform on a
+    // basis input (where both are dense-checkable).
+    let n = 10;
+    let sim = Simulator::<C64>::new();
+    let mut exact: Circuit<C64> = Circuit::new(n);
+    exact.x(1).x(4).x(7);
+    exact.append(&library::qft(n), &(0..n).collect::<Vec<_>>());
+    let mut approx: Circuit<C64> = Circuit::new(n);
+    approx.x(1).x(4).x(7);
+    approx.append(&library::aqft(n, eps), &(0..n).collect::<Vec<_>>());
+    let a = sim.run(&exact).unwrap();
+    let b = sim.run(&approx).unwrap();
+    let dev = max_amplitude_deviation(a.as_ref(), b.as_ref());
+    assert!(
+        dev > 1e-6 && dev < 0.05,
+        "banded error must be real and small: {dev}"
     );
 }

@@ -70,6 +70,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use super::sparse::SparseState;
 use super::Backend;
@@ -369,8 +370,30 @@ enum LoggedKernel<S: Scalar> {
     Diagonal(Vec<S>),
 }
 
+impl<S: Scalar> LoggedKernel<S> {
+    /// Exact (bitwise-zero-difference) equality, without asking the
+    /// algebra for `PartialEq`.
+    fn same(&self, other: &Self) -> bool {
+        let eq = |a: &[S], b: &[S]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(&x, &y)| (x - y).abs_sqr() == 0.0)
+        };
+        match (self, other) {
+            (LoggedKernel::Matrix(a), LoggedKernel::Matrix(b)) => {
+                a.dim() == b.dim() && eq(a.data(), b.data())
+            }
+            (LoggedKernel::Diagonal(a), LoggedKernel::Diagonal(b)) => eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+/// One absorbed Clifford: a shared kernel plus the wires. The kernel is
+/// interned — a random circuit absorbs the same dozen gate matrices
+/// thousands of times, and the log paid full matrix storage for every
+/// one of them, which is what inflated the frame's measured bytes 6–7×
+/// past dense and diluted its fitted growth base.
 struct LoggedGate<S: Scalar> {
-    kernel: LoggedKernel<S>,
+    kernel: Rc<LoggedKernel<S>>,
     qubits: Vec<usize>,
 }
 
@@ -378,6 +401,9 @@ struct Core<S: Scalar> {
     state: SparseState<S>,
     tableau: CliffordTableau,
     log: Vec<LoggedGate<S>>,
+    /// The interning vocabulary: every distinct kernel ever logged,
+    /// stored once and shared by `Rc` across the log.
+    kernel_cache: Vec<Rc<LoggedKernel<S>>>,
     stats: CliffordFrameStats,
     repair: bool,
     peak_inner_memory: usize,
@@ -385,6 +411,15 @@ struct Core<S: Scalar> {
 }
 
 impl<S: Scalar> Core<S> {
+    /// Share a kernel with every earlier logged copy of it.
+    fn intern(&mut self, kernel: LoggedKernel<S>) -> Rc<LoggedKernel<S>> {
+        if let Some(hit) = self.kernel_cache.iter().find(|k| k.same(&kernel)) {
+            return Rc::clone(hit);
+        }
+        let fresh = Rc::new(kernel);
+        self.kernel_cache.push(Rc::clone(&fresh));
+        fresh
+    }
     fn note_peak(&mut self) {
         self.peak_inner_memory = self.peak_inner_memory.max(self.state.memory_bytes());
         self.peak_stored_support = self.peak_stored_support.max(self.state.nonzero_count());
@@ -401,7 +436,7 @@ impl<S: Scalar> Core<S> {
         }
         self.stats.flushes += 1;
         for gate in std::mem::take(&mut self.log) {
-            match &gate.kernel {
+            match gate.kernel.as_ref() {
                 LoggedKernel::Matrix(m) => self.state.apply(m, &gate.qubits)?,
                 LoggedKernel::Diagonal(d) => self.state.apply_diagonal(d, &gate.qubits)?,
             }
@@ -516,24 +551,18 @@ impl<S: Scalar> Core<S> {
         // steps reversed.
         let mut new_log: Vec<LoggedGate<S>> = Vec::with_capacity(self.log.len() + steps.len());
         for &step in steps.iter().rev() {
-            let gate = match step {
-                CliffordStep::S(b) => LoggedGate {
-                    kernel: LoggedKernel::Diagonal(vec![
-                        S::one(),
-                        repair_scalar::<S>(c64(0.0, 1.0))?,
-                    ]),
-                    qubits: vec![b],
-                },
-                CliffordStep::Cx(c, t) => LoggedGate {
-                    kernel: LoggedKernel::Matrix(cx_matrix::<S>()?),
-                    qubits: vec![c, t],
-                },
-                CliffordStep::H(b) => LoggedGate {
-                    kernel: LoggedKernel::Matrix(h_matrix::<S>()?),
-                    qubits: vec![b],
-                },
+            let (kernel, qubits) = match step {
+                CliffordStep::S(b) => (
+                    LoggedKernel::Diagonal(vec![S::one(), repair_scalar::<S>(c64(0.0, 1.0))?]),
+                    vec![b],
+                ),
+                CliffordStep::Cx(c, t) => (LoggedKernel::Matrix(cx_matrix::<S>()?), vec![c, t]),
+                CliffordStep::H(b) => (LoggedKernel::Matrix(h_matrix::<S>()?), vec![b]),
             };
-            new_log.push(gate);
+            new_log.push(LoggedGate {
+                kernel: self.intern(kernel),
+                qubits,
+            });
         }
         new_log.append(&mut self.log);
         self.log = new_log;
@@ -818,6 +847,7 @@ impl<S: Scalar> CliffordFramedState<S> {
                 state,
                 tableau: CliffordTableau::identity(num_qubits),
                 log: Vec::new(),
+                kernel_cache: Vec::new(),
                 stats: CliffordFrameStats::default(),
                 repair: true,
                 peak_inner_memory: peak,
@@ -966,6 +996,7 @@ impl<S: Scalar> CliffordFramedState<S> {
             core.tableau.x_images[q] = xi;
             core.tableau.z_images[q] = zi;
         }
+        let kernel = core.intern(kernel);
         core.log.push(LoggedGate {
             kernel,
             qubits: qubits.to_vec(),
@@ -1087,6 +1118,11 @@ impl<S: Scalar> Backend<S> for CliffordFramedState<S> {
         super::validate_apply_diagonal(self.num_qubits, entries, qubits)?;
         let k = qubits.len();
         let diag: Vec<C64> = entries.iter().map(|&e| scalar_to_c64(e)).collect();
+        // Kernel class must never change behavior: mirror the matrix
+        // path's recognition order (Clifford absorb, then native axis
+        // rotation, then the Walsh phase polynomial) so a `t` arriving
+        // as a diagonal is the same one axis rotation it is as a
+        // matrix.
         if k <= CLIFFORD_RECOGNITION_MAX {
             let d = entries.len();
             let mut mc = vec![c64(0.0, 0.0); d * d];
@@ -1095,6 +1131,17 @@ impl<S: Scalar> Backend<S> for CliffordFramedState<S> {
             }
             if let Some(images) = recognize_clifford(&mc, k, qubits) {
                 self.absorb(LoggedKernel::Diagonal(entries.to_vec()), qubits, images);
+                return Ok(());
+            }
+            if let Some((theta, phase, px, pz)) = recognize_axis(&mc, k) {
+                let p = PauliString {
+                    x: to_global(px, qubits),
+                    z: to_global(pz, qubits),
+                    negative: false,
+                };
+                let mut core = self.core.borrow_mut();
+                core.rotate(theta, p, phase)?;
+                core.stats.axis_rotations += 1;
                 return Ok(());
             }
         }
@@ -1192,19 +1239,30 @@ impl<S: Scalar> Backend<S> for CliffordFramedState<S> {
 
     fn memory_bytes(&self) -> usize {
         let core = self.core.borrow();
-        let log_bytes: usize = core
-            .log
-            .iter()
-            .map(|g| {
-                let kernel = match &g.kernel {
+        // Each distinct kernel is stored once, however many log entries
+        // share it; count the ones the log actually references.
+        let mut seen: Vec<*const LoggedKernel<S>> = Vec::new();
+        let mut kernel_bytes = 0usize;
+        for g in &core.log {
+            let ptr = Rc::as_ptr(&g.kernel);
+            if !seen.contains(&ptr) {
+                seen.push(ptr);
+                kernel_bytes += match g.kernel.as_ref() {
                     LoggedKernel::Matrix(m) => std::mem::size_of_val(m.data()),
                     LoggedKernel::Diagonal(d) => std::mem::size_of_val(d.as_slice()),
                 };
-                kernel + g.qubits.len() * std::mem::size_of::<usize>()
+            }
+        }
+        let entry_bytes: usize = core
+            .log
+            .iter()
+            .map(|g| {
+                std::mem::size_of::<LoggedGate<S>>() + g.qubits.len() * std::mem::size_of::<usize>()
             })
             .sum();
         core.state.memory_bytes()
-            + log_bytes
+            + kernel_bytes
+            + entry_bytes
             + 2 * self.num_qubits * std::mem::size_of::<PauliString>()
             + std::mem::size_of::<Self>()
     }

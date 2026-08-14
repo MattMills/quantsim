@@ -93,16 +93,29 @@ fn children_partition_their_parents_gates_exactly() {
         let children = c.level(level + 1);
         for (i, p) in parents.iter().enumerate() {
             let (l, r) = (children[2 * i], children[2 * i + 1]);
-            assert_eq!(l.span.0, p.span.0, "left child must start where the parent does");
-            assert_eq!(r.span.1, p.span.1, "right child must end where the parent does");
-            assert_eq!(l.span.1, r.span.0, "the children must meet, with no gap or overlap");
+            assert_eq!(
+                l.span.0, p.span.0,
+                "left child must start where the parent does"
+            );
+            assert_eq!(
+                r.span.1, p.span.1,
+                "right child must end where the parent does"
+            );
+            assert_eq!(
+                l.span.1, r.span.0,
+                "the children must meet, with no gap or overlap"
+            );
             assert_eq!(
                 l.live_cells + r.live_cells,
                 p.live_cells,
                 "L{level} #{i}: live area must be additive across the split"
             );
             assert_eq!(l.cells + r.cells, p.cells);
-            assert_eq!(l.advance + r.advance, p.advance, "the front's motion telescopes");
+            assert_eq!(
+                l.advance + r.advance,
+                p.advance,
+                "the front's motion telescopes"
+            );
         }
     }
 }
@@ -196,7 +209,9 @@ fn the_two_sided_bound_is_never_looser_and_is_sometimes_much_tighter() {
 
     let mut evaluated = 0usize;
     for node in &c.nodes {
-        let Some(two) = node.two_sided_l1 else { continue };
+        let Some(two) = node.two_sided_l1 else {
+            continue;
+        };
         evaluated += 1;
         assert!(
             two <= node.l1 + 1e-12,
@@ -244,12 +259,19 @@ fn the_two_sided_prune_holds_the_error_it_certifies() {
 
     let (one, two) = dyadic::two_sided_bound(&back, state).unwrap();
     assert!(two <= one + 1e-12, "two-sided {two} vs one-sided {one}");
-    assert!(one / two > 1.5, "no tightening at this cut: {:.2}x", one / two);
+    assert!(
+        one / two > 1.5,
+        "no tightening at this cut: {:.2}x",
+        one / two
+    );
 
     let mut ever_dropped = 0usize;
     for budget in [1e-6f64, 1e-4, 1e-2, 1e-1, 0.3] {
         let (kept, dropped, spent) = dyadic::prune_two_sided(&back, state, budget).unwrap();
-        assert!(spent <= budget + 1e-12, "spent {spent} over budget {budget}");
+        assert!(
+            spent <= budget + 1e-12,
+            "spent {spent} over budget {budget}"
+        );
         assert_eq!(kept.len() + dropped, back.len(), "terms went missing");
         ever_dropped += dropped;
 
@@ -296,7 +318,11 @@ fn a_budget_of_zero_drops_nothing_and_a_huge_one_drops_everything() {
 
     let (_, two) = dyadic::two_sided_bound(&back, state).unwrap();
     let (kept, dropped, _) = dyadic::prune_two_sided(&back, state, two * 2.0).unwrap();
-    assert_eq!(dropped, back.len(), "a budget above the total must drop all");
+    assert_eq!(
+        dropped,
+        back.len(),
+        "a budget above the total must drop all"
+    );
     assert_eq!(kept.len(), 0);
 }
 
@@ -338,16 +364,7 @@ fn a_forward_representation_that_holds_the_state_gives_the_same_tree() {
     let obs = (0u64, 1u64 << 4);
     let dense = dyadic::dyadic_cone(obs, &rots, n, &cfg(3)).unwrap();
     for forward in [Forward::Sparse, Forward::Mps { max_bond: 64 }] {
-        let other = dyadic::dyadic_cone(
-            obs,
-            &rots,
-            n,
-            &Config {
-                forward,
-                ..cfg(3)
-            },
-        )
-        .unwrap();
+        let other = dyadic::dyadic_cone(obs, &rots, n, &Config { forward, ..cfg(3) }).unwrap();
         for (a, b) in dense.nodes.iter().zip(&other.nodes) {
             assert!((a.value - b.value).abs() < 1e-11, "{forward:?}");
             assert_eq!(a.diamond, b.diamond);
