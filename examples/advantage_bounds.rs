@@ -67,7 +67,8 @@ fn main() -> Result<()> {
     println!("  factored         entangled clusters stay small");
     println!("  mps              entanglement across linear cuts stays small");
     println!("  mera             entanglement across tree cuts stays small");
-    println!("  clifford-framed  non-Clifford content stays small
+    println!(
+        "  clifford-framed  non-Clifford content stays small
   phase-field      the circuit stays diagonal-with-root-of-unity entries
                    over an affine subcube (an IQP *core*; the closing
                    Hadamard layer is exactly where the bet fails)
@@ -75,7 +76,8 @@ fn main() -> Result<()> {
                    generators. Every Majorana generator is a weight-≤2
                    Clifford rotation (γ_2k γ_2k+1 = iZ_k,
                    γ_2k+1 γ_2k+2 = iX_k X_k+1), so the frame absorbs it:
-                   flat in BOTH memory and time on a braid family");
+                   flat in BOTH memory and time on a braid family"
+    );
     println!("  each is efficient exactly while its bet holds; the scan below measures");
     println!("  which bet holds per family, and classifies every axis's growth law.\n");
 
@@ -97,6 +99,37 @@ fn main() -> Result<()> {
         "random universal (3n² gates)",
         |n| library::random_circuit(n, 3 * n * n, 7),
         &[6, 8, 10, 12],
+    ));
+    show(&advantage_scan(
+        "qft |x⟩ (basis input)",
+        |n| {
+            let mut c = Circuit::new(n);
+            for q in (0..n).step_by(2) {
+                c.x(q);
+            }
+            c.append(&library::qft(n), &(0..n).collect::<Vec<_>>());
+            c
+        },
+        &[6, 8, 10, 12],
+    ));
+    show(&advantage_scan(
+        "qft ∘ entangling prep",
+        |n| {
+            // A genuinely entangled, non-stabilizer input: rotations
+            // then a CX chain (an H wall alone is a QFT eigenfamily —
+            // CX acts trivially on |++⟩ and the transform lands on a
+            // basis state).
+            let mut c = Circuit::new(n);
+            for q in 0..n {
+                c.ry(q, 0.37 + 0.21 * q as f64);
+            }
+            for q in 0..n - 1 {
+                c.cx(q, q + 1);
+            }
+            c.append(&library::qft(n), &(0..n).collect::<Vec<_>>());
+            c
+        },
+        &[6, 8, 10],
     ));
     println!("  the atlas rediscovers the known complexity results from bytes alone:");
     println!("  GHZ is classical via support, basis-input QFT via bond, rainbow via");
@@ -132,6 +165,26 @@ fn main() -> Result<()> {
         "shallow 2D brickwork (depth 3)",
         |n| library::brickwork_2d(n / 3, 3, 3, 4),
         &[9, 12, 15, 18],
+    ));
+    show(&advantage_scan(
+        "aqft ε = 2π/1024 (banded web)",
+        |n| library::aqft(n, std::f64::consts::TAU / 1024.0),
+        &[6, 8, 10, 12],
+    ));
+    show(&advantage_scan(
+        "random, linear budget (3n gates)",
+        |n| library::random_circuit(n, 3 * n, 7),
+        &[6, 8, 10, 12],
+    ));
+    show(&advantage_scan(
+        "random, nearest-neighbour (3n² gates)",
+        |n| library::random_nn(n, 3 * n * n, 7),
+        &[6, 8, 10, 12],
+    ));
+    show(&advantage_scan(
+        "random, dyadic angles (3n² gates)",
+        |n| library::random_dyadic(n, 3 * n * n, 7),
+        &[6, 8, 10, 12],
     ));
     println!("  measured dial findings: the SAME IQP core is a candidate with long-range");
     println!("  couplings and classical with nearest-neighbour ones (note mps on the");

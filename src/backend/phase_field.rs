@@ -538,18 +538,17 @@ impl Backend<C64> for PhaseFieldState {
                 if self.try_diagonal(&diag, qubits)? {
                     return Ok(());
                 }
-            } else if qubits.len() == 1
-                && Self::is_hadamard(matrix)
-                && self.try_free_hadamard(qubits[0])
-            {
-                return Ok(());
-            } else if qubits.len() == 1 && Self::is_x(matrix) && self.try_x(qubits[0]) {
-                return Ok(());
-            } else if qubits.len() == 2
-                && Self::is_swap(matrix)
-                && self.try_swap(qubits[0], qubits[1])
-            {
-                return Ok(());
+            } else {
+                let handled = (qubits.len() == 1
+                    && Self::is_hadamard(matrix)
+                    && self.try_free_hadamard(qubits[0]))
+                    || (qubits.len() == 1 && Self::is_x(matrix) && self.try_x(qubits[0]))
+                    || (qubits.len() == 2
+                        && Self::is_swap(matrix)
+                        && self.try_swap(qubits[0], qubits[1]));
+                if handled {
+                    return Ok(());
+                }
             }
         }
         self.dense_mut()?.apply(matrix, qubits)
