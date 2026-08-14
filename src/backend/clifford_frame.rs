@@ -1087,6 +1087,11 @@ impl<S: Scalar> Backend<S> for CliffordFramedState<S> {
         super::validate_apply_diagonal(self.num_qubits, entries, qubits)?;
         let k = qubits.len();
         let diag: Vec<C64> = entries.iter().map(|&e| scalar_to_c64(e)).collect();
+        // Kernel class must never change behavior: mirror the matrix
+        // path's recognition order (Clifford absorb, then native axis
+        // rotation, then the Walsh phase polynomial) so a `t` arriving
+        // as a diagonal is the same one axis rotation it is as a
+        // matrix.
         if k <= CLIFFORD_RECOGNITION_MAX {
             let d = entries.len();
             let mut mc = vec![c64(0.0, 0.0); d * d];
@@ -1095,6 +1100,17 @@ impl<S: Scalar> Backend<S> for CliffordFramedState<S> {
             }
             if let Some(images) = recognize_clifford(&mc, k, qubits) {
                 self.absorb(LoggedKernel::Diagonal(entries.to_vec()), qubits, images);
+                return Ok(());
+            }
+            if let Some((theta, phase, px, pz)) = recognize_axis(&mc, k) {
+                let p = PauliString {
+                    x: to_global(px, qubits),
+                    z: to_global(pz, qubits),
+                    negative: false,
+                };
+                let mut core = self.core.borrow_mut();
+                core.rotate(theta, p, phase)?;
+                core.stats.axis_rotations += 1;
                 return Ok(());
             }
         }
