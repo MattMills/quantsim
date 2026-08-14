@@ -367,12 +367,13 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
             )
         },
     ));
-    // The branched clock register, flat: one sparse branch under a
+    // The branched clock register, flat: one MOSAIC branch under a
     // trivial selector, so on a circuit family the expectation is
-    // sparse-plus-bookkeeping — the axis exists so that expectation is
-    // measured rather than assumed. The selector's own payoff (branch
-    // sharing across scale histories) has no gate-level trigger here;
-    // that measurement lives in the clock suite and scale_time example.
+    // mosaic-plus-bookkeeping — the composition measured, not assumed:
+    // representation election below the selector, qudit dimension above
+    // it. The selector's own payoff (branch sharing across scale
+    // histories) has no gate-level trigger here; that measurement lives
+    // in the clock suite and the scale_time example.
     axes.push(probe(
         "branched",
         |n| crate::clock::BranchedRegister::<C64>::new(n, 1),

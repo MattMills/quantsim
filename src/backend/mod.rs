@@ -333,9 +333,9 @@ impl<S: Scalar> BackendRegistry<S> {
     /// `O(n + |E|)` on the Clifford sector, refusing anything else by
     /// name.) (`"branched"` is the
     /// [`BranchedRegister`](crate::clock::BranchedRegister) with a
-    /// trivial selector: one sparse branch until selector-side
-    /// operations fork it — the flat Backend contract holds either
-    /// way.) (`"mps"`, `"mera"` and `"bulk"`
+    /// trivial selector over one **mosaic** branch: representation
+    /// election below, selector dimension above — the flat Backend
+    /// contract holds either way.) (`"mps"`, `"mera"` and `"bulk"`
     /// require a commutative division algebra and report an error at
     /// creation elsewhere.)
     pub fn standard() -> Self {

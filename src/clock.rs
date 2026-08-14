@@ -71,7 +71,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::backend::{Backend, BulkState, SparseState, UnfoldProgram};
+use crate::backend::{Backend, BulkState, MosaicState, SparseState, UnfoldProgram};
 use crate::error::{Error, Result};
 use crate::math::{svd_thin, GateMatrix};
 use crate::rng::Prng;
@@ -99,9 +99,14 @@ pub struct BranchedRegister<S: Scalar> {
 }
 
 impl<S: Scalar> BranchedRegister<S> {
-    /// `|sel = 0⟩ ⊗ |0…0⟩` with a sparse system branch.
+    /// `|sel = 0⟩ ⊗ |0…0⟩` with a **mosaic** system branch: the two
+    /// structures compose — the mosaic elects the ideal representation
+    /// per portion of the register *below*, the selector adds qudit
+    /// dimension *above* for what no single branch state holds cheaply.
+    /// Callers wanting specific branch representations use
+    /// [`from_branches`](Self::from_branches).
     pub fn new(num_qubits: usize, selector_dim: usize) -> Result<Self> {
-        let state: Box<dyn Backend<S>> = Box::new(SparseState::new(num_qubits)?);
+        let state: Box<dyn Backend<S>> = Box::new(MosaicState::new(num_qubits)?);
         Self::from_branches(num_qubits, selector_dim, vec![(0, S::one(), state)])
     }
 
@@ -513,7 +518,7 @@ impl<S: Scalar> Backend<S> for BranchedRegister<S> {
 
     fn reset(&mut self) {
         let state: Box<dyn Backend<S>> =
-            Box::new(SparseState::new(self.n).expect("width validated"));
+            Box::new(MosaicState::new(self.n).expect("width validated"));
         self.branches = vec![Branch {
             sel: 0,
             weight: S::one(),
@@ -522,7 +527,7 @@ impl<S: Scalar> Backend<S> for BranchedRegister<S> {
     }
 
     fn load(&mut self, entries: &[(u64, S)]) -> Result<()> {
-        let mut state = SparseState::new(self.n)?;
+        let mut state = MosaicState::new(self.n)?;
         state.load(entries)?;
         self.branches = vec![Branch {
             sel: 0,

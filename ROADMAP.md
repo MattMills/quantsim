@@ -421,9 +421,24 @@ rungs:
   random universal and long-range IQP. Still open here: elections
   beyond the sparse/dense pair (bond/hierarchy predictors), and
   recognition-driven *return* to bundle when a magic era ends.
-- **Mosaic × clock.** Selector slices that are mosaics: superpositions
-  of regionally-structured states — the union edge with per-slice
-  spatial structure, and branching histories over era sequences.
+- **Mosaic × clock — SHIPPED (default).** The branched register's
+  default branch is now a mosaic: representation election below the
+  selector, qudit dimension above it. Measured in the atlas, the
+  `branched` axis moved from sparse-tracking (three verdict
+  memberships) to mosaic-tracking plus ~80 B of selector bookkeeping
+  (nine: ghz 437 B, qft 872 B constant where the sparse branch paid
+  200 KiB exponential, rainbow, qft|x⟩, nearest-neighbour IQP,
+  t = n/2 doped, shallow-2D, aqft, linear-budget random).
+  scale_time §5 measures the election against the hand-picked
+  four-slice register and reports the boundary honestly: election
+  matches assignment where the slice's structure is support or
+  product (GHZ 373 B, rainbow 1016 B — the region partition *is* the
+  factored lens), and pays 2^region where the ideal lens is bond
+  (brickwork: 1 MiB vs mps's 1.5 KiB) or stabilizer (graph state:
+  525 KiB vs bundle's 1 KiB) — those lenses are not yet in the
+  mosaic's within-region vocabulary, which makes the "elections
+  beyond the sparse/dense pair" rung above the composition's
+  measured bottleneck, not a nice-to-have.
 
 ## Further non-Cayley–Dickson explorations
 

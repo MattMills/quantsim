@@ -148,5 +148,39 @@ fn main() -> Result<()> {
     println!("\n  the sum that no single structure holds cheaply is additive under");
     println!("  the selector — new qudit dimension above the problem, lower");
     println!("  representational structure below it.");
+
+    // ══ 5. the branched mosaic: election replaces assignment ══
+    println!("\n══ 5. the branched mosaic: election replaces assignment ══\n");
+    // The four branches above were hand-assigned their ideal backends —
+    // an oracle the register should not need. Mosaic branches elect
+    // per-portion representations themselves; the selector still
+    // carries the clash. Same slices, no oracle:
+    let mut slices: Vec<(usize, C64, Box<dyn Backend<C64>>)> = Vec::new();
+    for (sel, circuit) in [&ghz_c, &rainbow_c, &brick_c, &graph_c]
+        .into_iter()
+        .enumerate()
+    {
+        let mut m = MosaicState::<C64>::new(n)?;
+        run_in(circuit, &mut m);
+        println!(
+            "  slice {sel}: mosaic elected {} regions, {} B",
+            m.layout().len(),
+            m.memory_bytes()
+        );
+        slices.push((sel, wq, Box::new(m)));
+    }
+    let elected = BranchedRegister::from_branches(n, 4, slices)?;
+    println!(
+        "  branched mosaic: {} B total, selector rank {} (hand-picked: {} B)",
+        elected.memory_bytes(),
+        elected.selector_schmidt_rank()?,
+        branched.memory_bytes()
+    );
+    println!("\n  measured honestly: election matches assignment where the slice's");
+    println!("  structure is support or product (GHZ, rainbow — the region");
+    println!("  partition IS the factored lens). Where the ideal lens is bond");
+    println!("  (brickwork→mps) or stabilizer (graph→bundle), the region merges");
+    println!("  whole and pays 2^region: those lenses are not yet in the mosaic's");
+    println!("  within-region vocabulary — the composition names its next rung.");
     Ok(())
 }
