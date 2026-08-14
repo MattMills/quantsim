@@ -1030,7 +1030,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 843 tests (88 unit + 748 across seventy
+`cargo test` runs 845 tests (88 unit + 750 across seventy
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1124,7 +1124,13 @@ entirely trivial accessors and defensive guards:
   graph-of-graphs composition (a mosaic as a region of a mosaic);
   the width-40 flagship at the sum of ideal costs with era transitions
   ledgered; heterogeneous composition with the dynamic bulk register;
-  merged-support saturation choosing dense with the prediction named.
+  merged-support saturation choosing dense with the prediction named;
+  and the performance laws pinned: the mosaic's measured memory law
+  sub-exponential on the era family while sparse-fixed measures
+  exponential on the same family (×20+ at the shared width), and
+  static structure costs zero events, zero conversions, and the parts'
+  sum plus fixed bookkeeping (time scaling lives in
+  `benches/width.rs`: `width_mosaic_era` vs `width_sparse_era`).
 - **capacity** — the resource guard as behavior: over-scale allocations
   refused by *measurement* (requested vs available bytes in the error,
   auto-measured and under explicit limits); adaptive stays sparse when

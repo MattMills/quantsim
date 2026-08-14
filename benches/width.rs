@@ -140,6 +140,119 @@ fn bench_factored_pairs(c: &mut Criterion) {
     group.finish();
 }
 
+/// The era family from the mosaic suite: an `na`-qubit expander graph
+/// tile (bundle) beside an `na`-qubit half that lives through a
+/// Clifford → T → entangling era sequence. The mosaic's time is the
+/// tiles' time; the sparse-fixed comparison pays the expander's 2^na
+/// support on every gate that touches it.
+fn era_on_mosaic(na: usize) -> quantsim::backend::MosaicState<C64> {
+    use quantsim::backend::{MosaicPolicy, MosaicState};
+    let n = 2 * na;
+    let sim: Simulator = Simulator::new();
+    let reg = GateRegistry::<C64>::standard();
+    let mut rng = Prng::new(9);
+    let mut ga = Circuit::new(na);
+    for q in 0..na {
+        ga.h(q);
+    }
+    let mut placed = 0;
+    while placed < 3 * na / 2 {
+        let a = (rng.next_u64() % na as u64) as usize;
+        let b = (rng.next_u64() % na as u64) as usize;
+        if a != b {
+            ga.gate("cz", [], [a, b]);
+            placed += 1;
+        }
+    }
+    let mut a = sim.backends().create("bundle", na).unwrap();
+    ga.bind(&reg).unwrap().run(a.as_mut()).unwrap();
+    let b1 = sim.backends().create("bundle", na / 2).unwrap();
+    let b2 = sim.backends().create("bundle", na - na / 2).unwrap();
+    let mut m = MosaicState::with_regions(
+        n,
+        vec![
+            ((0..na).collect(), a),
+            ((na..na + na / 2).collect(), b1),
+            ((na + na / 2..n).collect(), b2),
+        ],
+        MosaicPolicy::default(),
+    )
+    .unwrap();
+    let h = reg.resolve("h").unwrap().matrix(&[]).unwrap();
+    let cx = reg.resolve("cx").unwrap().matrix(&[]).unwrap();
+    let t = reg.resolve("t").unwrap().matrix(&[]).unwrap();
+    for (q0, width) in [(na, na / 2), (na + na / 2, na - na / 2)] {
+        m.apply(&h, &[q0]).unwrap();
+        for q in q0..q0 + width - 1 {
+            m.apply(&cx, &[q, q + 1]).unwrap();
+        }
+    }
+    m.apply(&t, &[na + 1]).unwrap();
+    m.apply(&t, &[na + na / 2 + 1]).unwrap();
+    m.apply(&cx, &[na + 1, na + na / 2 + 1]).unwrap();
+    m
+}
+
+fn bench_mosaic_era(c: &mut Criterion) {
+    // The multi-representation register: whole-scenario time (tile
+    // prep, era gates, one migration, one merge) as width doubles.
+    let mut group = c.benchmark_group("width_mosaic_era");
+    group
+        .sample_size(10)
+        .measurement_time(Duration::from_secs(2));
+    for na in [8usize, 12, 16, 20] {
+        group.bench_with_input(BenchmarkId::from_parameter(2 * na), &na, |b, &na| {
+            b.iter(|| era_on_mosaic(na));
+        });
+    }
+    group.finish();
+}
+
+fn bench_sparse_era(c: &mut Criterion) {
+    // The best fixed lens on the same family: sparse carries the
+    // expander's 2^na support through every gate.
+    let reg = GateRegistry::<C64>::standard();
+    let mut group = c.benchmark_group("width_sparse_era");
+    group
+        .sample_size(10)
+        .measurement_time(Duration::from_secs(2));
+    for na in [6usize, 8, 10, 12] {
+        let n = 2 * na;
+        let mut rng = Prng::new(9);
+        let mut full = Circuit::new(n);
+        for q in 0..na {
+            full.h(q);
+        }
+        let mut placed = 0;
+        while placed < 3 * na / 2 {
+            let a = (rng.next_u64() % na as u64) as usize;
+            let b = (rng.next_u64() % na as u64) as usize;
+            if a != b {
+                full.gate("cz", [], [a, b]);
+                placed += 1;
+            }
+        }
+        for (q0, width) in [(na, na / 2), (na + na / 2, na - na / 2)] {
+            full.h(q0);
+            for q in q0..q0 + width - 1 {
+                full.cx(q, q + 1);
+            }
+        }
+        full.t(na + 1);
+        full.t(na + na / 2 + 1);
+        full.cx(na + 1, na + na / 2 + 1);
+        let bound = full.bind(&reg).unwrap();
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            let mut state = SparseState::<C64>::new(n).unwrap();
+            b.iter(|| {
+                state.reset();
+                bound.run(&mut state).unwrap();
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_dense_hlayer,
@@ -147,6 +260,8 @@ criterion_group!(
     bench_sparse_ghz,
     bench_mps_ghz,
     bench_factored_pairs,
-    bench_adaptive_vs_dense_grover
+    bench_adaptive_vs_dense_grover,
+    bench_mosaic_era,
+    bench_sparse_era
 );
 criterion_main!(benches);

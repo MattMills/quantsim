@@ -282,15 +282,27 @@ impl<S: Scalar> MosaicState<S> {
         if involved.len() == 1 {
             return Ok(involved[0]);
         }
-        // Predict: sparse pays the product of supports; dense pays 2^w.
-        let mut support_product = 1f64;
+        // One enumeration per region: the gathered supports feed both
+        // the prediction and the merge (an earlier draft enumerated
+        // twice — for a bundle region each pass is a materialization,
+        // and the performance tests now pin the single-pass cost).
         let mut width = 0usize;
         let mut names = Vec::new();
+        let mut supports: Vec<Vec<(u64, S)>> = Vec::with_capacity(involved.len());
         for &r in &involved {
-            support_product *= self.regions[r].state.nonzero_count().max(1) as f64;
+            let mut local = Vec::new();
+            self.regions[r]
+                .state
+                .for_each_nonzero(&mut |i, a| local.push((i, a)));
             width += self.regions[r].qubits.len();
             names.push(self.regions[r].state.name().to_string());
+            supports.push(local);
         }
+        // Predict: sparse pays the product of supports; dense pays 2^w.
+        let support_product = supports
+            .iter()
+            .map(|s| s.len().max(1) as f64)
+            .product::<f64>();
         let entry = (std::mem::size_of::<S>() + 24) as f64;
         let sparse_cost = support_product * entry;
         let dense_cost = (1u128 << width.min(80)) as f64 * std::mem::size_of::<S>() as f64;
@@ -299,18 +311,14 @@ impl<S: Scalar> MosaicState<S> {
         } else {
             "dense"
         };
-        // Gather the merged product state by cross-enumeration.
+        // Assemble the merged product state from the gathered supports.
         let mut acc: Vec<(u64, S)> = vec![(0, S::one())];
         let mut merged_qubits: Vec<usize> = Vec::new();
-        for &r in &involved {
+        for (&r, local) in involved.iter().zip(supports.iter()) {
             let offset = merged_qubits.len();
-            let mut local = Vec::new();
-            self.regions[r]
-                .state
-                .for_each_nonzero(&mut |i, a| local.push((i, a)));
             let mut next = Vec::with_capacity(acc.len() * local.len());
             for &(ia, va) in &acc {
-                for &(ib, vb) in &local {
+                for &(ib, vb) in local {
                     next.push((ia | (ib << offset), va * vb));
                 }
             }

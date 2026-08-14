@@ -150,67 +150,71 @@ fn migration_is_refusal_driven_and_exact() {
     assert_matches_dense(&m, dense.as_ref(), n, "post-migration state");
 }
 
+/// The era scenario: region A is an `na`-qubit Clifford expander graph
+/// (bundle), region B (`nb` qubits, two halves) lives through a
+/// Clifford → T → entangling era sequence. Returns the mosaic and the
+/// full circuit for referees.
+fn era_scenario(na: usize, nb: usize) -> (MosaicState<C64>, Circuit<C64>) {
+    let n = na + nb;
+    let reg = GateRegistry::<C64>::standard();
+    // Region A: expander graph state, built in the bundle.
+    let ga = graph_circuit(na, 3 * na / 2, 9);
+    let mut a = sim().backends().create("bundle", na).unwrap();
+    ga.bind(&reg).unwrap().run(a.as_mut()).unwrap();
+    // Region B: two halves, each starting as a fresh bundle.
+    let b1 = sim().backends().create("bundle", nb / 2).unwrap();
+    let b2 = sim().backends().create("bundle", nb / 2).unwrap();
+    let mut m = MosaicState::with_regions(
+        n,
+        vec![
+            ((0..na).collect(), a),
+            ((na..na + nb / 2).collect(), b1),
+            ((na + nb / 2..n).collect(), b2),
+        ],
+        MosaicPolicy::default(),
+    )
+    .unwrap();
+    // The full circuit, for the dense referee.
+    let mut full: Circuit<C64> = Circuit::new(n);
+    for op in ga.ops() {
+        if let Op::Named {
+            name,
+            params,
+            qubits,
+        } = op
+        {
+            full.gate(name.clone(), params.clone(), qubits.clone());
+        }
+    }
+    // B's story: Clifford prep, then the T era, then a cross-half
+    // entangler.
+    let reg2 = GateRegistry::<C64>::standard();
+    let h = reg2.resolve("h").unwrap().matrix(&[]).unwrap();
+    let cx = reg2.resolve("cx").unwrap().matrix(&[]).unwrap();
+    let t = reg2.resolve("t").unwrap().matrix(&[]).unwrap();
+    for (q0, width) in [(na, nb / 2), (na + nb / 2, nb / 2)] {
+        m.apply(&h, &[q0]).unwrap();
+        full.h(q0);
+        for q in q0..q0 + width - 1 {
+            m.apply(&cx, &[q, q + 1]).unwrap();
+            full.cx(q, q + 1);
+        }
+    }
+    m.apply(&t, &[na + 1]).unwrap();
+    full.t(na + 1);
+    m.apply(&t, &[na + nb / 2 + 1]).unwrap();
+    full.t(na + nb / 2 + 1);
+    m.apply(&cx, &[na + 1, na + nb / 2 + 1]).unwrap();
+    full.cx(na + 1, na + nb / 2 + 1);
+    (m, full)
+}
+
 #[test]
 fn each_portion_lives_in_its_ideal_representation() {
     // The flagship, dense-verified at width 16 then held at width 40:
-    // region A is a Clifford expander graph (bundle — outside every
-    // bond/cluster/support bet), region B starts Clifford in bundle,
-    // hits its T era, migrates, and merges internally — while A never
-    // pays a byte for B's magic and B never pays for A's rank.
-    let run_scenario = |na: usize, nb: usize| -> (MosaicState<C64>, Circuit<C64>) {
-        let n = na + nb;
-        let reg = GateRegistry::<C64>::standard();
-        // Region A: expander graph state, built in the bundle.
-        let ga = graph_circuit(na, 3 * na / 2, 9);
-        let mut a = sim().backends().create("bundle", na).unwrap();
-        ga.bind(&reg).unwrap().run(a.as_mut()).unwrap();
-        // Region B: two halves, each starting as a fresh bundle.
-        let b1 = sim().backends().create("bundle", nb / 2).unwrap();
-        let b2 = sim().backends().create("bundle", nb / 2).unwrap();
-        let mut m = MosaicState::with_regions(
-            n,
-            vec![
-                ((0..na).collect(), a),
-                ((na..na + nb / 2).collect(), b1),
-                ((na + nb / 2..n).collect(), b2),
-            ],
-            MosaicPolicy::default(),
-        )
-        .unwrap();
-        // The full circuit, for the dense referee.
-        let mut full: Circuit<C64> = Circuit::new(n);
-        for op in ga.ops() {
-            if let Op::Named {
-                name,
-                params,
-                qubits,
-            } = op
-            {
-                full.gate(name.clone(), params.clone(), qubits.clone());
-            }
-        }
-        // B's story: Clifford prep, then the T era, then a cross-half
-        // entangler.
-        let reg2 = GateRegistry::<C64>::standard();
-        let h = reg2.resolve("h").unwrap().matrix(&[]).unwrap();
-        let cx = reg2.resolve("cx").unwrap().matrix(&[]).unwrap();
-        let t = reg2.resolve("t").unwrap().matrix(&[]).unwrap();
-        for (q0, width) in [(na, nb / 2), (na + nb / 2, nb / 2)] {
-            m.apply(&h, &[q0]).unwrap();
-            full.h(q0);
-            for q in q0..q0 + width - 1 {
-                m.apply(&cx, &[q, q + 1]).unwrap();
-                full.cx(q, q + 1);
-            }
-        }
-        m.apply(&t, &[na + 1]).unwrap();
-        full.t(na + 1);
-        m.apply(&t, &[na + nb / 2 + 1]).unwrap();
-        full.t(na + nb / 2 + 1);
-        m.apply(&cx, &[na + 1, na + nb / 2 + 1]).unwrap();
-        full.cx(na + 1, na + nb / 2 + 1);
-        (m, full)
-    };
+    // region A is a Clifford expander graph; region B lives through
+    // its eras. See era_scenario.
+    let run_scenario = era_scenario;
 
     // Verified regime: width 16 against dense, exact up to the one
     // global phase the bundle regions' reduced CX chains rotate
@@ -403,4 +407,112 @@ fn heterogeneous_regions_compose_with_the_dynamic_register() {
     assert_matches_dense(&m, dense.as_ref(), n, "bulk⊗sparse mosaic");
     let names: Vec<String> = m.layout().into_iter().map(|(_, name, _)| name).collect();
     assert_eq!(names, vec!["bulk".to_string(), "sparse".to_string()]);
+}
+
+#[test]
+fn the_mosaic_memory_law_is_the_sum_of_ideal_costs() {
+    // The performance claim, as a measured law: sweeping the era
+    // family's width, the mosaic's memory stays sub-exponential (the
+    // expander tile is O(n + edges) in the bundle, the migrated T-half
+    // support-bounded in sparse) while the best fixed lens that can
+    // hold the family at all — sparse — is measured exponential on the
+    // very same family (the expander half populates 2^na basis
+    // states). One family, two laws, and a ×20+ measured ratio at the
+    // shared width where both still run.
+    let sizes = [8usize, 12, 16, 20]; // na; total width n = 2·na
+    let mut mosaic_costs = Vec::new();
+    for &na in &sizes {
+        let (m, _) = era_scenario(na, na);
+        assert_close(m.total_abs_sqr(), 1.0, 1e-9);
+        mosaic_costs.push(m.memory_bytes());
+    }
+    let mosaic_law = classify_law(&sizes, &mosaic_costs);
+    assert!(
+        !matches!(mosaic_law, Law::Exponential { .. }),
+        "mosaic memory must stay sub-exponential on its family: {mosaic_law:?} from {mosaic_costs:?}"
+    );
+
+    let sparse_sizes = [6usize, 8, 10];
+    let mut sparse_costs = Vec::new();
+    for &na in &sparse_sizes {
+        let (_, full) = era_scenario(na, na);
+        let state = sim().run_on("sparse", &full).unwrap();
+        sparse_costs.push(state.memory_bytes());
+    }
+    let sparse_law = classify_law(&sparse_sizes, &sparse_costs);
+    assert!(
+        matches!(sparse_law, Law::Exponential { .. }),
+        "sparse must pay the expander exponentially: {sparse_law:?} from {sparse_costs:?}"
+    );
+
+    // The measured ratio at n = 32, where sparse still runs.
+    let (m, full) = era_scenario(16, 16);
+    let sparse_fixed = sim().run_on("sparse", &full).unwrap();
+    assert!(
+        m.memory_bytes() * 20 < sparse_fixed.memory_bytes(),
+        "mosaic {} B vs sparse-fixed {} B at width 32",
+        m.memory_bytes(),
+        sparse_fixed.memory_bytes()
+    );
+}
+
+#[test]
+fn static_structure_costs_no_events_and_stays_at_the_parts() {
+    // The overhead of being a mosaic, measured: when the partition
+    // already fits the circuit, dispatch performs no merges, no
+    // migrations, no conversions — and the resting memory is the
+    // parts' sum plus fixed bookkeeping.
+    let n = 24;
+    let reg = GateRegistry::<C64>::standard();
+    let h = reg.resolve("h").unwrap().matrix(&[]).unwrap();
+    let cx = reg.resolve("cx").unwrap().matrix(&[]).unwrap();
+
+    let regions: Vec<(Vec<usize>, Box<dyn Backend<C64>>)> = (0..3)
+        .map(|b| {
+            let qubits: Vec<usize> = (b * 8..(b + 1) * 8).collect();
+            (qubits, sim().backends().create("sparse", 8).unwrap())
+        })
+        .collect();
+    let mut m = MosaicState::with_regions(n, regions, MosaicPolicy::default()).unwrap();
+    let mut parts_sum = 0usize;
+    for b in 0..3usize {
+        let base = b * 8;
+        m.apply(&h, &[base]).unwrap();
+        for q in base..base + 7 {
+            m.apply(&cx, &[q, q + 1]).unwrap();
+        }
+        // The same block on a standalone sparse backend, for the sum.
+        let mut fixed = sim().backends().create("sparse", 8).unwrap();
+        let ghz8: Circuit<C64> = library::ghz(8);
+        ghz8.bind(&reg).unwrap().run(fixed.as_mut()).unwrap();
+        parts_sum += fixed.memory_bytes();
+    }
+    assert!(
+        m.events().is_empty(),
+        "static structure must cost no events"
+    );
+    assert_eq!(m.conversions_bytes(), 0);
+    assert!(
+        m.memory_bytes() <= parts_sum + 1024,
+        "mosaic {} B must be the parts' {} B plus fixed bookkeeping",
+        m.memory_bytes(),
+        parts_sum
+    );
+    // And the joint state is exactly the product of block GHZs.
+    let f = 1.0 / (2f64).sqrt();
+    let all = (1u64 << 8) - 1;
+    for pattern in 0..8u64 {
+        let mut index = 0u64;
+        for b in 0..3 {
+            if (pattern >> b) & 1 == 1 {
+                index |= all << (b * 8);
+            }
+        }
+        let expect = f * f * f;
+        let got = m.amplitude(index);
+        assert!(
+            (got.re - expect).abs() < 1e-9 && got.im.abs() < 1e-12,
+            "block pattern {pattern:b}: {got}"
+        );
+    }
 }
