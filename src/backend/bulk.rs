@@ -685,6 +685,100 @@ impl<S: Scalar> BulkState<S> {
         }
     }
 
+    /// The register re-expressed **at scale `depth`**, as a state of
+    /// the same boundary width: the upper `depth` levels and the bulk
+    /// record are kept, and every deeper level is replaced by the
+    /// **channel-basis embedding** — each depth-`depth` super-site's
+    /// bond index written as bits on the first `⌈log₂ bond⌉` wires of
+    /// its span, all other wires exactly `|0⟩`. This is precisely the
+    /// state [`UnfoldProgram::run_to_depth`] produces at `depth`
+    /// (asserted in the tests), built here by `O(tree)` node surgery
+    /// with no gate ever applied — the projective depth store read out
+    /// as a *family of states, one per scale*. The snapshot is exact
+    /// with respect to the stored representation (fresh ledger).
+    pub fn scale_snapshot(&self, depth: usize) -> Result<Self> {
+        if depth > self.depth() {
+            return Err(Error::InvalidState(format!(
+                "scale_snapshot: depth {depth} exceeds hierarchy depth {}",
+                self.depth()
+            )));
+        }
+        // Channel-basis embedding over `[lo, hi)`: `|u⟩ ↦` bits of `u`
+        // on the first wires of the span, `|0⟩` elsewhere. Isometric by
+        // construction (each row a single unit entry).
+        fn embed<S: Scalar>(lo: usize, hi: usize, bond: usize, n: usize) -> Node<S> {
+            if lo >= n {
+                debug_assert_eq!(bond, 1, "dormant embedding must be trivial");
+                return Node::pristine(lo, hi);
+            }
+            if hi - lo == 1 {
+                let tensor = if bond == 2 {
+                    vec![S::one(), S::zero(), S::zero(), S::one()]
+                } else {
+                    vec![S::one(), S::zero()]
+                };
+                return Node {
+                    lo,
+                    hi,
+                    bond,
+                    tensor,
+                    children: None,
+                };
+            }
+            let mid = lo + (hi - lo).div_ceil(2);
+            let c = clog2(bond);
+            let ca_bits = c.min(mid - lo);
+            let ca = bond.min(1 << ca_bits);
+            let cb = bond.div_ceil(1 << ca_bits);
+            let mut tensor = vec![S::zero(); bond * ca * cb];
+            for u in 0..bond {
+                let a = u & ((1 << ca_bits) - 1);
+                let b = u >> ca_bits;
+                tensor[(u * ca + a) * cb + b] = S::one();
+            }
+            Node {
+                lo,
+                hi,
+                bond,
+                tensor,
+                children: Some((
+                    Box::new(embed(lo, mid, ca, n)),
+                    Box::new(embed(mid, hi, cb, n)),
+                )),
+            }
+        }
+        fn splice<S: Scalar>(node: &Node<S>, depth: usize, n: usize) -> Node<S> {
+            if node.dormant(n) {
+                return node.clone();
+            }
+            if depth == 0 || node.children.is_none() {
+                return embed(node.lo, node.hi, node.bond, n);
+            }
+            let (l, r) = node.children.as_ref().expect("checked");
+            Node {
+                lo: node.lo,
+                hi: node.hi,
+                bond: node.bond,
+                tensor: node.tensor.clone(),
+                children: Some((
+                    Box::new(splice(l, depth - 1, n)),
+                    Box::new(splice(r, depth - 1, n)),
+                )),
+            }
+        }
+        Ok(BulkState {
+            config: self.config,
+            root: splice(&self.root, depth, self.n),
+            top: self.top.clone(),
+            n: self.n,
+            ledger: Ledger::default(),
+            peak_block_elements: 1,
+            peak_width: self.n,
+            reroots: 0,
+            releases: 0,
+        })
+    }
+
     // ── dynamic scaling ─────────────────────────────────────────────
 
     /// Append `k` fresh `|0⟩` qubits at the boundary (new indices

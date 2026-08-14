@@ -278,6 +278,62 @@ The remaining rungs, in dependency order:
   "refine infinitely", currently approximated by re-running at a finer
   dial (larger `max_bond`, finer `Ball::quantize`).
 
+## The scale-time register (clock program) — SHIPPED (core)
+
+`clock` is live: internal, relational time as a **selector qudit**
+whose entanglement with the system is mandatory, with scale as its
+axis. `BranchedRegister` (selector over shared,
+representation-heterogeneous branches; lazy interference; polynomial
+Gram machinery for Born statistics, conditioning and the
+selector↔system Schmidt rank), `scale_history` (the Page–Wootters
+register over the bulk depth axis, every slice an `O(tree)`
+`scale_snapshot` — no gate applied, width-32 six-scale histories in
+kilobytes), `tick` (`|ℓ⟩⟨ℓ|⊗V_ℓ` — one unit of internal time is one
+level of coarse-to-fine information flow), and scale interferometry
+(inter-scale overlap as clock Born statistics; the structured test
+state moves by exactly `1/√2` per RG step). The measured payoff: four
+width-16 slices, each cheap in its own representation and hostile to
+the others', held additively at 3,845 B against 68–850× for every
+single-representation alternative — new qudit dimension above the
+problem, lower representational structure below. Remaining rungs:
+
+- **The native bulk tick.** `tick` applies the level's dilated
+  unitaries through `Backend::apply`, which on a `bulk` branch
+  materializes the root-crossing block. The refinement isometries are
+  tree-structured by construction, so a bulk-native controlled
+  refinement (splice one level of the stored program directly into the
+  snapshot's tree, the way `scale_snapshot` already splices basis
+  embeddings) would make ticking as free as snapshotting — internal
+  time at width 32+ with no dense transient anywhere.
+- **Branching histories.** The clock is currently a line
+  (`ℓ → ℓ+1`). A *tree* of ticks — different refinement or gate
+  futures in superposition, selector states labelling paths — would
+  let the register hold alternative coarse-to-fine routes coherently,
+  with the same Gram machinery pricing their interference. The memo
+  journal's unwind/rewind is the classical shadow of this.
+- **Phase pinning for phase-loose branches.** The measured boundary:
+  superposition makes branch global phases relative, so the
+  graph-state bundle (defined up to global phase; vertex-operator
+  reductions rotate it — classified in development at exactly
+  `e^{−iπ/4}` on the pinned case) is sound as a static slice but not
+  under broadcast dynamics. The vop reduction *knows* the phase it
+  drops; journaling it would upgrade the bundle to phase-faithful and
+  open the door to graph-state slices under full dynamics.
+- **Selector structure as an atlas axis.** Branch count and unique
+  states are honest resources; registering a policy-constructed
+  contracted view would let `advantage_scan` classify selector growth
+  laws next to support, clusters, bonds and hierarchy.
+- **Selector gates through the scheduler.** Clock operations are
+  method calls today; routing them through the registry/schedule (the
+  `mixed` module's `clock_d`/`shift_d` are the natural names) would
+  let evented circuits steer the internal time system, including
+  measurement-conditioned ticks — dynamics that choose their own
+  resolution.
+- **Exotic clock weights.** Selector weights already live in the
+  amplitude algebra; a split-complex clock (signed slice weights, net
+  vs path statistics) would connect the time system to the
+  inclusion–exclusion program.
+
 ## Further non-Cayley–Dickson explorations
 
 `SplitComplex` establishes the pattern (indefinite Born form surfaced through

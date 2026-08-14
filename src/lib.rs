@@ -77,6 +77,7 @@ pub mod bundle;
 pub mod causal;
 pub mod characterize;
 pub mod circuit;
+pub mod clock;
 pub mod closure;
 pub mod conformance;
 pub mod coupling;
@@ -163,6 +164,7 @@ pub mod prelude {
         FamilyLaws, FidelityCensus, GateCost, PerfEnvelope, Wall, WidthCeiling,
     };
     pub use crate::circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};
+    pub use crate::clock::{scale_history, tick, BranchedRegister};
     pub use crate::conformance::{
         random_registry_circuit, verify_backend, ConformanceConfig, ConformanceReport,
     };

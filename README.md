@@ -120,6 +120,43 @@ parts are swappable:
   Dimension added above the problem separates its entanglement into
   structured, addressable channels — the same up-a-dimension move
   `lift` and `upembed` make for magic, made for entanglement.
+- **The time system inside the register** ([`clock`](src/clock.rs)) —
+  a **selector qudit** whose entanglement with the system is mandatory
+  and structural, with scale as its axis. [`BranchedRegister`] holds a
+  `d`-level selector over weighted branches that may each live in a
+  **different representation** (one sparse, one factored, one MPS, one
+  graph-state bundle); branch states are shared, selector rotations
+  are bookkeeping (never copies, growth ledgered), interference is
+  evaluated lazily, and everything selector-side — Born statistics,
+  conditioning, the selector↔system Schmidt rank — is computed
+  polynomially from the pairwise Gram of unique branches, never by
+  enumerating the joint register. `scale_history` aligns the clock
+  with recursion: the Page–Wootters register `Σ_ℓ w_ℓ|ℓ⟩⊗|ψ at scale
+  ℓ⟩` over the bulk register's own depth levels, each slice an
+  `O(tree)` **`scale_snapshot`** (node surgery, no gate applied —
+  width-32 six-scale histories in kilobytes); conditioning the clock
+  on `|ℓ⟩` **is** the scale-ℓ view (measured to 5e-16), `tick` is the
+  clock-controlled refinement `|ℓ⟩⟨ℓ|⊗V_ℓ` (one unit of internal time
+  = one level of coarse-to-fine information flow), and interfering the
+  clock turns inter-scale overlap into Born statistics — **scale
+  interferometry**: the structured test state moves by exactly `1/√2`
+  per RG step, `|0…0⟩` by `1.0` (nothing to refine, full visibility).
+  The payoff, measured: four width-16 slices — GHZ, rainbow, dense
+  brickwork, random long-range graph state — each hostile to the
+  others' representations, held **additively** in one flagged register
+  at 3,845 B, while every single-representation alternative pays
+  68–850× on its clashing slice (ghz-on-factored 1.0 MB,
+  brickwork-on-sparse 3.3 MB, graph-on-factored 262 KB, dense 1.0 MB);
+  the contracted view (selector traced against the weights) is a
+  `Backend`, full-basis-conformant against the dense sum. New qudit
+  dimension **above** the problem, lower representational structure
+  below it. Honest boundaries, measured: enumeration-based trait
+  methods cost the union support; `tick` refuses branch states shared
+  across scales; and a superposition makes branch *global* phases
+  relative — a representation maintained only up to global phase (the
+  bundle's documented convention) is sound as a static slice but
+  corrupts the contracted sum under broadcast dynamics, pinned in the
+  tests as the phase-faithfulness contract.
 - **Structure discovery** ([`discovery`](src/discovery.rs)) — find gates
   that stabilize the current state (identity up to phase), and verify
   n-wide **signal threads**: ops spliced at several points of the circuit
@@ -964,7 +1001,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 824 tests (84 unit + 733 across sixty-eight
+`cargo test` runs 833 tests (86 unit + 740 across sixty-nine
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1035,6 +1072,20 @@ entirely trivial accessors and defensive guards:
   Schmidt rank never exceeds the crossing channel's bond; the depth
   ledger localizing rainbow loss at the root while pair-local circuits
   stay exact; composition with `Ball` including dynamic growth.
+- **clock_register** — scale snapshots equal the unfold with no gate
+  applied; Page–Wootters conditioning reads out each scale exactly;
+  the selector↔system Schmidt rank is the number of held scales and
+  collapses to 1 on conditioning/measurement (both outcomes across
+  seeds); the tick advances every occupied scale one level (verified
+  against independently built snapshots) and refuses, by name, a
+  topped-out clock and branch states shared across scales; scale
+  interferometry equals the directly computed inter-scale overlap
+  (`1/√2` per step on the structured state, `1.0` on `|0…0⟩`); the
+  four-representation payoff pinned (3,845 B vs 68–850× alternatives,
+  full-basis conformance of the contracted view before and after
+  broadcast dynamics, no branch copied); the phase-faithfulness
+  boundary made visible, never silent; width-32 six-scale histories in
+  kilobytes, built the dynamic way.
 - **capacity** — the resource guard as behavior: over-scale allocations
   refused by *measurement* (requested vs available bytes in the error,
   auto-measured and under explicit limits); adaptive stays sparse when
@@ -1896,6 +1947,11 @@ src/
                  across (reach per unit cost of the native cross-scale
                  operators; the coset class they cannot leave)
   causal.rs      backward cones, causal diamonds, dual-time resolution
+  clock.rs       the time system inside the register: a selector qudit
+                 over representation-heterogeneous branches (shared
+                 states, lazy interference, polynomial Gram machinery),
+                 the Page–Wootters scale history over the bulk depth
+                 axis, the clock-controlled tick, scale interferometry
   bundle.rs      fibered re-orderable journalled polarity co-bundle:
                  entanglement as a budgeted, auditable resource, with
                  native graph-state measurement (collapse in the
@@ -1948,7 +2004,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           sixty-eight integration suites (see Testing)
+tests/           sixty-nine integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -1956,6 +2012,8 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  coarse_register (mera + Ball), dynamic_register (the
                  scaled register: growth, verified release, streaming,
                  the certified ledger, the structured unfold),
+                 scale_time (the clock qudit: conditioning, the tick,
+                 scale interferometry, the four-representation payoff),
                  absolute_reference (D[ω]
                  vs every backend), adaptive_feedback (recursive trees +
                  frame repair), capacity_probe (real walls, measured),
@@ -2008,7 +2066,9 @@ lift's remaining `2^t` is a *holding* cost, measured), the MERA completion
 (disentanglers, path updates that replace block materialization,
 ascending superoperators so operators renormalize instead of blocks —
 gauge maintenance shipped as the bulk register's environment-weighted
-rebuilds, with certified per-depth bounds), per-factor and MPS-bond-gauge
+rebuilds, with certified per-depth bounds), the scale-time clock's
+remaining rungs (the native bulk tick, branching histories,
+phase-pinned graph-state dynamics), per-factor and MPS-bond-gauge
 frames, truncated p-adic amplitudes (the `scale`/`born_weight` split is
 the designed seam), dual numbers and other non-Cayley–Dickson scalars,
 classical registers for the scheduler's feedback trees, noise channels,
