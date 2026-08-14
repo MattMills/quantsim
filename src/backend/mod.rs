@@ -19,6 +19,7 @@
 
 mod adaptive;
 mod braided_state;
+mod bulk;
 mod clifford_frame;
 mod dense;
 mod device;
@@ -32,6 +33,9 @@ mod sparse;
 
 pub use adaptive::AdaptiveState;
 pub use braided_state::{BraidedState, Realization};
+pub use bulk::{
+    BulkConfig, BulkState, UnfoldProgram, UnfoldStep, BULK_MAX_QUBITS, UNFOLD_MAX_STEP_QUBITS,
+};
 pub use clifford_frame::{
     conjugate_by_step, CliffordFrameStats, CliffordFramedState, CliffordStep, PauliString,
     CLIFFORD_DIAGONAL_MAX, CLIFFORD_RECOGNITION_MAX,
@@ -320,11 +324,11 @@ impl<S: Scalar> BackendRegistry<S> {
     }
 
     /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"`,
-    /// `"factored"`, `"mps"`, `"mera"` and `"bundle"` backends.
+    /// `"factored"`, `"mps"`, `"mera"`, `"bulk"` and `"bundle"` backends.
     /// (`"bundle"` is the graph-state
     /// [`PolarityBundle`](crate::bundle::PolarityBundle): exact and
     /// `O(n + |E|)` on the Clifford sector, refusing anything else by
-    /// name.) (`"mps"` and `"mera"`
+    /// name.) (`"mps"`, `"mera"` and `"bulk"`
     /// require a commutative division algebra and report an error at
     /// creation elsewhere.)
     pub fn standard() -> Self {
@@ -340,6 +344,8 @@ impl<S: Scalar> BackendRegistry<S> {
         reg.register("mps", |n| Ok(Box::new(MpsState::<S>::new(n)?)))
             .expect("fresh registry");
         reg.register("mera", |n| Ok(Box::new(MeraState::<S>::new(n)?)))
+            .expect("fresh registry");
+        reg.register("bulk", |n| Ok(Box::new(BulkState::<S>::new(n)?)))
             .expect("fresh registry");
         reg.register("bundle", |n| {
             let mut bundle = crate::bundle::PolarityBundle::new(n)?;

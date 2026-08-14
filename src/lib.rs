@@ -131,10 +131,11 @@ pub use sim::Simulator;
 pub mod prelude {
     pub use crate::backend::{
         max_amplitude_deviation, pauli_expectation, AdaptiveState, ArityPolicy, Backend,
-        BackendRegistry, BraidedState, CliffordFrameStats, CliffordFramedState, DenseState, DeviceState,
-        DurationModel, FactoredState, FrameStats, FramedState, InterferenceRecord,
-        InterferenceState, LatencyMap, MeraConfig, MeraState, MpsConfig, MpsState, PauliString,
-        PhaseFieldState, PhysicalOp, Realization, SparseState, Topology,
+        BackendRegistry, BraidedState, BulkConfig, BulkState, CliffordFrameStats,
+        CliffordFramedState, DenseState, DeviceState, DurationModel, FactoredState, FrameStats,
+        FramedState, InterferenceRecord, InterferenceState, LatencyMap, MeraConfig, MeraState,
+        MpsConfig, MpsState, PauliString, PhaseFieldState, PhysicalOp, Realization, SparseState,
+        Topology, UnfoldProgram, UnfoldStep,
     };
     pub use crate::braided::{
         bch_residual, bracket, cayley_ball, commutator_residual, distinct_orbits,

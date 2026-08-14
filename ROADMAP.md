@@ -193,18 +193,76 @@ at depth 1 *is* a maximally entangled super-site pair, both coarse
 singular values exactly 1/√2) — with `refine_basis` as the per-site
 descent dictionary. Conformance-swept over the full registry;
 truncation degrades measurably, never silently; composes with `Ball`
-so representation resolution and numeric resolution stack. The
-remaining rungs, in dependency order:
+so representation resolution and numeric resolution stack.
+
+**Rung 2 — SHIPPED** (`BulkState`, registered `"bulk"`,
+`tests/bulk_register.rs`, `examples/dynamic_register.rs`): the
+hierarchy in its **projective form** — every node tensor kept
+isometric, all state weight in one explicit bulk record (`top`), the
+state stored across depth as a stack of isometries under the record.
+What the form buys, measured:
+
+- **the gauge-maintenance rung, delivered** — not by center transport
+  but by *environment-weighted rebuilds*: the record's Gram factor
+  (`X` with `X†X = ρ`) is transported down the path before every
+  re-compression, so every discarded singular value is **global**
+  Schmidt weight; the ledger resolves **per depth**
+  (`discarded_by_depth`) and certifies
+  `‖ψ_ideal − ψ_stored‖ ≤ Σ√ε` (asserted against dense across seeds;
+  *equality* on single-event runs; a pinned seed where the weighted
+  rebuild beats the block-local one by > 4× — and no dominance claim:
+  greedy sequential truncations do not commute, seeds exist where the
+  orderings trade places, the certified bound is the invariant).
+  `‖ψ‖² = ‖top‖²` identically — norm at width 40 is an `O(χ)` read.
+- **dynamic width** — `grow` appends boundary qubits in amortized
+  `O(1)` (within capacity: bookkeeping over a pristine dormant suffix;
+  past it: the register **re-roots**, becoming the left *site* of a
+  register twice its size — `recursive`'s point-is-a-lattice move
+  applied to the representation; a live GHZ grown 2 → 32 with exactly
+  4 re-roots, amplitudes exact throughout). `release` detaches
+  boundary qubits, refusing with the **measured leakage** unless the
+  qubit is verifiably `|0⟩`; `release_measured` measures first. The
+  flagship: 48 logical qubits streamed through a register with peak
+  width 2, outcomes GHZ-correlated — width tracks *live entanglement*,
+  not problem size. The price, also measured: the capacity tree is
+  dyadic, so hierarchy-locality means power-of-two alignment (a
+  5-block circuit that was tree-aligned on `mera`'s div-ceil tree
+  crosses dyadic boundaries here, and the guard refuses the block).
+- **the structured unfold** — `unfold_program` compiles the depth
+  store into a seed plus one Stinespring-dilated unitary per node;
+  replayed on dense it reproduces the state to `3e-17`; stopped after
+  `ℓ` levels it **is** `coarse_state(ℓ)` on the channel wires with
+  every un-injected wire exactly `|0⟩` (asserted per depth); each
+  wire's `sequence` is the complete list of interactions it ever has
+  (nested spans down its tree path), and measured Schmidt rank across
+  any tree-aligned cut never exceeds the crossing channel's bond —
+  entanglement relocated into nameable, sequenced channel wires, the
+  up-a-dimension move `lift`/`upembed` make for magic, made for
+  entanglement.
+
+The remaining rungs, in dependency order:
 
 - **Path updates instead of block materialization** — apply a cross-cut
   2q gate as its operator-Schmidt sum (rank ≤ 4) of single-site terms,
   then hierarchical rounding along the tree path (bond direct sums +
   SVD truncation): removes the `2^{block}` transient, making GHZ-across-
-  the-root bond-2 *during* the gate, not just after.
-- **Gauge maintenance** — keep the tree root-canonical so per-node
-  truncation weights are environment-correct and the discarded ledger
-  becomes a *certified* global L2 bound (today it is block-local, like
-  the MPS backend's, and labeled as such).
+  the-root bond-2 *during* the gate, not just after. (On `bulk` the
+  environment factors for the path are already in hand.)
+- **Gauge maintenance on `mera` itself** — the rung is delivered on
+  `bulk`; back-porting either the weighted rebuild or true center
+  transport to `MeraState` (or retiring the distinction) remains, as
+  does a non-greedy truncation order (the pinned seed where orderings
+  trade places is the test case).
+- **Interior release / renumbering** — `release` is boundary-only
+  (stack discipline); releasing an interior qubit means renumbering
+  the leaf map, and the honest cost of the re-alignment should be
+  measured, not assumed.
+- **Streaming unfold on the dynamic register** — the unfold currently
+  replays onto a fixed-width backend; running it *on a `BulkState`
+  that grows as wires are injected* would make the width trajectory
+  literal (peak width = channel count at the widest level), and the
+  dilated steps are capped at `2^6` wires — factorized dilations
+  (cascades of two-wire isometries) would lift the cap.
 - **Disentanglers** — the u-layer between levels (the MERA proper):
   variationally chosen to minimize truncation across cuts; the
   measured payoff target is bond growth on critical/area-law states

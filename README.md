@@ -19,15 +19,20 @@ parts are swappable:
   [ROADMAP](ROADMAP.md)): truncated p-adics, dual numbers,
   Clifford scalars.
 - **State representation** — a [`Backend<S>`](src/backend/mod.rs) trait with
-  six shipped implementations: **dense** state vector (the BQP reference),
+  seven shipped implementations: **dense** state vector (the BQP reference),
   **sparse** hash-map state, an **adaptive** backend that promotes sparse →
   dense at ¼ density, the **factored** backend (product of dense factors
   over qubit regions — memory tracks entanglement *clusters*), **MPS**
   (matrix product states on a dependency-free Jacobi SVD — memory tracks
-  Schmidt rank / *bond dimension*), and **mera** (a hierarchical
-  isometry tree — memory tracks *renormalization structure*; see below).
+  Schmidt rank / *bond dimension*), **mera** (a hierarchical
+  isometry tree — memory tracks *renormalization structure*; see below),
+  and **bulk** (the hierarchy in maintained isometric gauge with an
+  explicit bulk record — and **dynamic width**: boundary qubits grown
+  and released at runtime; see below).
   Four orthogonal compression axes — support, clusters, bonds,
-  hierarchy — all conformance-verified against dense.
+  hierarchy — all conformance-verified against dense, with the bulk
+  register adding dynamic width and a maintained gauge on the
+  hierarchy axis.
 - **Exact reference** ([`exact`](src/exact.rs)) — a `D[ω] = ℤ[1/√2, e^{iπ/4}]`
   evaluator (checked `i128` coefficients) for the Clifford+T fragment and
   all standard rotations at eighth-turn angles: **absolute** reference
@@ -83,6 +88,38 @@ parts are swappable:
   while entanglement stays hierarchy-local, and the whole thing composes
   with `Ball` so coarse representation and certified coarse arithmetic
   stack.
+- **Dynamically scaled register** ([`BulkState`](src/backend/bulk.rs)) —
+  the hierarchy taken to its projective form: every node tensor kept
+  **isometric**, every scalar of state weight in one explicit **bulk
+  record** (`top`), so the state is literally stored *across depth* as
+  a stack of isometries under the record — `‖ψ‖² = ‖top‖²`
+  identically, an `O(χ)` read at width 40. The register **scales at
+  runtime**: `grow` appends fresh boundary qubits in amortized `O(1)`
+  (within capacity it is bookkeeping; past it the register re-roots —
+  the whole tree becomes the left *site* of a register twice its size,
+  the `recursive` module's point-is-a-lattice move applied to the
+  representation itself; a live 32-wide GHZ is grown from width 2 with
+  4 re-roots, exactly), and `release` detaches boundary qubits again —
+  **refusing with the measured leakage** (`5.000e-1` for a GHZ member)
+  unless the qubit is verifiably `|0⟩`; `release_measured` measures
+  first, so streaming works: 48 logical qubits pass through a register
+  whose peak width is 2, outcomes exactly GHZ-correlated. Truncation
+  is **environment-weighted**: the record's Gram factor is transported
+  down before every re-compression, so discarded weight is *global*
+  Schmidt weight, ledgered **per depth** with a certified bound
+  `‖ψ_ideal − ψ_stored‖ ≤ Σ√ε` (asserted against dense across seeds;
+  tight — equality — for single-event runs; 6× less error than
+  block-local truncation on a pinned seed, no dominance claimed: the
+  orderings can trade places). And the depth store **unfolds**:
+  `unfold_program` compiles the register into a seed plus one dilated
+  unitary per node — replayed on dense it reproduces the state to
+  `3e-17`, stopped after `ℓ` levels it *is* `coarse_state(ℓ)` on the
+  channel wires — with each wire's `sequence` naming the only
+  interactions it ever has: entanglement between tree-aligned regions
+  rides nameable channel wires with measured Schmidt rank ≤ bond.
+  Dimension added above the problem separates its entanglement into
+  structured, addressable channels — the same up-a-dimension move
+  `lift` and `upembed` make for magic, made for entanglement.
 - **Structure discovery** ([`discovery`](src/discovery.rs)) — find gates
   that stabilize the current state (identity up to phase), and verify
   n-wide **signal threads**: ops spliced at several points of the circuit
@@ -927,7 +964,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 526 tests (67 unit + 452 across forty-seven
+`cargo test` runs 824 tests (84 unit + 733 across sixty-eight
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -981,6 +1018,23 @@ entirely trivial accessors and defensive guards:
   every depth; truncation degrades measurably, never silently; gate cost
   is the spanning subtree with honest caps; width-40 hierarchy-local
   circuits in kilobytes; composition with `Ball`.
+- **bulk_register** — full-registry conformance for the dynamic
+  register; the gauge invariant (norm as a record read, cross-checked
+  against enumeration); `coarse_state(0)` **is** the bulk record;
+  growth exact, disturbance-free, and amortized (4 re-roots for 30
+  grows, pinned; grown = fresh-built against dense); release refused
+  with the measured leakage and exact after uncompute; the 48-qubit
+  stream through a width-2 register with GHZ-correlated outcomes and
+  both stream values across seeds; the certified truncation bound
+  `‖Δψ‖ ≤ Σ√ε` asserted against dense across seeds with the per-depth
+  ledger summing to the total and `‖top‖` reflecting the loss; the
+  pinned seed where environment weighting beats block-local truncation
+  by > 4×; the unfold replayed exactly (steps verified unitary),
+  snapshots at every depth equal to the coarse states with un-injected
+  wires exactly `|0⟩`; wire sequences nest down the tree and measured
+  Schmidt rank never exceeds the crossing channel's bond; the depth
+  ledger localizing rainbow loss at the root while pair-local circuits
+  stay exact; composition with `Ball` including dynamic growth.
 - **capacity** — the resource guard as behavior: over-scale allocations
   refused by *measurement* (requested vs available bytes in the error,
   auto-measured and under explicit limits); adaptive stays sparse when
@@ -1875,11 +1929,14 @@ src/
   circuit.rs     Circuit<S> (chainable builders, raw + diagonal kernels,
                  append), BoundCircuit<S> (bind-time validation, inverse())
   backend/       Backend<S> trait + dense / sparse / adaptive / factored /
-                 mps / mera / bundle (graph-state) / interference /
-                 device / frames / clifford_frame / phase_field (exact
-                 phase polynomial over ℤ/M) / braided_state (the braid
-                 word as the storage), BackendRegistry<S>,
-                 pauli_expectation
+                 mps / mera / bulk (dynamically scaled bulk–boundary
+                 register: isometric gauge under an explicit record,
+                 grow/release at runtime, certified per-depth ledger,
+                 the structured unfold) / bundle (graph-state) /
+                 interference / device / frames / clifford_frame /
+                 phase_field (exact phase polynomial over ℤ/M) /
+                 braided_state (the braid word as the storage),
+                 BackendRegistry<S>, pauli_expectation
   schedule.rs    evented scheduler: simultaneous loops, events, recursive
                  measurement feedback (adaptive trees)
   lift.rs        Clifford+T → measurement-feedback loop on n+t qubits
@@ -1891,12 +1948,15 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           forty-seven integration suites (see Testing)
+tests/           sixty-eight integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
                  verify_models, frames_demo, clifford_space, clifford_lift,
-                 coarse_register (mera + Ball), absolute_reference (D[ω]
+                 coarse_register (mera + Ball), dynamic_register (the
+                 scaled register: growth, verified release, streaming,
+                 the certified ledger, the structured unfold),
+                 absolute_reference (D[ω]
                  vs every backend), adaptive_feedback (recursive trees +
                  frame repair), capacity_probe (real walls, measured),
                  device_reproduction (real geometries × latency maps),
@@ -1945,9 +2005,10 @@ alternate representation/geometry landscapes to measure it across.
 frame (the crude `2^t` product bound is not the ≈`2^{0.4t}` state of the
 art — the gap is measurable here) and frames over factored inners (the
 lift's remaining `2^t` is a *holding* cost, measured), the MERA completion
-(disentanglers, path updates that replace block materialization, gauge
-maintenance so truncation bounds certify, ascending superoperators so
-operators renormalize instead of blocks), per-factor and MPS-bond-gauge
+(disentanglers, path updates that replace block materialization,
+ascending superoperators so operators renormalize instead of blocks —
+gauge maintenance shipped as the bulk register's environment-weighted
+rebuilds, with certified per-depth bounds), per-factor and MPS-bond-gauge
 frames, truncated p-adic amplitudes (the `scale`/`born_weight` split is
 the designed seam), dual numbers and other non-Cayley–Dickson scalars,
 classical registers for the scheduler's feedback trees, noise channels,
