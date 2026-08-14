@@ -85,7 +85,7 @@ fn sweep(arities: &[usize]) -> Result<(usize, usize, usize, usize, usize, Vec<St
                 refined_exact += 1;
             } else if failures.len() < 8 {
                 failures.push(format!("REFINED  arities {:?} bonds {:?} cut {:?}: exact {} refined {} (cap {} chars {})",
-                    arities, g.bonds(), &cut, exact, refined, cap, chars));
+                    arities, g.bonds(), cut, exact, refined, cap, chars));
             }
             if exact == chars {
                 char_exact += 1;
@@ -94,7 +94,7 @@ fn sweep(arities: &[usize]) -> Result<(usize, usize, usize, usize, usize, Vec<St
                     "arities {:?} bonds {:?} cut {:?}: exact {} chars {} cap {} schur {}",
                     arities,
                     g.bonds(),
-                    &cut,
+                    cut,
                     exact,
                     chars,
                     cap,
@@ -107,7 +107,7 @@ fn sweep(arities: &[usize]) -> Result<(usize, usize, usize, usize, usize, Vec<St
                     "MATCHING NOT SATURATING: arities {:?} bonds {:?} cut {:?}: {} vs {}",
                     arities,
                     g.bonds(),
-                    &cut,
+                    cut,
                     exact,
                     schur
                 ));
