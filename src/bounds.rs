@@ -31,7 +31,7 @@
 
 use crate::backend::{
     Backend, CliffordFramedState, FactoredState, InterferenceState, MeraConfig, MeraState,
-    MpsConfig, MpsState, SparseState,
+    MosaicState, MpsConfig, MpsState, SparseState,
 };
 use crate::circuit::Circuit;
 use crate::error::Result;
@@ -346,6 +346,27 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
     // polynomial, leaving certification to the contention-fragile time
     // law. The axis needs octave-aligned sampling first — see the
     // roadmap's clock/bulk rungs.
+    //
+    // The mosaic: the multi-representation register from singleton
+    // regions, structure sculpted by the gates, merges chosen from
+    // measured predictions. Its assumption is that the circuit's
+    // portions each fit *some* lens in its policy (sparse/dense by
+    // default) — the composite axis whose certification would mean a
+    // family every fixed lens loses is still classically held by the
+    // partition. No capacity tree, so no sawtooth: the fit sees the
+    // policy's honest costs.
+    axes.push(probe(
+        "mosaic",
+        MosaicState::<C64>::new,
+        circuit,
+        &reg,
+        |s: &MosaicState<C64>| {
+            (
+                format!("{} regions, {} events", s.layout().len(), s.events().len()),
+                true,
+            )
+        },
+    ));
     // The phase-field representation: cost is the phase polynomial's
     // monomial count, and the assumption is that the circuit stays
     // diagonal-with-root-of-unity-entries over an affine subcube. A gate

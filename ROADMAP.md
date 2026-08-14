@@ -391,12 +391,26 @@ rungs:
   cheap representations when a magic era ends, and bond/hierarchy
   predictors would let merges target mps/bulk instead of only
   sparse/dense.
-- **The mosaic as an atlas axis.** Registered and conformance-swept,
-  but the boundary atlas should classify the mosaic's growth laws next
-  to the fixed lenses — the interesting measured question is which
-  families the *composite* keeps sub-exponential that every fixed
-  lens loses (the union-edge example is the existence proof at fixed
-  width).
+- **The mosaic as an atlas axis — SHIPPED, and it taught the atlas
+  something.** The first probe flipped the candidate verdict to
+  `Classical via ["mosaic"]`: not an advantage discovery but
+  **prefactor aliasing** — the policy elected sparse at one size and
+  dense at its neighbours, and a four-point fit read the jumping
+  constant (≈50 B/entry vs 16 B/amplitude on the same 2^n states) as
+  `size^4`. The atlas assumes each axis has one stable cost model; a
+  policy-composite axis violates that unless its elections track the
+  state. The fix was owed anyway: **memory-pressure re-election**
+  (`MosaicPolicy::pressure_factor`/`pressure_floor` — the adaptive
+  backend's promotion rule generalized, hysteresis + floor, every
+  re-election ledgered with measured-vs-predicted bytes). With it the
+  axis reads `1.89^size` on the candidate family, the escape verdict
+  stands, and the scan now shows the composite certifying exactly
+  where its lenses reach: constant on ghz (349 B) and rainbow
+  (896 B), `size^3.3` on nearest-neighbour IQP, `size^5.1` on
+  t = n/2 doped Clifford — and honestly exponential on qft, brickwork,
+  random universal and long-range IQP. Still open here: elections
+  beyond the sparse/dense pair (bond/hierarchy predictors), and
+  recognition-driven *return* to bundle when a magic era ends.
 - **Mosaic × clock.** Selector slices that are mosaics: superpositions
   of regionally-structured states — the union edge with per-slice
   spatial structure, and branching histories over era sequences.

@@ -91,6 +91,16 @@ pub struct MosaicPolicy {
     /// Merged regions pick sparse when the predicted support cost
     /// stays below this fraction of the predicted dense cost.
     pub sparse_bias: f64,
+    /// Memory-pressure re-election (the adaptive backend's promotion
+    /// rule, generalized): after a gate, a sparse/dense region whose
+    /// measured memory exceeds this factor times the cheaper
+    /// prediction converts to it — a merge-time election is not
+    /// forever, because the state keeps evolving after the choice.
+    /// Hysteresis against thrashing.
+    pub pressure_factor: f64,
+    /// Regions below this many bytes are never re-elected — at toy
+    /// sizes the constants are noise, not signal.
+    pub pressure_floor: usize,
 }
 
 impl Default for MosaicPolicy {
@@ -98,6 +108,8 @@ impl Default for MosaicPolicy {
         MosaicPolicy {
             fallbacks: vec!["sparse".into(), "dense".into()],
             sparse_bias: 1.0,
+            pressure_factor: 2.0,
+            pressure_floor: 1024,
         }
     }
 }
@@ -408,6 +420,47 @@ impl<S: Scalar> MosaicState<S> {
         true
     }
 
+    /// Memory-pressure re-election between the policy's own
+    /// sparse/dense pair: a region whose measured memory exceeds the
+    /// hysteresis factor times the cheaper prediction converts, with
+    /// the measurement in the ledger. Regions in structured
+    /// representations are left alone (their cost is their point) and
+    /// tiny regions are below the floor.
+    fn reelect(&mut self, region: usize) {
+        let (name, width, current) = {
+            let r = &self.regions[region];
+            (
+                r.state.name().to_string(),
+                r.qubits.len(),
+                r.state.memory_bytes(),
+            )
+        };
+        if (name != "sparse" && name != "dense") || current < self.policy.pressure_floor {
+            return;
+        }
+        let support = self.regions[region].state.nonzero_count().max(1);
+        let entry = std::mem::size_of::<S>() + 24;
+        let sparse_pred = support * entry;
+        let dense_pred = (1usize << width.min(60)) * std::mem::size_of::<S>();
+        let (best, best_pred) = if sparse_pred <= dense_pred {
+            ("sparse", sparse_pred)
+        } else {
+            ("dense", dense_pred)
+        };
+        if best == name || (current as f64) <= best_pred as f64 * self.policy.pressure_factor {
+            return;
+        }
+        if self.convert(region, best).is_ok() {
+            self.events.push(MosaicEvent {
+                kind: "migrate",
+                qubits: self.regions[region].qubits.clone(),
+                from: name,
+                to: best.to_string(),
+                cause: format!("memory pressure: measured {current} B vs predicted {best_pred} B"),
+            });
+        }
+    }
+
     /// Route a gate: merge the touched regions, then apply with
     /// refusal-driven structure discovery — first try splitting the
     /// region along its own components so only the affected part
@@ -425,7 +478,10 @@ impl<S: Scalar> MosaicState<S> {
             .collect();
         let first = apply(self.regions[region].state.as_mut(), &local);
         let refusal = match first {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                self.reelect(region);
+                return Ok(());
+            }
             Err(e @ Error::UnsupportedForAlgebra { .. }) | Err(e @ Error::InvalidState(_)) => e,
             Err(other) => return Err(other),
         };
@@ -451,6 +507,7 @@ impl<S: Scalar> MosaicState<S> {
                     to: name.clone(),
                     cause: format!("refused: {refusal}"),
                 });
+                self.reelect(region);
                 return Ok(());
             }
         }
