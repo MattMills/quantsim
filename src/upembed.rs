@@ -53,6 +53,25 @@
 //! is an exact ring element that is only converted to a double when a
 //! caller asks for one.
 //!
+//! ## Arbitrary equatorial angles
+//!
+//! Nothing in the gadget is specific to `π/4`. The kickback
+//! `CX_{q→a}` with `|A_θ⟩ = (|0⟩ + e^{iθ}|1⟩)/√2` post-selects to
+//! `P(θ) = diag(1, e^{iθ})` at amplitude `1/√2` for **every** equatorial
+//! `θ`, and the boundary factors stay a per-wire lookup:
+//! `⟨A_θ|X|A_θ⟩ = cos θ`, `⟨A_θ|XZ|A_θ⟩ = −i·sin θ`, and — the load-
+//! bearing one — `⟨A_θ|Z|A_θ⟩ = 0` at every angle, so the line-killing
+//! zero that keeps the subset sum cheap is a property of the equator,
+//! not of the grid. [`gadgetize_equatorial`] and
+//! [`cluster_readout_equatorial`] are that generalization: the same
+//! `t + 1` transports, the same cluster factorization, with continuous
+//! rotations (`rz`/`rx`/`ry`/`cp`/`rzz` at any angle) each costing one
+//! ancilla after their Clifford quarter-turns are peeled off. The price
+//! of leaving the grid is the ring: `cos θ` for arbitrary `θ` is not in
+//! `ℤ[ω]/√2^k`, so the equatorial readout is measured in `f64` and says
+//! so in its type — [`EquatorialReadout`] has no `exact` field to
+//! promise what floats cannot keep.
+//!
 //! Ported from the `octonion_triality` research package's `upembed`
 //! module.
 
@@ -239,6 +258,12 @@ pub struct UpEmbedding {
     data: usize,
     steps: Vec<CliffordStep>,
     ancillas: Vec<Ancilla>,
+    /// Equatorial angle per ancilla, aligned with `ancillas` —
+    /// `±π/4` for the T/T† grid, anything for the general gadget.
+    angles: Vec<f64>,
+    /// Whether every ancilla is a `T`/`T†` gadget, so the exact
+    /// `D[ω]` boundary applies.
+    grid: bool,
 }
 
 impl UpEmbedding {
@@ -262,6 +287,19 @@ impl UpEmbedding {
         &self.ancillas
     }
 
+    /// Equatorial boundary angle per ancilla, aligned with
+    /// [`ancillas`](Self::ancillas) — `±π/4` on the T/T† grid.
+    pub fn angles(&self) -> &[f64] {
+        &self.angles
+    }
+
+    /// Whether every ancilla is a `T`/`T†` gadget, so the exact
+    /// `D[ω]` readout ([`cluster_readout`]) applies. The equatorial
+    /// readout applies either way.
+    pub fn is_grid(&self) -> bool {
+        self.grid || self.ancillas.is_empty()
+    }
+
     /// Elementary Clifford steps of the enlarged circuit.
     pub fn steps(&self) -> &[CliffordStep] {
         &self.steps
@@ -278,9 +316,25 @@ impl UpEmbedding {
 /// gadgetization, and a rotation that is only nearly `T` would silently
 /// void that.
 pub fn gadgetize(circuit: &Circuit<C64>) -> Result<UpEmbedding> {
+    gadgetize_impl(circuit, false)
+}
+
+/// [`gadgetize`], with the grid requirement lifted: continuous
+/// rotations (`p`/`rz`/`rx`/`ry` and the two-qubit `cp`/`rzz`) at
+/// **any** angle each become one equatorial ancilla after their
+/// Clifford quarter-turns are peeled off. The result prices in the
+/// same cluster currency, but through
+/// [`cluster_readout_equatorial`] — the exact `D[ω]` readout does
+/// not apply off the grid and refuses by name.
+pub fn gadgetize_equatorial(circuit: &Circuit<C64>) -> Result<UpEmbedding> {
+    gadgetize_impl(circuit, true)
+}
+
+fn gadgetize_impl(circuit: &Circuit<C64>, equatorial: bool) -> Result<UpEmbedding> {
     let data = circuit.num_qubits();
     let mut steps: Vec<CliffordStep> = Vec::new();
     let mut ancillas: Vec<Ancilla> = Vec::new();
+    let mut angles: Vec<f64> = Vec::new();
 
     // `T^k` for a dyadic phase, as gadgets plus Clifford remainder.
     fn eighths_of(theta: f64, name: &str) -> Result<u32> {
@@ -301,6 +355,7 @@ pub fn gadgetize(circuit: &Circuit<C64>) -> Result<UpEmbedding> {
 
     let magic = |steps: &mut Vec<CliffordStep>,
                  ancillas: &mut Vec<Ancilla>,
+                 angles: &mut Vec<f64>,
                  q: usize,
                  dagger: bool|
      -> Result<()> {
@@ -311,6 +366,37 @@ pub fn gadgetize(circuit: &Circuit<C64>) -> Result<UpEmbedding> {
             site: q,
             dagger,
         });
+        angles.push(if dagger {
+            -std::f64::consts::FRAC_PI_4
+        } else {
+            std::f64::consts::FRAC_PI_4
+        });
+        Ok(())
+    };
+
+    // `P(θ)` as Clifford quarter-turns plus at most one equatorial
+    // ancilla for the remainder — the general gadget.
+    let rotation = |steps: &mut Vec<CliffordStep>,
+                    ancillas: &mut Vec<Ancilla>,
+                    angles: &mut Vec<f64>,
+                    q: usize,
+                    theta: f64|
+     -> Result<()> {
+        let quarters = (theta / std::f64::consts::FRAC_PI_2).round();
+        let rem = theta - quarters * std::f64::consts::FRAC_PI_2;
+        for _ in 0..((quarters as i64).rem_euclid(4)) {
+            steps.push(CliffordStep::S(q));
+        }
+        if rem.abs() > 1e-12 {
+            let wire = data + ancillas.len();
+            steps.push(CliffordStep::Cx(q, wire));
+            ancillas.push(Ancilla {
+                wire,
+                site: q,
+                dagger: rem < 0.0,
+            });
+            angles.push(rem);
+        }
         Ok(())
     };
 
@@ -372,14 +458,48 @@ pub fn gadgetize(circuit: &Circuit<C64>) -> Result<UpEmbedding> {
                 CliffordStep::S(qs[0]),
                 CliffordStep::H(qs[0]),
             ]),
-            ("t", 1) => magic(&mut steps, &mut ancillas, qs[0], false)?,
-            ("tdg", 1) => magic(&mut steps, &mut ancillas, qs[0], true)?,
+            ("t", 1) => magic(&mut steps, &mut ancillas, &mut angles, qs[0], false)?,
+            ("tdg", 1) => magic(&mut steps, &mut ancillas, &mut angles, qs[0], true)?,
             // A dyadic Z-rotation is S and T powers; the leading global
-            // phase of `rz` drops out of every expectation.
+            // phase of `rz` drops out of every expectation. Off the
+            // grid, one equatorial ancilla holds the whole remainder.
             ("p" | "phase" | "rz", 1) => {
-                for _ in 0..eighths_of(theta, name)? {
-                    magic(&mut steps, &mut ancillas, qs[0], false)?;
+                if equatorial {
+                    rotation(&mut steps, &mut ancillas, &mut angles, qs[0], theta)?;
+                } else {
+                    for _ in 0..eighths_of(theta, name)? {
+                        magic(&mut steps, &mut ancillas, &mut angles, qs[0], false)?;
+                    }
                 }
+            }
+            // The X- and Y-axis rotations are the same gadget in a
+            // Clifford frame: RX(θ) = H·P(θ)·H and RY(θ) = S†·RX(−θ)·S,
+            // global phases dropping out of every expectation.
+            ("rx", 1) if equatorial => {
+                steps.push(CliffordStep::H(qs[0]));
+                rotation(&mut steps, &mut ancillas, &mut angles, qs[0], theta)?;
+                steps.push(CliffordStep::H(qs[0]));
+            }
+            ("ry", 1) if equatorial => {
+                steps.push(CliffordStep::S(qs[0]));
+                steps.push(CliffordStep::H(qs[0]));
+                rotation(&mut steps, &mut ancillas, &mut angles, qs[0], -theta)?;
+                steps.push(CliffordStep::H(qs[0]));
+                steps.extend([CliffordStep::S(qs[0]); 3]);
+            }
+            // CP(θ) = P_a(θ/2)·P_b(θ/2)·CX·P_b(−θ/2)·CX and
+            // RZZ(θ) ∝ CX·P_b(θ)·CX — phases on lines and parities.
+            ("cp" | "cphase", 2) if equatorial => {
+                rotation(&mut steps, &mut ancillas, &mut angles, qs[0], theta / 2.0)?;
+                rotation(&mut steps, &mut ancillas, &mut angles, qs[1], theta / 2.0)?;
+                steps.push(CliffordStep::Cx(qs[0], qs[1]));
+                rotation(&mut steps, &mut ancillas, &mut angles, qs[1], -theta / 2.0)?;
+                steps.push(CliffordStep::Cx(qs[0], qs[1]));
+            }
+            ("rzz", 2) if equatorial => {
+                steps.push(CliffordStep::Cx(qs[0], qs[1]));
+                rotation(&mut steps, &mut ancillas, &mut angles, qs[1], theta)?;
+                steps.push(CliffordStep::Cx(qs[0], qs[1]));
             }
             ("cx" | "cnot", 2) => steps.push(CliffordStep::Cx(qs[0], qs[1])),
             ("cz", 2) => steps.extend([
@@ -400,10 +520,15 @@ pub fn gadgetize(circuit: &Circuit<C64>) -> Result<UpEmbedding> {
             }
         }
     }
+    let grid = angles
+        .iter()
+        .all(|&a| a.abs() == std::f64::consts::FRAC_PI_4);
     Ok(UpEmbedding {
         data,
         steps,
         ancillas,
+        angles,
+        grid,
     })
 }
 
@@ -438,6 +563,73 @@ fn boundary(line: &Line, emb: &UpEmbedding) -> Result<DOmega> {
         }
     }
     Ok(val)
+}
+
+/// [`boundary`] off the grid: the same per-wire lookup with
+/// `⟨A_θ|X|A_θ⟩ = cos θ` and `⟨A_θ|XZ|A_θ⟩ = −i·sin θ` — of which the
+/// exact factors are the `θ = ±π/4` case. `⟨A_θ|Z|A_θ⟩ = 0` at every
+/// angle: the equator, not the grid, is what kills lines.
+fn boundary_equatorial(line: &Line, emb: &UpEmbedding) -> Result<C64> {
+    if line.x.any_below(emb.data) {
+        return Ok(C64::new(0.0, 0.0));
+    }
+    let mut val = match line.quarters % 4 {
+        0 => C64::new(1.0, 0.0),
+        1 => C64::new(0.0, 1.0),
+        2 => C64::new(-1.0, 0.0),
+        _ => C64::new(0.0, -1.0),
+    };
+    for (a, &theta) in emb.ancillas.iter().zip(&emb.angles) {
+        match (line.x.bit(a.wire), line.z.bit(a.wire)) {
+            (false, false) => {}
+            (false, true) => return Ok(C64::new(0.0, 0.0)),
+            (true, false) => val *= C64::new(theta.cos(), 0.0),
+            _ => val *= C64::new(0.0, -theta.sin()),
+        }
+    }
+    Ok(val)
+}
+
+// ── the contraction, generic over its ring ───────────────────────────
+
+/// What the subset sum accumulates in: the exact `D[ω]` ring on the
+/// grid, `C64` off it. The contraction below is the same either way —
+/// only the boundary lookup and the arithmetic differ.
+trait ContractionRing: Sized + Clone {
+    fn one() -> Self;
+    fn zero() -> Self;
+    fn add(self, rhs: Self) -> Result<Self>;
+    fn mul(self, rhs: Self) -> Result<Self>;
+}
+
+impl ContractionRing for DOmega {
+    fn one() -> Self {
+        DOmega::int(1)
+    }
+    fn zero() -> Self {
+        DOmega::zero()
+    }
+    fn add(self, rhs: Self) -> Result<Self> {
+        DOmega::add(self, rhs)
+    }
+    fn mul(self, rhs: Self) -> Result<Self> {
+        DOmega::mul(self, rhs)
+    }
+}
+
+impl ContractionRing for C64 {
+    fn one() -> Self {
+        C64::new(1.0, 0.0)
+    }
+    fn zero() -> Self {
+        C64::new(0.0, 0.0)
+    }
+    fn add(self, rhs: Self) -> Result<Self> {
+        Ok(self + rhs)
+    }
+    fn mul(self, rhs: Self) -> Result<Self> {
+        Ok(self * rhs)
+    }
 }
 
 // ── the readout ──────────────────────────────────────────────────────
@@ -483,6 +675,31 @@ impl Readout {
 /// connected components of the transported lines. Exact — no dense
 /// state and no floating point until the caller asks for a double.
 pub fn cluster_readout(emb: &UpEmbedding, ops: &[(usize, Pauli)]) -> Result<Readout> {
+    if !emb.is_grid() {
+        return Err(Error::InvalidState(
+            "upembed: this embedding carries equatorial angles off the π/4 \
+             grid; cos θ is not in D[ω], so the exact readout refuses — \
+             use cluster_readout_equatorial"
+                .into(),
+        ));
+    }
+    let (total, clusters, terms, transports) = contract::<DOmega>(emb, ops, boundary)?;
+    Ok(Readout {
+        value: total.to_c64().re,
+        exact: total,
+        clusters,
+        terms,
+        transports,
+        steps: emb.steps.len(),
+    })
+}
+
+/// The transports and the overlap components — everything before the
+/// subset sum, at `t + 1` line-transport cost and no enumeration.
+fn components(
+    emb: &UpEmbedding,
+    ops: &[(usize, Pauli)],
+) -> Result<(Line, Vec<Line>, Vec<Vec<usize>>)> {
     let mut obs = Line::identity();
     for &(q, p) in ops {
         if q >= emb.data {
@@ -546,15 +763,38 @@ pub fn cluster_readout(emb: &UpEmbedding, ops: &[(usize, Pauli)]) -> Result<Read
         let r = find(&mut parent, i);
         comps.entry(r).or_default().push(i);
     }
+    let mut members: Vec<Vec<usize>> = comps.into_values().collect();
+    members.sort();
+    Ok((obs, lines, members))
+}
+
+/// The observable's magic-adjacency spectrum — cluster sizes,
+/// descending — **without** evaluating anything: `t + 1` transports
+/// and a union-find, so the exponent can be priced before `2^cluster`
+/// is paid. No ceiling applies; this is measurement, not enumeration.
+pub fn cluster_spectrum(emb: &UpEmbedding, ops: &[(usize, Pauli)]) -> Result<Vec<usize>> {
+    let (_, _, members) = components(emb, ops)?;
+    let mut clusters: Vec<usize> = members
+        .iter()
+        .map(|g| g.iter().filter(|&&i| i > 0).count())
+        .collect();
+    clusters.sort_unstable_by(|a, b| b.cmp(a));
+    Ok(clusters)
+}
+
+fn contract<R: ContractionRing>(
+    emb: &UpEmbedding,
+    ops: &[(usize, Pauli)],
+    boundary: impl Fn(&Line, &UpEmbedding) -> Result<R>,
+) -> Result<(R, Vec<usize>, u128, usize)> {
+    let (obs, lines, members) = components(emb, ops)?;
 
     // Each component contributes its own subset sum, and the product of
     // the components is the whole sum — the supports are disjoint, so
     // `⟨Φ|·|Φ⟩` factorizes across them with no cross terms.
-    let mut total = DOmega::int(1);
+    let mut total = R::one();
     let mut clusters = Vec::new();
     let mut terms: u128 = 0;
-    let mut members: Vec<Vec<usize>> = comps.into_values().collect();
-    members.sort();
     for group in members {
         let ancs: Vec<usize> = group.iter().copied().filter(|&i| i > 0).collect();
         if ancs.len() > MAX_CLUSTER {
@@ -565,7 +805,7 @@ pub fn cluster_readout(emb: &UpEmbedding, ops: &[(usize, Pauli)]) -> Result<Read
         }
         clusters.push(ancs.len());
         terms += 1u128 << ancs.len();
-        let mut part = DOmega::zero();
+        let mut part = R::zero();
         for subset in 0..(1u64 << ancs.len()) {
             let mut cur = if group.contains(&0) {
                 obs.clone()
@@ -583,19 +823,70 @@ pub fn cluster_readout(emb: &UpEmbedding, ops: &[(usize, Pauli)]) -> Result<Read
     }
     clusters.sort_unstable_by(|a, b| b.cmp(a));
 
-    Ok(Readout {
-        value: total.to_c64().re,
-        exact: total,
-        clusters,
-        terms,
-        transports: lines.len(),
-        steps: emb.steps.len(),
-    })
+    Ok((total, clusters, terms, lines.len()))
 }
 
 /// `⟨0^m| U† O U |0^m⟩` straight from a circuit.
 pub fn expectation(circuit: &Circuit<C64>, ops: &[(usize, Pauli)]) -> Result<Readout> {
     cluster_readout(&gadgetize(circuit)?, ops)
+}
+
+/// What an equatorial readout cost — [`Readout`] without the `exact`
+/// field, because off the grid there is no ring element to promise:
+/// the boundary factors are `cos θ` and `sin θ` in `f64`.
+#[derive(Clone, Debug)]
+pub struct EquatorialReadout {
+    /// The expectation, in floating point.
+    pub value: f64,
+    /// Ancillas per connected component, descending — the observable's
+    /// magic-adjacency spectrum, same currency as the exact readout.
+    pub clusters: Vec<usize>,
+    /// Boundary contractions performed: `Σ_components 2^{ancillas}`.
+    pub terms: u128,
+    /// Single-line Clifford transports — always `t + 1`.
+    pub transports: usize,
+    /// Elementary Clifford steps each transport walked.
+    pub steps: usize,
+}
+
+impl EquatorialReadout {
+    /// The governing exponent: the largest cluster.
+    pub fn max_cluster(&self) -> usize {
+        self.clusters.first().copied().unwrap_or(0)
+    }
+
+    /// How many times smaller the subset sum was than the flat `2^t`.
+    pub fn factorization_gain(&self) -> f64 {
+        let flat = 2f64.powi(self.clusters.iter().sum::<usize>() as i32);
+        flat / (self.terms.max(1) as f64)
+    }
+}
+
+/// [`cluster_readout`] off the grid: the same `t + 1` transports and
+/// the same cluster-factorized subset sum, with the boundary evaluated
+/// at each ancilla's own equatorial angle. Works on grid embeddings
+/// too — the grid is the `θ = ±π/4` slice of the same lookup.
+pub fn cluster_readout_equatorial(
+    emb: &UpEmbedding,
+    ops: &[(usize, Pauli)],
+) -> Result<EquatorialReadout> {
+    let (total, clusters, terms, transports) = contract::<C64>(emb, ops, boundary_equatorial)?;
+    Ok(EquatorialReadout {
+        value: total.re,
+        clusters,
+        terms,
+        transports,
+        steps: emb.steps.len(),
+    })
+}
+
+/// `⟨0^m| U† O U |0^m⟩` straight from a circuit with continuous
+/// rotations — [`gadgetize_equatorial`] then the equatorial readout.
+pub fn expectation_equatorial(
+    circuit: &Circuit<C64>,
+    ops: &[(usize, Pauli)],
+) -> Result<EquatorialReadout> {
+    cluster_readout_equatorial(&gadgetize_equatorial(circuit)?, ops)
 }
 
 // ── as a resolver ────────────────────────────────────────────────────
