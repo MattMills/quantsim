@@ -49,7 +49,7 @@ pub use interference::{InterferenceRecord, InterferenceState};
 pub use mera::{MeraConfig, MeraState, MERA_LOAD_MAX_QUBITS, MERA_MAX_QUBITS};
 pub use mosaic::{MosaicEvent, MosaicPolicy, MosaicState, MOSAIC_MAX_QUBITS};
 pub use mps::{MpsConfig, MpsState, MPS_LOAD_MAX_QUBITS, MPS_MAX_QUBITS, MPS_MAX_WINDOW};
-pub use phase_field::{PhaseFieldState, MAX_FIELD_MODULUS, MAX_ROOT_ORDER};
+pub use phase_field::{PhaseFieldState, MAX_DYADIC_ROOT_DEPTH, MAX_FIELD_MODULUS, MAX_ROOT_ORDER};
 pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
 
 use std::collections::HashMap;
@@ -326,12 +326,16 @@ impl<S: Scalar> BackendRegistry<S> {
     }
 
     /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"`,
-    /// `"factored"`, `"mps"`, `"mera"`, `"bulk"`, `"mosaic"` and
-    /// `"bundle"` backends.
+    /// `"factored"`, `"mps"`, `"mera"`, `"bulk"`, `"mosaic"`, `"bundle"`
+    /// and `"branched"` backends.
     /// (`"bundle"` is the graph-state
     /// [`PolarityBundle`](crate::bundle::PolarityBundle): exact and
     /// `O(n + |E|)` on the Clifford sector, refusing anything else by
-    /// name.) (`"mps"`, `"mera"` and `"bulk"`
+    /// name.) (`"branched"` is the
+    /// [`BranchedRegister`](crate::clock::BranchedRegister) with a
+    /// trivial selector: one sparse branch until selector-side
+    /// operations fork it — the flat Backend contract holds either
+    /// way.) (`"mps"`, `"mera"` and `"bulk"`
     /// require a commutative division algebra and report an error at
     /// creation elsewhere.)
     pub fn standard() -> Self {
@@ -358,6 +362,10 @@ impl<S: Scalar> BackendRegistry<S> {
             // description convention starts at |+…+⟩.
             <crate::bundle::PolarityBundle as Backend<S>>::reset(&mut bundle);
             Ok(Box::new(bundle) as Box<dyn Backend<S>>)
+        })
+        .expect("fresh registry");
+        reg.register("branched", |n| {
+            Ok(Box::new(crate::clock::BranchedRegister::<S>::new(n, 1)?))
         })
         .expect("fresh registry");
         reg

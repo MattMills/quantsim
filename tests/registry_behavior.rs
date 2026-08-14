@@ -232,8 +232,8 @@ fn research_backend_via_registry() {
     assert_eq!(
         sim.backends().names(),
         vec![
-            "adaptive", "bulk", "bundle", "counting", "dense", "factored", "mera", "mosaic", "mps",
-            "sparse"
+            "adaptive", "branched", "bulk", "bundle", "counting", "dense", "factored", "mera",
+            "mosaic", "mps", "sparse"
         ]
     );
 

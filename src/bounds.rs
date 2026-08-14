@@ -347,6 +347,12 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
     // law. The axis needs octave-aligned sampling first — see the
     // roadmap's clock/bulk rungs.
     //
+    // The branched register is in the standard registry but likewise
+    // not an axis: with its trivial selector the flat contracted view
+    // prices as sparse plus bookkeeping, and the selector's real payoff
+    // — branch sharing across scale histories — has no gate-level
+    // trigger a circuit harness could exercise.
+    //
     // The mosaic: the multi-representation register from singleton
     // regions, structure sculpted by the gates, merges chosen from
     // measured predictions. Its assumption is that the circuit's
