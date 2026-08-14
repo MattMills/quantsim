@@ -58,6 +58,16 @@
 //! structure, not just on how much magic is present. It is measured
 //! after the fact, never predicted.
 //!
+//! The QFT is the sharpest measured case: its operator reduces to
+//! `h* = 0` with zero splits at every width the fragment admits
+//! (`n ≤ 30`; `qft(31)`'s finest phase is one level past
+//! [`MAX_DYADIC_DEPTH`] and is refused by name) — `⟨y|QFT|x⟩` *is* its
+//! `n(n+1)/2`-term phase polynomial, so readout is one term per
+//! amplitude. A dyadic-angle random circuit is the honest converse:
+//! every gate compiles into the fragment, nothing is refused, and yet
+//! `h*` tracks the gate budget (measured 32/50/80 at widths 6/8/10
+//! under a `3n²` budget) — held exactly, priced exponentially.
+//!
 //! ## The operator formulation, and what needs no tableau
 //!
 //! [`PathSum::identity`] starts from the identity *operator* rather than
@@ -849,7 +859,7 @@ impl PathSum {
                 "tdg" => ("t".to_string(), params.clone()),
                 "sx" => ("sxdg".to_string(), params.clone()),
                 "sxdg" => ("sx".to_string(), params.clone()),
-                "p" | "phase" | "rz" | "rx" | "cp" | "cphase" | "rzz" => {
+                "p" | "phase" | "rz" | "rx" | "ry" | "cp" | "cphase" | "rzz" => {
                     (name.clone(), params.iter().map(|x| -x).collect())
                 }
                 _ => (name.clone(), params.clone()),
@@ -898,6 +908,16 @@ impl PathSum {
                 self.global_phase(ang(-p(0) / 2.0)?);
                 self.phase_on(qs[0], ang(p(0))?)?;
                 self.h(qs[0])?;
+            }
+            ("ry", 1) => {
+                // S†XS = −Y, so RY(θ) = S†·RX(−θ)·S: the S-conjugation
+                // turns the axis and the arm rides the rx decomposition.
+                self.s(qs[0])?;
+                self.h(qs[0])?;
+                self.global_phase(ang(p(0) / 2.0)?);
+                self.phase_on(qs[0], ang(-p(0))?)?;
+                self.h(qs[0])?;
+                self.sdg(qs[0])?;
             }
             ("sx", 1) => {
                 self.global_phase(EIGHTH);
