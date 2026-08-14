@@ -347,12 +347,6 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
     // law. The axis needs octave-aligned sampling first — see the
     // roadmap's clock/bulk rungs.
     //
-    // The branched register is in the standard registry but likewise
-    // not an axis: with its trivial selector the flat contracted view
-    // prices as sparse plus bookkeeping, and the selector's real payoff
-    // — branch sharing across scale histories — has no gate-level
-    // trigger a circuit harness could exercise.
-    //
     // The mosaic: the multi-representation register from singleton
     // regions, structure sculpted by the gates, merges chosen from
     // measured predictions. Its assumption is that the circuit's
@@ -369,6 +363,28 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
         |s: &MosaicState<C64>| {
             (
                 format!("{} regions, {} events", s.layout().len(), s.events().len()),
+                true,
+            )
+        },
+    ));
+    // The branched clock register, flat: one sparse branch under a
+    // trivial selector, so on a circuit family the expectation is
+    // sparse-plus-bookkeeping — the axis exists so that expectation is
+    // measured rather than assumed. The selector's own payoff (branch
+    // sharing across scale histories) has no gate-level trigger here;
+    // that measurement lives in the clock suite and scale_time example.
+    axes.push(probe(
+        "branched",
+        |n| crate::clock::BranchedRegister::<C64>::new(n, 1),
+        circuit,
+        &reg,
+        |s: &crate::clock::BranchedRegister<C64>| {
+            (
+                format!(
+                    "{} branches, {} unique states",
+                    s.branch_count(),
+                    s.unique_state_count()
+                ),
                 true,
             )
         },
