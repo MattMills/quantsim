@@ -440,6 +440,34 @@ rungs:
   beyond the sparse/dense pair" rung above the composition's
   measured bottleneck, not a nice-to-have.
 
+## Retrocorrection (surface code over the record) — SHIPPED (core)
+
+`retro` inverts error correction with the simulator's own powers: the
+rotated surface code as a constraint set ([`SurfaceCode`], any odd
+distance, patch offsets so several share a register), syndromes as
+**deterministic reads** (`±1` generator expectations — no ancillas, no
+randomness, nothing disturbed), a decoder whose lookup table is
+**measured from the code's own generators** and refuses beyond it, and
+the retrocorrection theorem made operational: a correction decoded once
+at the end of the record, conjugated backward through the intervening
+Clifford segments (`transport_back`), repairs every stored slice of a
+branched clock register via slice-addressed surgery
+(`BranchedRegister::apply_at`, which refuses through shared walls).
+Measured end to end (tests/retro.rs, examples/retrocorrection.rs): a Y
+fault after slice 1 of a two-patch record spreads through the
+transversal logical CX onto both patches (syndromes 2 + 4), the
+generators transported to the fault's time predict the end-of-record
+reading exactly, one decode yields weight-1 corrections per patch, and
+every slice returns to the clean history at machine epsilon — with the
+logical entanglement graph's sign history (+1/+1 → −1/−1 across the
+logical Pauli era) intact. 77 KB for the 3-slice 18-qubit record
+against 4.2 MB per dense slice. Remaining rungs: weight->1 decoding
+(matching over the syndrome graph), measurement-conditioned records
+(retrocorrection through frame repairs), constraint-driven compression
+(the code space as a backend bet: 2^k logical amplitudes for a 2^n
+register), and the non-Clifford boundary (transport through magic via
+the up-embedding's ancilla frame rather than refusal).
+
 ## Further non-Cayley–Dickson explorations
 
 `SplitComplex` establishes the pattern (indefinite Born form surfaced through

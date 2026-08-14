@@ -460,6 +460,54 @@ impl<S: Scalar> BranchedRegister<S> {
         }
         Ok(())
     }
+
+    /// Slice-addressed surgery on the record: apply `f` once to every
+    /// unique state flagged `sel` — the retrocorrection hook, where a
+    /// correction transported back through the intervening dynamics is
+    /// applied to a *stored past slice* in register.
+    ///
+    /// Refused when a target state is shared with a branch of a
+    /// **different** selector: rewriting it would silently rewrite the
+    /// other slice's history too. Unshare first; surgery does not
+    /// operate through walls.
+    pub fn apply_at(
+        &mut self,
+        sel: usize,
+        mut f: impl FnMut(&mut dyn Backend<S>) -> Result<()>,
+    ) -> Result<()> {
+        if sel >= self.dim {
+            return Err(Error::InvalidState(format!(
+                "branched: selector {sel} outside qudit dimension {}",
+                self.dim
+            )));
+        }
+        let targets: Vec<Shared<S>> = {
+            let mut out: Vec<Shared<S>> = Vec::new();
+            for b in self.branches.iter().filter(|b| b.sel == sel) {
+                if !out.iter().any(|s| Rc::ptr_eq(s, &b.state)) {
+                    out.push(Rc::clone(&b.state));
+                }
+            }
+            out
+        };
+        for t in &targets {
+            if self
+                .branches
+                .iter()
+                .any(|b| b.sel != sel && Rc::ptr_eq(&b.state, t))
+            {
+                return Err(Error::InvalidState(format!(
+                    "branched: slice {sel} shares a state with another \
+                     selector; surgery on it would rewrite that slice's \
+                     history too — unshare first"
+                )));
+            }
+        }
+        for t in targets {
+            f(t.borrow_mut().as_mut())?;
+        }
+        Ok(())
+    }
 }
 
 impl<S: Scalar> Backend<S> for BranchedRegister<S> {

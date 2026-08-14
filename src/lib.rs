@@ -110,6 +110,7 @@ pub mod radixweb;
 pub mod recursive;
 pub mod reflexive;
 pub mod registry;
+pub mod retro;
 pub mod rng;
 pub mod sampling;
 pub mod scalar;
