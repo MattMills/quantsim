@@ -135,8 +135,8 @@ pub mod prelude {
         BackendRegistry, BraidedState, BulkConfig, BulkState, CliffordFrameStats,
         CliffordFramedState, DenseState, DeviceState, DurationModel, FactoredState, FrameStats,
         FramedState, InterferenceRecord, InterferenceState, LatencyMap, MeraConfig, MeraState,
-        MpsConfig, MpsState, PauliString, PhaseFieldState, PhysicalOp, Realization, SparseState,
-        Topology, UnfoldProgram, UnfoldStep,
+        MosaicEvent, MosaicPolicy, MosaicState, MpsConfig, MpsState, PauliString, PhaseFieldState,
+        PhysicalOp, Realization, SparseState, Topology, UnfoldProgram, UnfoldStep,
     };
     pub use crate::braided::{
         bch_residual, bracket, cayley_ball, commutator_residual, distinct_orbits,

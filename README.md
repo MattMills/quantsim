@@ -19,16 +19,18 @@ parts are swappable:
   [ROADMAP](ROADMAP.md)): truncated p-adics, dual numbers,
   Clifford scalars.
 - **State representation** — a [`Backend<S>`](src/backend/mod.rs) trait with
-  seven shipped implementations: **dense** state vector (the BQP reference),
+  eight shipped implementations: **dense** state vector (the BQP reference),
   **sparse** hash-map state, an **adaptive** backend that promotes sparse →
   dense at ¼ density, the **factored** backend (product of dense factors
   over qubit regions — memory tracks entanglement *clusters*), **MPS**
   (matrix product states on a dependency-free Jacobi SVD — memory tracks
   Schmidt rank / *bond dimension*), **mera** (a hierarchical
   isometry tree — memory tracks *renormalization structure*; see below),
-  and **bulk** (the hierarchy in maintained isometric gauge with an
+  **bulk** (the hierarchy in maintained isometric gauge with an
   explicit bulk record — and **dynamic width**: boundary qubits grown
-  and released at runtime; see below).
+  and released at runtime; see below), and **mosaic** (regions in
+  heterogeneous representations with measured merges and
+  refusal-driven migration; see below).
   Four orthogonal compression axes — support, clusters, bonds,
   hierarchy — all conformance-verified against dense, with the bulk
   register adding dynamic width and a maintained gauge on the
@@ -157,6 +159,33 @@ parts are swappable:
   bundle's documented convention) is sound as a static slice but
   corrupts the contracted sum under broadcast dynamics, pinned in the
   tests as the phase-faithfulness contract.
+- **The multi-representation register** ([`MosaicState`](src/backend/mosaic.rs)) —
+  every representation is a *factorization lens* (sparse ↦ support,
+  factored ↦ spatial products, mps ↦ linear cut rank, mera/bulk ↦
+  hierarchical cut rank, bundle ↦ stabilizer structure, the frame ↦
+  magic count, phase-field ↦ diagonal polynomials, branched ↦ class
+  rank); the mosaic assigns every **portion** of the register to the
+  lens that fits it, and lets the assignment follow the circuit.
+  Regions in heterogeneous representations; gates inside a region run
+  natively; gates across regions merge with the representation
+  **chosen by measurement** (predicted sparse vs dense cost, both
+  ledgered so mispredictions are data); migration is **refusal-driven
+  and partial before total** — a bundle region hit by its first T
+  first fractures along its own graph components (exact: a graph state
+  is the product of its components — the graph, and the graph of
+  graphs), so only the touched component leaves and the rest stay
+  graphs, then the affected region converts down the policy list and
+  retries, every split/merge/migration ledgered with its cause.
+  Regions may themselves be mosaics (recursive composition, tested),
+  and the flagship measures the point: a width-40 register whose left
+  half is a 20-qubit Clifford expander (bundle — outside every
+  bond/cluster/support bet) and whose right half lives through a
+  Clifford→T→entangling era sequence stays at the **sum of ideal
+  costs** (< 64 KiB) while the era transitions play out as ledgered
+  representation changes — dense-verified at width 16. Phase contract,
+  the dual of the clock module's: product composition forgives
+  phase-loose tiles (a region's global phase stays global), while
+  superposition composition does not — measured on both sides.
 - **Structure discovery** ([`discovery`](src/discovery.rs)) — find gates
   that stabilize the current state (identity up to phase), and verify
   n-wide **signal threads**: ops spliced at several points of the circuit
@@ -1001,7 +1030,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 833 tests (86 unit + 740 across sixty-nine
+`cargo test` runs 843 tests (88 unit + 748 across seventy
 integration suites + 7 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1086,6 +1115,16 @@ entirely trivial accessors and defensive guards:
   broadcast dynamics, no branch copied); the phase-faithfulness
   boundary made visible, never silent; width-32 six-scale histories in
   kilobytes, built the dynamic way.
+- **mosaic_register** — full-registry conformance from singleton
+  regions; partitions sculpted by gates with merge decisions carrying
+  their predictions; refusal-driven migration exact against dense;
+  **partial graphs**: a three-component bundle region fractured by its
+  first T into bundle×3 with only the touched component migrating
+  (split before any conversion, asserted in event order); the
+  graph-of-graphs composition (a mosaic as a region of a mosaic);
+  the width-40 flagship at the sum of ideal costs with era transitions
+  ledgered; heterogeneous composition with the dynamic bulk register;
+  merged-support saturation choosing dense with the prediction named.
 - **capacity** — the resource guard as behavior: over-scale allocations
   refused by *measurement* (requested vs available bytes in the error,
   auto-measured and under explicit limits); adaptive stays sparse when
@@ -1988,7 +2027,10 @@ src/
                  mps / mera / bulk (dynamically scaled bulk–boundary
                  register: isometric gauge under an explicit record,
                  grow/release at runtime, certified per-depth ledger,
-                 the structured unfold) / bundle (graph-state) /
+                 the structured unfold) / mosaic (regions in
+                 heterogeneous representations: measured merges,
+                 refusal-driven migration, partial graph splitting,
+                 recursive composition) / bundle (graph-state) /
                  interference / device / frames / clifford_frame /
                  phase_field (exact phase polynomial over ℤ/M) /
                  braided_state (the braid word as the storage),
@@ -2004,7 +2046,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           sixty-nine integration suites (see Testing)
+tests/           seventy integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,

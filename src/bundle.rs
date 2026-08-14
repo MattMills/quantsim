@@ -346,6 +346,78 @@ impl PolarityBundle {
         Ok(s)
     }
 
+    // ── graph structure as data ──────────────────────────────────────
+
+    /// The connected components of the link graph over live fibers,
+    /// each ascending, ordered by smallest member. A graph state is
+    /// **exactly** the product of its components' graph states, so
+    /// this is the factorization the description carries for free.
+    /// (The private `components` above `profile` reports only counts.)
+    pub fn graph_components(&self) -> Vec<Vec<u32>> {
+        let n = self.fibers.len();
+        let mut seen = vec![false; n];
+        let mut out = Vec::new();
+        for start in 0..n {
+            if seen[start] || !self.fibers[start].live {
+                continue;
+            }
+            let mut comp = vec![start as u32];
+            let mut queue = vec![start];
+            seen[start] = true;
+            while let Some(s) = queue.pop() {
+                for &nb in &self.links[s] {
+                    let nb = nb as usize;
+                    if !seen[nb] {
+                        seen[nb] = true;
+                        comp.push(nb as u32);
+                        queue.push(nb);
+                    }
+                }
+            }
+            comp.sort_unstable();
+            out.push(comp);
+        }
+        out
+    }
+
+    /// The induced sub-bundle on `sites` (ascending order becomes the
+    /// new site indexing): fibers copied, internal links rebuilt.
+    /// Exact **precisely when no link crosses the cut** — a graph
+    /// state factors only along its components, so a crossing link
+    /// refuses with the offending edge named.
+    pub fn restrict(&self, sites: &[u32]) -> Result<PolarityBundle> {
+        let mut sorted: Vec<u32> = sites.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        if sorted.len() != sites.len() {
+            return Err(Error::InvalidState(
+                "restrict: sites must be distinct".into(),
+            ));
+        }
+        let mut new_index = vec![u32::MAX; self.fibers.len()];
+        for (new, &old) in sorted.iter().enumerate() {
+            let s = self.check(old)?;
+            new_index[s] = new as u32;
+        }
+        let mut out = PolarityBundle::new(sorted.len())?;
+        for (new, &old) in sorted.iter().enumerate() {
+            out.fibers[new] = self.fibers[old as usize];
+            for &nb in &self.links[old as usize] {
+                let mapped = new_index[nb as usize];
+                if mapped == u32::MAX {
+                    return Err(Error::InvalidState(format!(
+                        "restrict: link {old}–{nb} crosses the cut; a graph state \
+                         factors only along its components"
+                    )));
+                }
+                out.links[new].push(mapped);
+            }
+            out.links[new].sort_unstable();
+        }
+        out.link_count = out.links.iter().map(|l| l.len()).sum::<usize>() / 2;
+        Ok(out)
+    }
+
     // ── the base: twist links ────────────────────────────────────────
 
     /// Twist-link two sites. Idempotent, `O(deg)`.

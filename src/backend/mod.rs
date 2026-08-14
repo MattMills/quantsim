@@ -27,6 +27,7 @@ mod factored;
 mod frames;
 mod interference;
 mod mera;
+mod mosaic;
 mod mps;
 mod phase_field;
 mod sparse;
@@ -46,6 +47,7 @@ pub use factored::{FactoredState, FACTORED_MAX_QUBITS, FACTOR_MAX_QUBITS};
 pub use frames::{FrameStats, FramedState, FRAME_CONJUGATION_MAX};
 pub use interference::{InterferenceRecord, InterferenceState};
 pub use mera::{MeraConfig, MeraState, MERA_LOAD_MAX_QUBITS, MERA_MAX_QUBITS};
+pub use mosaic::{MosaicEvent, MosaicPolicy, MosaicState, MOSAIC_MAX_QUBITS};
 pub use mps::{MpsConfig, MpsState, MPS_LOAD_MAX_QUBITS, MPS_MAX_QUBITS, MPS_MAX_WINDOW};
 pub use phase_field::{PhaseFieldState, MAX_FIELD_MODULUS, MAX_ROOT_ORDER};
 pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
@@ -324,7 +326,8 @@ impl<S: Scalar> BackendRegistry<S> {
     }
 
     /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"`,
-    /// `"factored"`, `"mps"`, `"mera"`, `"bulk"` and `"bundle"` backends.
+    /// `"factored"`, `"mps"`, `"mera"`, `"bulk"`, `"mosaic"` and
+    /// `"bundle"` backends.
     /// (`"bundle"` is the graph-state
     /// [`PolarityBundle`](crate::bundle::PolarityBundle): exact and
     /// `O(n + |E|)` on the Clifford sector, refusing anything else by
@@ -346,6 +349,8 @@ impl<S: Scalar> BackendRegistry<S> {
         reg.register("mera", |n| Ok(Box::new(MeraState::<S>::new(n)?)))
             .expect("fresh registry");
         reg.register("bulk", |n| Ok(Box::new(BulkState::<S>::new(n)?)))
+            .expect("fresh registry");
+        reg.register("mosaic", |n| Ok(Box::new(MosaicState::<S>::new(n)?)))
             .expect("fresh registry");
         reg.register("bundle", |n| {
             let mut bundle = crate::bundle::PolarityBundle::new(n)?;

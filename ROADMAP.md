@@ -352,6 +352,55 @@ problem, lower representational structure below. Remaining rungs:
   vs path statistics) would connect the time system to the
   inclusion–exclusion program.
 
+## The mosaic register (multi-representation program) — SHIPPED (core)
+
+`MosaicState` (registered `"mosaic"`) is live: the register
+partitioned into regions, each held by its own backend — the factored
+backend's geometry with factors generalized from dense blocks to
+arbitrary representations. Gates inside a region run natively; gates
+across regions merge with the representation chosen from measured
+predictions (sparse support-product vs dense `2^w`, both ledgered);
+migration is refusal-driven and **partial before total** — a bundle
+region hit by its first T first fractures along its own graph
+components (`PolarityBundle::graph_components` + `restrict`, exact by
+the product structure of graph states), so only the touched component
+leaves and the rest stay graphs — then converts down the policy's
+candidate list and retries, once, with every split, merge and
+migration ledgered with its cause. Regions can themselves be mosaics
+(tested), the flagship holds a width-40 register at the sum of ideal
+costs through a Clifford→T→entangling era sequence (dense-verified at
+16), and the phase contract is the measured dual of the clock's:
+products forgive phase-loose tiles, superpositions do not. Remaining
+rungs:
+
+- **Cross-representation bonds.** The real frontier: two regions
+  *entangled* while each keeps its own lens. The braided module's
+  mutual (Schmidt/purification) encoding across a cut is the natural
+  machinery — a bond as a shared index between a bundle tile and an
+  mps tile would remove the merge-on-entangle limitation that makes
+  rung 1 a product mosaic.
+- **Generic partial structure.** The bundle fractures because its
+  graph is readable; other representations should carry a coupling
+  history (union–find over the entangling gates the mosaic routed into
+  them) so any region can split along provable product boundaries, and
+  factored-style rank-1 detection should re-separate merged regions
+  when gates disentangle them.
+- **Policy from recognition, not just refusal.** Today the bundle's
+  refusal is the era detector. Recognizing Clifford gates on the way
+  in (the frame's `recognize` machinery) would let regions *return* to
+  cheap representations when a magic era ends, and bond/hierarchy
+  predictors would let merges target mps/bulk instead of only
+  sparse/dense.
+- **The mosaic as an atlas axis.** Registered and conformance-swept,
+  but the boundary atlas should classify the mosaic's growth laws next
+  to the fixed lenses — the interesting measured question is which
+  families the *composite* keeps sub-exponential that every fixed
+  lens loses (the union-edge example is the existence proof at fixed
+  width).
+- **Mosaic × clock.** Selector slices that are mosaics: superpositions
+  of regionally-structured states — the union edge with per-slice
+  spatial structure, and branching histories over era sequences.
+
 ## Further non-Cayley–Dickson explorations
 
 `SplitComplex` establishes the pattern (indefinite Born form surfaced through
