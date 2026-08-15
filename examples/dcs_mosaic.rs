@@ -1,25 +1,38 @@
-//! Region-wise representation on the DCS circuit, driven by where the
-//! magic actually is.
+//! Two of the library's newer registers, shown working on DCS with
+//! every decision printed rather than summarized.
 //!
-//! [`MosaicState`] holds each region of the register in its own backend
-//! and merges two regions when a gate couples them — recording every
-//! merge with its cause. That makes it the instrument for a question
-//! the single-backend atlas cannot ask: the DCS circuit is 96% Clifford
-//! with its `T` gates confined to particular wires, so does a partition
-//! that puts the magic-free wires in a Clifford representation *survive*
-//! the brickwork, and if not, for how long?
+//! **Mosaic** holds each region of the register in its own backend and
+//! merges two regions when a gate couples them, recording every merge
+//! with its cause. The question it can answer that a single-backend
+//! atlas cannot: DCS is 96% Clifford with its `T` gates on particular
+//! wires, so does a partition that puts the magic-free wires in a
+//! Clifford representation survive the brickwork, and for how long? The
+//! full ledger is printed, not the first line of it.
 //!
-//! The merge ledger is the answer either way. A partition that collapses
-//! immediately says the brickwork couples everything at once; one that
-//! survives `k` layers puts a number on the magic-locality horizon.
+//! **Branched** holds a weighted superposition of slices at the *sum*
+//! of their costs, and measures selector↔system entanglement from the
+//! pairwise Gram of the slices — polynomially, never by enumeration.
+//! [`cutsim`] writes `|ψ⟩ = Σ_p |ψ_A^p⟩ ⊗ |ψ_B^p⟩` over `2^k` branches,
+//! which is exactly that object. So the branches go in and
+//! `selector_schmidt_rank` answers what `cutsim` cannot ask itself: how
+//! many of the `2^k` branches are linearly **independent**. Earlier
+//! measurement found the branch *weights* exactly flat; flat weights do
+//! not imply independent slices, and the gap between count and rank is
+//! how much the branch sum is redundant.
 //!
 //! `cargo run --release --example dcs_mosaic`
 
 use quantsim::backend::{CliffordFramedState, DenseState, MosaicPolicy, MosaicState, SparseState};
-use quantsim::dcs::{Dcs, Doping};
+use quantsim::clock::BranchedRegister;
+use quantsim::cutsim;
+use quantsim::dcs::Dcs;
 use quantsim::prelude::*;
 
-/// Qubits carrying at least one `T`, from the doping plan — no
+fn rule() {
+    println!("{}", "─".repeat(78));
+}
+
+/// Qubits carrying at least one `T`, read off the doping plan — no
 /// simulation, just the construction's own site list.
 fn magic_qubits(d: Dcs) -> Vec<bool> {
     let mut hot = vec![false; d.qubits];
@@ -29,8 +42,8 @@ fn magic_qubits(d: Dcs) -> Vec<bool> {
     hot
 }
 
-/// Contiguous runs of equal flag — the coarsest partition that
-/// separates magic-carrying wires from magic-free ones.
+/// Contiguous runs of equal flag: the coarsest partition separating
+/// magic-carrying wires from magic-free ones.
 fn bands(hot: &[bool]) -> Vec<(Vec<usize>, bool)> {
     let mut out: Vec<(Vec<usize>, bool)> = Vec::new();
     for (q, &h) in hot.iter().enumerate() {
@@ -42,14 +55,11 @@ fn bands(hot: &[bool]) -> Vec<(Vec<usize>, bool)> {
     out
 }
 
-fn run(d: Dcs, label: &str, policy: MosaicPolicy) {
+fn mosaic_run(d: Dcs, tag: &str, policy: MosaicPolicy, verbose: bool) {
     let n = d.qubits;
     let hot = magic_qubits(d);
     let parts = bands(&hot);
-    let hot_count = hot.iter().filter(|&&h| h).count();
 
-    // Magic-free bands go to the Clifford frame, which factors out
-    // exactly what they contain; magic-carrying bands go to sparse.
     let regions: Vec<(Vec<usize>, Box<dyn Backend<C64>>)> = parts
         .iter()
         .map(|(qs, is_hot)| {
@@ -63,79 +73,121 @@ fn run(d: Dcs, label: &str, policy: MosaicPolicy) {
         })
         .collect();
 
-    let mut mosaic =
-        MosaicState::<C64>::with_regions(n, regions, policy).unwrap();
+    let seeded: Vec<String> = parts
+        .iter()
+        .map(|(qs, h)| {
+            format!(
+                "{}..{}:{}",
+                qs[0],
+                qs[qs.len() - 1],
+                if *h { "sparse" } else { "frame" }
+            )
+        })
+        .collect();
+
+    let mut mosaic = MosaicState::<C64>::with_regions(n, regions, policy).unwrap();
     let reg = GateRegistry::<C64>::standard();
     let circuit = d.circuit();
     circuit.bind(&reg).unwrap().run(&mut mosaic).unwrap();
 
     let layout = mosaic.layout();
-    let widest = layout.iter().map(|(qs, _, _)| qs.len()).max().unwrap_or(0);
     let mem: usize = layout.iter().map(|(_, _, b)| b).sum();
-
-    // A single-region baseline on the same circuit.
     let mut dense = DenseState::<C64>::new(n).unwrap();
     circuit.bind(&reg).unwrap().run(&mut dense).unwrap();
 
     println!(
-        "  {label:<22} n={n:<3} t={:<4}  {} magic wires, {} seed regions",
+        "  {tag:<13} n={n:<3} t={:<3} seeded [{}]",
         d.t_gates,
-        hot_count,
-        parts.len()
+        seeded.join(" ")
     );
     println!(
-        "      after the run: {} region(s), widest {widest}, {} merge event(s), {} collapse(s)",
+        "                final {} region(s), {} event(s), memory {mem} vs dense {} ({:.2}x)",
         layout.len(),
         mosaic.events().len(),
-        mosaic.collapses()
-    );
-    println!(
-        "      memory  mosaic {mem}  vs dense {}   ({:.2}x)",
         dense.memory_bytes(),
         mem as f64 / dense.memory_bytes() as f64
     );
-    // Where did it stop being a partition? The first merge event that
-    // takes the region count to one is the horizon.
-    if let Some(first) = mosaic.events().first() {
-        println!("      first event: {first:?}");
+    if verbose {
+        for (i, e) in mosaic.events().iter().enumerate() {
+            println!(
+                "                  [{i}] {:<8} {:>2} qubits  {:<26} → {:<16} {}",
+                e.kind,
+                e.qubits.len(),
+                e.from,
+                e.to,
+                e.cause
+            );
+        }
     }
 }
 
 fn main() {
-    println!("{}", "─".repeat(78));
-    println!("REGION-WISE REPRESENTATION ON DCS, PARTITIONED BY WHERE THE MAGIC IS");
-    println!("{}", "─".repeat(78));
-    println!("  Magic-free wires seeded on the Clifford frame, magic-carrying wires");
-    println!("  on sparse. Mosaic merges regions when a gate couples them and says so.");
+    rule();
+    println!("A. MOSAIC — the merge ledger in full");
+    rule();
+    println!("  Magic-free bands seeded on the Clifford frame, magic-carrying bands on");
+    println!("  sparse. Every decision the mosaic made, in order, with its stated cause.");
     println!();
-    for n in [10, 12, 14, 16] {
-        for (tag, policy) in [
-            ("sparse-elect", MosaicPolicy::default()),
-            (
-                "frame-elect ",
-                MosaicPolicy {
-                    fallbacks: vec!["clifford-framed".into(), "sparse".into(), "dense".into()],
-                    ..MosaicPolicy::default()
-                },
-            ),
-        ] {
-            run(Dcs::scaled(n), tag, policy);
-        }
-    }
+    mosaic_run(Dcs::scaled(12), "sparse-elect", MosaicPolicy::default(), true);
     println!();
-    println!("  The separable profile from `dcs_separability`, where the magic really");
-    println!("  does fall into small components:");
-    for n in [12, 16] {
-        run(
-            Dcs::scaled(n).with_doping(Doping::Banded {
-                width: 2,
-                gap: 6,
-                layers: 2,
-                late: false,
-            }),
-            "early banded",
-            MosaicPolicy::default(),
+    mosaic_run(
+        Dcs::scaled(12),
+        "frame-elect",
+        MosaicPolicy {
+            fallbacks: vec!["clifford-framed".into(), "sparse".into(), "dense".into()],
+            ..MosaicPolicy::default()
+        },
+        true,
+    );
+    println!();
+    println!("  Same circuit, same seed partition. The only difference is whether the");
+    println!("  merge election may reach `clifford-framed`, and the ledger shows the");
+    println!("  cost each choice actually incurred.");
+
+    rule();
+    println!("B. BRANCHED — are the cut's branches independent?");
+    rule();
+    println!("  cutsim writes |ψ⟩ = Σ_p |ψ_A^p⟩⊗|ψ_B^p⟩ over 2^k branches. Loading them");
+    println!("  into a selector qudit lets `selector_schmidt_rank` measure how many are");
+    println!("  linearly independent — from the pairwise Gram, not by enumeration.");
+    println!();
+    println!("     n    k   branches   selector rank   unique states   independent?");
+    for n in [8usize, 10, 12, 14] {
+        let d = Dcs::scaled(n);
+        let circuit = d.circuit();
+        let plan = cutsim::plan(&circuit, n / 2).unwrap();
+        let branches = cutsim::branch_states(&circuit, &plan).unwrap();
+
+        let loaded: Vec<(usize, C64, Box<dyn Backend<C64>>)> = branches
+            .iter()
+            .enumerate()
+            .map(|(i, (w, v))| {
+                let mut st = SparseState::<C64>::new(n).unwrap();
+                let entries: Vec<(u64, C64)> = v
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, z)| z.norm_sqr() > 0.0)
+                    .map(|(x, z)| (x as u64, *z))
+                    .collect();
+                st.load(&entries).unwrap();
+                let b: Box<dyn Backend<C64>> = Box::new(st);
+                (i, C64::new(*w, 0.0), b)
+            })
+            .collect();
+
+        let count = loaded.len();
+        let br = BranchedRegister::<C64>::from_branches(n, count, loaded).unwrap();
+        let rank = br.selector_schmidt_rank().unwrap();
+        println!(
+            "  {n:>4}  {:>3}   {count:>8}   {rank:>13}   {:>13}   {}",
+            plan.crossings.len(),
+            br.unique_state_count(),
+            if rank == count {
+                "fully — no redundancy to exploit"
+            } else {
+                "NO — the sum is compressible"
+            }
         );
     }
-    println!("{}", "─".repeat(78));
+    rule();
 }

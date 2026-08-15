@@ -352,6 +352,62 @@ pub fn branch_weights_and_vector(
     Ok((weights, out))
 }
 
+/// Every branch as a full-register amplitude vector, with its weight.
+///
+/// The cut writes `|ψ⟩ = Σ_p |ψ_A^p⟩ ⊗ |ψ_B^p⟩`, which is precisely the
+/// object a [`BranchedRegister`](crate::clock::BranchedRegister) holds:
+/// a weighted superposition of slices whose cost is the *sum* over
+/// slices rather than the product. Handing the branches to it makes
+/// `selector_schmidt_rank` answer a question this module cannot ask
+/// itself — how many of the `2^k` branches are linearly *independent*.
+/// Flat weights do not imply independent slices, and the difference is
+/// exactly how much the branch sum could be compressed.
+///
+/// Exponential in the width by construction: this materializes each
+/// branch on all `n` qubits. It is the instrument for the independence
+/// question at small width, not a way to run the decomposition.
+pub fn branch_states(circuit: &Circuit<C64>, p: &CutPlan) -> Result<Vec<(f64, Vec<C64>)>> {
+    let segs = segments(circuit, p)?;
+    let k = p.crossings.len();
+    let n = p.qubits;
+    let hi_w = n - p.cut;
+    let minus = [C64::new(1.0, 0.0), C64::new(-1.0, 0.0)];
+    let mut out = Vec::new();
+    for path in 0..(1u64 << k) {
+        crate::guard::checkpoint()?;
+        let mut a = crate::backend::DenseState::<C64>::new(p.cut)?;
+        for j in 0..=k {
+            segs.low[j].run(&mut a)?;
+            if j < k {
+                a.project(segs.pivots[j].0, (path >> j) & 1 == 1, 1.0);
+            }
+        }
+        let mut b = crate::backend::DenseState::<C64>::new(hi_w)?;
+        for j in 0..=k {
+            segs.high[j].run(&mut b)?;
+            if j < k && (path >> j) & 1 == 1 {
+                b.apply_diagonal(&minus, &[segs.pivots[j].1])?;
+            }
+        }
+        let mut full = vec![C64::new(0.0, 0.0); 1usize << n];
+        let mut norm = 0.0;
+        for hi in 0..(1u64 << hi_w) {
+            let zb = b.amplitude(hi);
+            if zb.norm_sqr() == 0.0 {
+                continue;
+            }
+            let base = (hi as usize) << p.cut;
+            for lo in 0..(1u64 << p.cut) {
+                let v = a.amplitude(lo) * zb;
+                norm += v.norm_sqr();
+                full[base | lo as usize] = v;
+            }
+        }
+        out.push((norm.sqrt(), full));
+    }
+    Ok(out)
+}
+
 /// One amplitude — [`amplitudes_at`] with a single target.
 pub fn amplitude(circuit: &Circuit<C64>, p: &CutPlan, bits: u64) -> Result<C64> {
     Ok(amplitudes_at(circuit, p, &[bits])?[0])
