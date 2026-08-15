@@ -128,7 +128,12 @@ fn main() {
     println!("  Magic-free bands seeded on the Clifford frame, magic-carrying bands on");
     println!("  sparse. Every decision the mosaic made, in order, with its stated cause.");
     println!();
-    mosaic_run(Dcs::scaled(12), "sparse-elect", MosaicPolicy::default(), true);
+    mosaic_run(
+        Dcs::scaled(12),
+        "sparse-elect",
+        MosaicPolicy::default(),
+        true,
+    );
     println!();
     mosaic_run(
         Dcs::scaled(12),

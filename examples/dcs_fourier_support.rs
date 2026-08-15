@@ -41,9 +41,13 @@ fn main() {
         let d = Dcs::scaled(n);
         let st = Simulator::<C64>::new().run(&d.circuit()).unwrap();
         let dim = 1usize << n;
-        let mut p: Vec<f64> = (0..dim).map(|x| st.amplitude(x as u64).norm_sqr()).collect();
+        let mut p: Vec<f64> = (0..dim)
+            .map(|x| st.amplitude(x as u64).norm_sqr())
+            .collect();
         fwht(&mut p);
-        let nz: Vec<u64> = (0..dim as u64).filter(|&s| p[s as usize].abs() > 1e-9).collect();
+        let nz: Vec<u64> = (0..dim as u64)
+            .filter(|&s| p[s as usize].abs() > 1e-9)
+            .collect();
         let set: HashSet<u64> = nz.iter().copied().collect();
         // Closed under XOR?
         let mut closed = true;
@@ -56,7 +60,10 @@ fn main() {
             }
         }
         let r = rank(&nz);
-        let mut vals: Vec<i64> = nz.iter().map(|&s| (p[s as usize].abs() * 1e9).round() as i64).collect();
+        let mut vals: Vec<i64> = nz
+            .iter()
+            .map(|&s| (p[s as usize].abs() * 1e9).round() as i64)
+            .collect();
         vals.sort_unstable();
         vals.dedup();
         println!(
@@ -74,12 +81,17 @@ fn main() {
                 .iter()
                 .map(|(_, z)| {
                     let mut v = 0u64;
-                    for i in z.iter() { v |= 1 << i; }
+                    for i in z.iter() {
+                        v |= 1 << i;
+                    }
                     v
                 })
                 .collect();
-            println!("        rank of the T axes' Z-parts: {}   (span {})",
-                rank(&zparts), 1usize << rank(&zparts));
+            println!(
+                "        rank of the T axes' Z-parts: {}   (span {})",
+                rank(&zparts),
+                1usize << rank(&zparts)
+            );
         }
     }
 }

@@ -67,7 +67,11 @@ fn magic_components(axes: &[(Mask, Mask)], n: usize) -> Vec<usize> {
 }
 
 fn cost_log2(sizes: &[usize]) -> f64 {
-    sizes.iter().map(|&s| 2f64.powi(s as i32)).sum::<f64>().log2()
+    sizes
+        .iter()
+        .map(|&s| 2f64.powi(s as i32))
+        .sum::<f64>()
+        .log2()
 }
 
 fn main() {
@@ -92,11 +96,51 @@ fn main() {
         ("first 2 layers         ", Doping::Early { layers: 2 }),
         // Cones from the last L layers are 2L wide, so a gap wider than
         // that cannot be bridged and the component must split.
-        ("bands 8, gap 8, last 2 ", Doping::Banded { width: 8, gap: 8, layers: 2, late: true }),
-        ("bands 8, gap 8, FIRST 2", Doping::Banded { width: 8, gap: 8, layers: 2, late: false }),
-        ("bands 8, gap 8, FIRST 4", Doping::Banded { width: 8, gap: 8, layers: 4, late: false }),
-        ("bands 4, gap 12, FIRST 4", Doping::Banded { width: 4, gap: 12, layers: 4, late: false }),
-        ("bands 2, gap 16, FIRST 6", Doping::Banded { width: 2, gap: 16, layers: 6, late: false }),
+        (
+            "bands 8, gap 8, last 2 ",
+            Doping::Banded {
+                width: 8,
+                gap: 8,
+                layers: 2,
+                late: true,
+            },
+        ),
+        (
+            "bands 8, gap 8, FIRST 2",
+            Doping::Banded {
+                width: 8,
+                gap: 8,
+                layers: 2,
+                late: false,
+            },
+        ),
+        (
+            "bands 8, gap 8, FIRST 4",
+            Doping::Banded {
+                width: 8,
+                gap: 8,
+                layers: 4,
+                late: false,
+            },
+        ),
+        (
+            "bands 4, gap 12, FIRST 4",
+            Doping::Banded {
+                width: 4,
+                gap: 12,
+                layers: 4,
+                late: false,
+            },
+        ),
+        (
+            "bands 2, gap 16, FIRST 6",
+            Doping::Banded {
+                width: 2,
+                gap: 16,
+                layers: 6,
+                late: false,
+            },
+        ),
     ] {
         let d = e.with_doping(doping);
         let c = d.circuit();

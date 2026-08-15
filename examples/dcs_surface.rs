@@ -312,7 +312,7 @@ fn main() -> Result<()> {
     let behind_mid = exp
         .doping()
         .iter()
-        .filter(|site| site.qubit <= exp.qubits / 2 - 1)
+        .filter(|site| site.qubit < exp.qubits / 2)
         .count();
     println!();
     println!("  Three T gates behind a bond is already enough to end it. So the O(m^2)");

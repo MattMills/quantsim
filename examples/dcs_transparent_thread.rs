@@ -3,16 +3,15 @@
 //!
 //! Three threads, all spliced into `Dcs::scaled(n)`:
 //!
-//! * `null`      — `X·X` at the same point: individually identity, the
-//!                 control that the harness itself costs nothing;
-//! * `z-thread`  — `Z_q` before a `CZ` layer and `Z_q` after it. Neither
-//!                 half is identity; the pair is, because everything in
-//!                 between (`CZ`, `T`) commutes with `Z`;
-//! * `x-thread`  — `X_q` before the `CZ` layer, and `X_q·Z_p` after it,
-//!                 `p` the brickwork partner. The signal is *transformed*
-//!                 in flight — `CZ·X_q·CZ = X_q Z_p` — so the removal is
-//!                 not a copy of the insertion. This is the shape the
-//!                 module means by a signal thread.
+//! * `null` — `X·X` at the same point: individually identity, the
+//!   control that the harness itself costs nothing;
+//! * `z-thread` — `Z_q` before a `CZ` layer and `Z_q` after it. Neither
+//!   half is identity; the pair is, because everything in between
+//!   (`CZ`, `T`) commutes with `Z`;
+//! * `x-thread` — `X_q` before the `CZ` layer, and `X_q·Z_p` after it,
+//!   `p` the brickwork partner. The signal is *transformed* in flight —
+//!   `CZ·X_q·CZ = X_q Z_p` — so the removal is not a copy of the
+//!   insertion. This is the shape the module means by a signal thread.
 //!
 //! `verify_transparent` runs both circuits on the **dense** backend, so
 //! the width here is bounded by `2^n` amplitudes, not by anything about
@@ -48,7 +47,11 @@ fn cz_runs(circuit: &Circuit<C64>) -> Vec<(usize, usize)> {
 
 /// The brickwork partner of `q` inside a run, and whether a `T` lands on
 /// `q` inside it (which would break an `X` thread: `T X T†` is not Pauli).
-fn partner_and_clean(circuit: &Circuit<C64>, run: (usize, usize), q: usize) -> (Option<usize>, bool) {
+fn partner_and_clean(
+    circuit: &Circuit<C64>,
+    run: (usize, usize),
+    q: usize,
+) -> (Option<usize>, bool) {
     let mut partner = None;
     let mut clean = true;
     for op in &circuit.ops()[run.0..run.1] {

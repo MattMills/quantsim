@@ -65,7 +65,10 @@ fn main() {
                 "\n  amplitude of the 70-qubit depth-70 skeleton at |x⟩ = every third qubit set:"
             );
             println!("    ⟨x|ψ⟩ = {amp:?}");
-            println!("    |⟨x|ψ⟩|² · 2^70 = {:.6}", amp.norm_sqr() * 2f64.powi(70));
+            println!(
+                "    |⟨x|ψ⟩|² · 2^70 = {:.6}",
+                amp.norm_sqr() * 2f64.powi(70)
+            );
             println!("    (second reduction {:?})", t0.elapsed());
         }
     }

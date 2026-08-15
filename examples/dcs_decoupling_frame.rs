@@ -390,7 +390,9 @@ fn main() {
     // block structure and separability are sign-independent.)
     println!();
     println!("END-TO-END propagate_engineered (small n only: the walk is 2^t terms)");
-    println!("   n  t | support blocks  engineered blocks | peak stored  peak flat | separable input");
+    println!(
+        "   n  t | support blocks  engineered blocks | peak stored  peak flat | separable input"
+    );
     println!("  {}", "-".repeat(88));
     for n in [8usize, 10, 12, 14] {
         let d = Dcs::scaled(n);

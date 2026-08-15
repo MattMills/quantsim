@@ -56,7 +56,6 @@
 //! usually not worth it; a `CZ` is rank 2 and is what makes this cheap.
 //! Anything else is refused rather than approximated.
 
-
 use crate::backend::Backend;
 use crate::circuit::{Circuit, Op};
 use crate::error::{Error, Result};
@@ -163,9 +162,7 @@ fn segments(circuit: &Circuit<C64>, p: &CutPlan) -> Result<Segments> {
     let reg = crate::registry::GateRegistry::<C64>::standard();
     let k = p.crossings.len();
     let mut low: Vec<Circuit<C64>> = (0..=k).map(|_| Circuit::new(p.cut)).collect();
-    let mut high: Vec<Circuit<C64>> = (0..=k)
-        .map(|_| Circuit::new(p.qubits - p.cut))
-        .collect();
+    let mut high: Vec<Circuit<C64>> = (0..=k).map(|_| Circuit::new(p.qubits - p.cut)).collect();
     let mut pivots = Vec::with_capacity(k);
     let mut seg = 0usize;
     for (i, op) in circuit.ops().iter().enumerate() {
@@ -261,7 +258,10 @@ pub fn amplitudes_at(circuit: &Circuit<C64>, p: &CutPlan, bits: &[u64]) -> Resul
         }
         // Most branches annihilate the low half outright; when they do,
         // the high half is never built.
-        if split.iter().all(|&(x_lo, _)| a.amplitude(x_lo).norm_sqr() < 1e-300) {
+        if split
+            .iter()
+            .all(|&(x_lo, _)| a.amplitude(x_lo).norm_sqr() < 1e-300)
+        {
             continue;
         }
         b.reset();

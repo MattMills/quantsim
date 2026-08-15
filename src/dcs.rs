@@ -343,7 +343,11 @@ impl Dcs {
                 let period = width + gap;
                 let first = self.depth.saturating_sub(layers);
                 pool.retain(|s| {
-                    let in_time = if late { s.layer >= first } else { s.layer < layers };
+                    let in_time = if late {
+                        s.layer >= first
+                    } else {
+                        s.layer < layers
+                    };
                     in_time && period > 0 && s.qubit % period < width
                 });
             }
@@ -594,7 +598,10 @@ pub fn symplectic_rank(axes: &[(Mask, Mask)], n: usize) -> usize {
 /// states 468 − 70 = 398 for the experiment, and a propagation that
 /// misses that number is propagating something else.
 pub fn x_component_rank(axes: &[(Mask, Mask)], n: usize) -> usize {
-    let x_only: Vec<(Mask, Mask)> = axes.iter().map(|(x, _)| (x.clone(), Mask::zero())).collect();
+    let x_only: Vec<(Mask, Mask)> = axes
+        .iter()
+        .map(|(x, _)| (x.clone(), Mask::zero()))
+        .collect();
     symplectic_rank(&x_only, n)
 }
 
@@ -762,10 +769,7 @@ pub fn probe(circuit: &Circuit<C64>, budget: Duration) -> crate::error::Result<P
         walls,
         terms: ps.terms(),
         splits: ps.splits(),
-        alignment_stalls: stalls
-            .iter()
-            .filter(|(_, s)| s.is_alignment())
-            .count(),
+        alignment_stalls: stalls.iter().filter(|(_, s)| s.is_alignment()).count(),
         elapsed,
         cut_short: ps.reduction_cut_short(),
     })

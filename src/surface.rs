@@ -3,7 +3,7 @@
 //!
 //! [`crate::sweep`] contracts a circuit one world-line at a time. What
 //! passes from the processed part to the rest is a
-//! [`Surface`](crate::sweep::Surface): the open legs on one bond, one
+//! [`crate::sweep::Surface`]: the open legs on one bond, one
 //! leg per `CZ`, indexed in circuit order. On the 70-qubit experiment
 //! that is 35 legs, so the sweep's peak is `2^36` rather than the
 //! register's `2^70`.

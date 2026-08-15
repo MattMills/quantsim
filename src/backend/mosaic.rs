@@ -71,8 +71,9 @@
 //! need to.
 
 use super::{
-    validate_apply, validate_apply_diagonal, Backend, BulkState, DenseState, FactoredState,
-    MpsState, SparseState, CliffordFramedState,};
+    validate_apply, validate_apply_diagonal, Backend, BulkState, CliffordFramedState, DenseState,
+    FactoredState, MpsState, SparseState,
+};
 use crate::error::{Error, Result};
 use crate::math::GateMatrix;
 use crate::scalar::Scalar;

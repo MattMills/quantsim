@@ -56,7 +56,10 @@ fn main() {
         let full = d.circuit();
         let truth = sim.run(&full).unwrap();
         println!("  n = {n}, {} T gates in the instance", d.t_gates);
-        println!("     k   measured F   {:.4}^k   ratio", dcs::CLIFFORDIZED_T_FIDELITY);
+        println!(
+            "     k   measured F   {:.4}^k   ratio",
+            dcs::CLIFFORDIZED_T_FIDELITY
+        );
         for k in 0..=d.t_gates.min(12) {
             let spoof = sim.run(&dcs::cliffordize(&full, k, 99)).unwrap();
             let f = fidelity(truth.as_ref(), spoof.as_ref());
@@ -77,7 +80,11 @@ fn main() {
     let reg = GateRegistry::<C64>::standard();
     let caps: Vec<usize> = vec![1, 2, 4, 8, 16, 32, 64, 128];
     println!("  Same brickwork, same {n} CZ layers; the only difference is whether the");
-    println!("  single-qubit layer is Clifford. Max bond at n = {n} is 2^{} = {}.", n / 2, 1 << (n / 2));
+    println!(
+        "  single-qubit layer is Clifford. Max bond at n = {n} is 2^{} = {}.",
+        n / 2,
+        1 << (n / 2)
+    );
     println!();
     for (label, circuit) in [
         ("DCS doped Clifford ", Dcs::scaled(n).circuit()),

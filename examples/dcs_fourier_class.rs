@@ -31,11 +31,23 @@ fn z_images(circuit: &Circuit<C64>, n: usize) -> Vec<(Mask, Mask)> {
     let mut zim: Vec<(Mask, Mask)> = (0..n).map(|q| (Mask::zero(), Mask::single(q))).collect();
     let mul = |a: &(Mask, Mask), b: &(Mask, Mask)| (a.0.xor(&b.0), a.1.xor(&b.1));
     for op in circuit.ops() {
-        let Op::Named { name, qubits, .. } = op else { continue };
+        let Op::Named { name, qubits, .. } = op else {
+            continue;
+        };
         match (name.as_str(), qubits.len()) {
-            ("h", 1) => { let a = qubits[0]; xim.swap(a, a); std::mem::swap(&mut xim[a], &mut zim[a]); }
-            ("s" | "sdg", 1) => { let a = qubits[0]; xim[a] = mul(&xim[a], &zim[a]); }
-            ("sx" | "sxdg", 1) => { let a = qubits[0]; zim[a] = mul(&xim[a], &zim[a]); }
+            ("h", 1) => {
+                let a = qubits[0];
+                xim.swap(a, a);
+                std::mem::swap(&mut xim[a], &mut zim[a]);
+            }
+            ("s" | "sdg", 1) => {
+                let a = qubits[0];
+                xim[a] = mul(&xim[a], &zim[a]);
+            }
+            ("sx" | "sxdg", 1) => {
+                let a = qubits[0];
+                zim[a] = mul(&xim[a], &zim[a]);
+            }
             ("cz", 2) => {
                 let (a, b) = (qubits[0], qubits[1]);
                 let (za, zb) = (zim[a].clone(), zim[b].clone());
@@ -62,7 +74,9 @@ fn main() {
 
         let st = Simulator::<C64>::new().run(&circuit).unwrap();
         let dim = 1usize << n;
-        let mut p: Vec<f64> = (0..dim).map(|x| st.amplitude(x as u64).norm_sqr()).collect();
+        let mut p: Vec<f64> = (0..dim)
+            .map(|x| st.amplitude(x as u64).norm_sqr())
+            .collect();
         fwht(&mut p);
 
         // class k -> set of |coefficient| values seen
@@ -70,7 +84,9 @@ fn main() {
         let mut nz = 0;
         for s in 0..dim as u64 {
             let c = p[s as usize];
-            if c.abs() <= 1e-9 { continue; }
+            if c.abs() <= 1e-9 {
+                continue;
+            }
             nz += 1;
             let mut q = (Mask::zero(), Mask::zero());
             for (bit, img) in zim.iter().enumerate().take(n) {
@@ -79,14 +95,25 @@ fn main() {
                 }
             }
             let k = axes.iter().filter(|a| anti(a, &q)).count();
-            *by_k.entry(k).or_default().entry((c.abs() * 1e9).round() as i64).or_insert(0) += 1;
+            *by_k
+                .entry(k)
+                .or_default()
+                .entry((c.abs() * 1e9).round() as i64)
+                .or_insert(0) += 1;
         }
         println!("  {n:>4} {:>4}  {nz:>7}", d.t_gates);
         for (k, vals) in &by_k {
-            let list: Vec<String> = vals.iter().take(4)
-                .map(|(v, c)| format!("{:.6}×{c}", *v as f64 / 1e9)).collect();
-            println!("            k={k:<4} {:>5} coeffs, {:>3} distinct value(s): {}",
-                vals.values().sum::<usize>(), vals.len(), list.join(", "));
+            let list: Vec<String> = vals
+                .iter()
+                .take(4)
+                .map(|(v, c)| format!("{:.6}×{c}", *v as f64 / 1e9))
+                .collect();
+            println!(
+                "            k={k:<4} {:>5} coeffs, {:>3} distinct value(s): {}",
+                vals.values().sum::<usize>(),
+                vals.len(),
+                list.join(", ")
+            );
         }
     }
 }

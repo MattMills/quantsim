@@ -13,7 +13,11 @@ fn main() {
     println!("{}", "─".repeat(74));
     println!("     n  depth      CZ    T   best cut   crossing   interior   1-qubit");
     for n in [12, 16, 24, 48, 70] {
-        let d = if n == 70 { Dcs::experiment() } else { Dcs::scaled(n) };
+        let d = if n == 70 {
+            Dcs::experiment()
+        } else {
+            Dcs::scaled(n)
+        };
         let c = d.circuit();
         let p = cutsim::best_plan(&c).unwrap();
         println!(
@@ -70,7 +74,9 @@ fn main() {
         let d = Dcs::scaled(n);
         let c = d.circuit();
         let p = cutsim::plan(&c, n / 2).unwrap();
-        let targets: Vec<u64> = (0..256u64).map(|i| i.wrapping_mul(0x9E3779B97F4A7C15)).collect();
+        let targets: Vec<u64> = (0..256u64)
+            .map(|i| i.wrapping_mul(0x9E3779B97F4A7C15))
+            .collect();
         let t0 = Instant::now();
         cutsim::amplitudes_at(&c, &p, &targets).unwrap();
         let el = t0.elapsed();
@@ -95,16 +101,12 @@ fn main() {
     let at70 = a * 70.0 + b;
     println!();
     println!("  fit: log2(seconds) = {a:.3}*(k + n/2) + {b:.2}");
-    println!(
-        "  extrapolated to the experiment (k = 35, n/2 = 35, exponent 70):"
-    );
+    println!("  extrapolated to the experiment (k = 35, n/2 = 35, exponent 70):");
     println!(
         "    single core: 2^{at70:.1} s = 10^{:.1} s",
         at70 * 2f64.log10()
     );
-    println!(
-        "    the branches are independent, so across N cores this divides by N;"
-    );
+    println!("    the branches are independent, so across N cores this divides by N;");
     println!(
         "    at 10^6 cores that is 10^{:.1} s.",
         at70 * 2f64.log10() - 6.0
@@ -121,7 +123,9 @@ fn main() {
     let base = Dcs::scaled(n);
     let c0 = base.with_t(0).circuit();
     let p0 = cutsim::plan(&c0, n / 2).unwrap();
-    let targets: Vec<u64> = (0..256u64).map(|i| i.wrapping_mul(0x9E3779B97F4A7C15)).collect();
+    let targets: Vec<u64> = (0..256u64)
+        .map(|i| i.wrapping_mul(0x9E3779B97F4A7C15))
+        .collect();
     let t0 = Instant::now();
     cutsim::amplitudes_at(&c0, &p0, &targets).unwrap();
     let baseline = t0.elapsed().as_secs_f64();

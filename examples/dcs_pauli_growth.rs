@@ -86,10 +86,7 @@ fn main() {
     );
     println!(
         "  symplectic rank {} = 2n, so the sum lives in a group of 2^{} elements",
-        dcs::symplectic_rank(
-            &dcs::rotation_axes(&e.circuit()).unwrap(),
-            e.qubits
-        ),
+        dcs::symplectic_rank(&dcs::rotation_axes(&e.circuit()).unwrap(), e.qubits),
         140
     );
     println!();
@@ -141,7 +138,10 @@ fn main() {
         let a = (m * sxy - sx * sy) / (m * sxx - sx * sx);
         let b = (sy - a * sx) / m;
         println!();
-        println!("  fit over the last {} points: log2(terms) = {a:.4}·k + {b:.2}", tail.len());
+        println!(
+            "  fit over the last {} points: log2(terms) = {a:.4}·k + {b:.2}",
+            tail.len()
+        );
         println!(
             "  extrapolated to all 468 rotations: 2^{:.1}",
             (a * 468.0 + b).min(140.0)

@@ -991,7 +991,10 @@ impl PathSum {
             if !term.iter().any(|m| m.bit(p)) {
                 // Drained, so the snapshot holds the only reference and
                 // the unwrap is a move rather than a copy.
-                self.add_term(Rc::try_unwrap(term).unwrap_or_else(|rc| (*rc).clone()), coeff);
+                self.add_term(
+                    Rc::try_unwrap(term).unwrap_or_else(|rc| (*rc).clone()),
+                    coeff,
+                );
                 continue;
             }
             let factors: Vec<(Mask, bool)> = term

@@ -85,7 +85,9 @@ fn the_experiments_chain_is_joined_by_thirty_five_gates() {
 fn the_cost_does_not_move_when_the_doping_does() {
     let n = 14;
     let base = Dcs::scaled(n);
-    let targets: Vec<u64> = (0..64u64).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15)).collect();
+    let targets: Vec<u64> = (0..64u64)
+        .map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+        .collect();
     let run = |t: usize| -> f64 {
         let c = base.with_t(t).circuit();
         let p = cutsim::plan(&c, n / 2).unwrap();

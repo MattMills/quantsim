@@ -47,7 +47,10 @@ fn the_peak_does_not_move_when_the_doping_does() {
     let doped = sweep::plan(&base.circuit()).unwrap();
     assert_eq!(bare.peak_live_legs, doped.peak_live_legs);
     assert_eq!(bare.legs_per_bond, doped.legs_per_bond);
-    assert!(doped.single_qubit > bare.single_qubit, "doping did add gates");
+    assert!(
+        doped.single_qubit > bare.single_qubit,
+        "doping did add gates"
+    );
 }
 
 /// The price of independence, and that it is flat.

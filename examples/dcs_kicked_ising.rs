@@ -160,10 +160,7 @@ fn main() {
         for r1 in 0..2 {
             // Matrix order is the reverse of circuit order.
             let sq = |r: usize| if r == 1 { s.clone() } else { i2.clone() };
-            let layer = sx
-                .kron(&sx)
-                .matmul(&sq(r1).kron(&sq(r0)))
-                .matmul(&cz);
+            let layer = sx.kron(&sx).matmul(&sq(r1).kron(&sq(r0))).matmul(&cz);
             // S = e^{iπ/4}exp(−i(π/4)Z) and CZ carries an S† per qubit,
             // so the residual longitudinal kick is S^{r−1}: none when
             // r = 1, and −π/4 when r = 0.
@@ -196,9 +193,7 @@ fn main() {
 }
 
 fn diag(m: &GateMatrix<C64>) -> Vec<String> {
-    (0..m.dim())
-        .map(|i| fmt(m.get(i, i)))
-        .collect()
+    (0..m.dim()).map(|i| fmt(m.get(i, i))).collect()
 }
 
 fn rows(m: &GateMatrix<C64>) -> Vec<String> {

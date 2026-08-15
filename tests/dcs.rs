@@ -68,8 +68,11 @@ fn the_closed_form_two_qubit_count_matches_the_built_circuit() {
 #[test]
 fn the_clifford_skeleton_reduces_to_no_internal_variables() {
     for n in [6, 10, 14] {
-        let p = dcs::probe(&Dcs::scaled(n).with_t(0).skeleton(), Duration::from_secs(60))
-            .expect("skeleton reduces");
+        let p = dcs::probe(
+            &Dcs::scaled(n).with_t(0).skeleton(),
+            Duration::from_secs(60),
+        )
+        .expect("skeleton reduces");
         assert!(!p.cut_short, "n={n} did not reduce inside the budget");
         assert_eq!(p.h_star, 0, "n={n}: the skeleton is Clifford");
     }
@@ -212,7 +215,11 @@ fn the_rotation_axes_reproduce_the_papers_camps_kernel_dimension() {
 #[test]
 fn the_magic_saturates_the_pauli_group_long_before_the_experiments_t_count() {
     for n in [32, 48, 70] {
-        let d = if n == 70 { Dcs::experiment() } else { Dcs::scaled(n) };
+        let d = if n == 70 {
+            Dcs::experiment()
+        } else {
+            Dcs::scaled(n)
+        };
         let axes = dcs::rotation_axes(&d.circuit()).unwrap();
         let rank = dcs::symplectic_rank(&axes, n);
         assert_eq!(
@@ -290,7 +297,9 @@ fn the_up_embedded_readout_is_the_right_number_and_not_just_a_cheap_one() {
                 acc += amp.conj() * p_psi.amplitude(i);
             });
             let truth = acc.re;
-            let got = quantsim::upembed::expectation(&circuit, &ops).unwrap().value;
+            let got = quantsim::upembed::expectation(&circuit, &ops)
+                .unwrap()
+                .value;
             worst = worst.max((got - truth).abs());
             if truth.abs() > 1e-6 {
                 nonzero += 1;
@@ -387,7 +396,11 @@ fn the_magic_separates_when_it_is_both_early_and_banded() {
     // Late is the *wrong* end — the cone reaches back over the whole
     // circuit — so lateness alone does not separate.
     let late = spectrum(e.with_doping(dcs::Doping::Late { layers: 2 }));
-    assert_eq!(late.len(), 1, "late magic has the long cone, not the short one");
+    assert_eq!(
+        late.len(),
+        1,
+        "late magic has the long cone, not the short one"
+    );
 
     // Banding alone does not separate either, if the magic is late.
     let late_banded = spectrum(e.with_doping(dcs::Doping::Banded {
@@ -396,7 +409,11 @@ fn the_magic_separates_when_it_is_both_early_and_banded() {
         layers: 2,
         late: true,
     }));
-    assert_eq!(late_banded.len(), 1, "a gap cannot stop a circuit-wide cone");
+    assert_eq!(
+        late_banded.len(),
+        1,
+        "a gap cannot stop a circuit-wide cone"
+    );
 
     // Early alone already separates, because the cones are narrow enough
     // that the brickwork's own idle sites break the chain.
@@ -409,7 +426,10 @@ fn the_magic_separates_when_it_is_both_early_and_banded() {
     // And the cost that follows is the point: the same count of T gates,
     // priced by components instead of by total.
     let placed: usize = early.iter().sum();
-    assert!(placed > 100, "the comparison needs real magic, got {placed}");
+    assert!(
+        placed > 100,
+        "the comparison needs real magic, got {placed}"
+    );
     let by_components = cost(&early);
     let by_stabilizer_rank = 0.3963 * placed as f64;
     assert!(
@@ -454,7 +474,11 @@ fn the_magic_separates_when_it_is_both_early_and_banded() {
 fn the_anticommutation_partition_is_a_clifford_conjugation_invariant() {
     let axes = dcs::rotation_axes(&Dcs::experiment().circuit()).unwrap();
     let lab = dcs::anticommutation_components(&axes);
-    assert_eq!(lab, vec![dcs::EXPERIMENT_T_GATES], "one component in the lab frame");
+    assert_eq!(
+        lab,
+        vec![dcs::EXPERIMENT_T_GATES],
+        "one component in the lab frame"
+    );
 
     // Conjugating every axis by the same Clifford leaves the symplectic
     // form alone. Rather than build frames, apply the invariance

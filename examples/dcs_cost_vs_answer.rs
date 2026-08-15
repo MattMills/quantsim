@@ -120,12 +120,17 @@ fn main() {
                     shown += 1;
                     let label: String = ops
                         .iter()
-                        .map(|(q, p)| format!("{}{q}", match p {
-                            Pauli::X => "X",
-                            Pauli::Y => "Y",
-                            Pauli::Z => "Z",
-                            Pauli::I => "I",
-                        }))
+                        .map(|(q, p)| {
+                            format!(
+                                "{}{q}",
+                                match p {
+                                    Pauli::X => "X",
+                                    Pauli::Y => "Y",
+                                    Pauli::Z => "Z",
+                                    Pauli::I => "I",
+                                }
+                            )
+                        })
                         .collect::<Vec<_>>()
                         .join("");
                     let short: String = label.chars().take(14).collect();
@@ -167,17 +172,12 @@ fn main() {
 
     println!("  RAN — polynomial, exact, Clifford:");
     println!("    gadgetize the circuit                    {gadget_time:?}");
-    println!(
-        "    transport {lines} Pauli lines through {steps} Clifford steps",
-    );
+    println!("    transport {lines} Pauli lines through {steps} Clifford steps",);
     println!(
         "      = {:.1} M line-step updates                 {estimate_time:?}",
         bit_ops as f64 / 1e6
     );
-    println!(
-        "    union-find over {} line pairs",
-        lines * (lines - 1) / 2
-    );
+    println!("    union-find over {} line pairs", lines * (lines - 1) / 2);
     println!("    → cluster spectrum {sizes:?}");
     println!();
     println!("  DID NOT RUN — this is the sampling problem:");

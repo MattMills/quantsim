@@ -161,7 +161,11 @@ fn main() {
                     p.h_star as f64 / d.t_gates as f64,
                     p.h_star as f64 / n as f64,
                     p.elapsed,
-                    if p.cut_short { "TIMEOUT" } else { "reduced dry" }
+                    if p.cut_short {
+                        "TIMEOUT"
+                    } else {
+                        "reduced dry"
+                    }
                 );
                 if !p.cut_short {
                     law_n.push(n);

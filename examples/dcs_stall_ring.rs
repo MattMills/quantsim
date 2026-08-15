@@ -48,7 +48,10 @@ fn main() {
             let _ = ps.try_reduce();
         });
         if ps.reduction_cut_short() {
-            println!("  {n:>4}  {:>4}   (reduction did not reach a fixpoint)", d.t_gates);
+            println!(
+                "  {n:>4}  {:>4}   (reduction did not reach a fixpoint)",
+                d.t_gates
+            );
             continue;
         }
         let census = ps.stall_census();
@@ -73,7 +76,10 @@ fn main() {
             t0.elapsed()
         );
         let profile: Vec<String> = deg.iter().map(|(k, v)| format!("deg {k}: {v}")).collect();
-        println!("           surviving monomials by degree — {}", profile.join(", "));
+        println!(
+            "           surviving monomials by degree — {}",
+            profile.join(", ")
+        );
         // What coefficient sits on the terms that trap a stalled
         // variable decides which fix applies. Half turns mean summing
         // the variable out yields 2 or 0 — a constraint, rule [E]'s own
@@ -110,7 +116,11 @@ fn main() {
         println!(
             "           trapping-term coefficients — half {half}, quarter {quarter}, \
              odd-eighth {eighth}, other {other}   ({:.0}% half)",
-            if tot > 0 { 100.0 * half as f64 / tot as f64 } else { 0.0 }
+            if tot > 0 {
+                100.0 * half as f64 / tot as f64
+            } else {
+                0.0
+            }
         );
         println!(
             "           variables a QUADRATIC rule [E] could free: {all_half} of {shape} shape-stalled  ({:.0}% of h*)",

@@ -80,8 +80,8 @@ fn anticommutation_components(axes: &[(Mask, Mask)]) -> Vec<usize> {
     }
     for i in 0..n {
         for j in (i + 1)..n {
-            let anti = (axes[i].1.and(&axes[j].0).count() + axes[i].0.and(&axes[j].1).count()) % 2
-                == 1;
+            let anti =
+                (axes[i].1.and(&axes[j].0).count() + axes[i].0.and(&axes[j].1).count()) % 2 == 1;
             if anti {
                 let (a, b) = (find(&mut parent, i), find(&mut parent, j));
                 parent[a] = b;
@@ -118,7 +118,11 @@ fn report(label: &str, sizes: &[usize], t: usize) {
         (t as f64) - terms.log2()
     );
     let head: Vec<String> = sizes.iter().take(12).map(|s| s.to_string()).collect();
-    println!("    spectrum: [{}{}]", head.join(", "), if sizes.len() > 12 { ", …" } else { "" });
+    println!(
+        "    spectrum: [{}{}]",
+        head.join(", "),
+        if sizes.len() > 12 { ", …" } else { "" }
+    );
 }
 
 fn main() {

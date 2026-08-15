@@ -25,7 +25,11 @@ fn main() {
     println!("{}", "─".repeat(76));
     println!("     n  depth      CZ     T   legs/bond   PEAK legs   peak amps   vs 2^n");
     for n in [12usize, 16, 24, 48, 70] {
-        let d = if n == 70 { Dcs::experiment() } else { Dcs::scaled(n) };
+        let d = if n == 70 {
+            Dcs::experiment()
+        } else {
+            Dcs::scaled(n)
+        };
         let c = d.circuit();
         let p = sweep::plan(&c).unwrap();
         let maxbond = p.legs_per_bond.iter().max().copied().unwrap_or(0);
@@ -70,8 +74,11 @@ fn main() {
     let b = (sy - a * sx) / m;
     println!();
     println!("  fit: log2(seconds) = {a:.3}·(peak legs) + {b:.2}");
-    println!("  at the experiment's peak of 36 legs: 2^{:.1} s = {:.1e} s single core",
-        a * 36.0 + b, 2f64.powf(a * 36.0 + b));
+    println!(
+        "  at the experiment's peak of 36 legs: 2^{:.1} s = {:.1e} s single core",
+        a * 36.0 + b,
+        2f64.powf(a * 36.0 + b)
+    );
     println!();
     println!("  For comparison, the paper's own extrapolations for this instance:");
     println!("    MPS (quimb, measured + fitted)      10^25 s");
