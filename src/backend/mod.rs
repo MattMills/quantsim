@@ -19,6 +19,7 @@
 
 mod adaptive;
 mod braided_state;
+mod bulk;
 mod clifford_frame;
 mod dense;
 mod device;
@@ -26,12 +27,16 @@ mod factored;
 mod frames;
 mod interference;
 mod mera;
+mod mosaic;
 mod mps;
 mod phase_field;
 mod sparse;
 
 pub use adaptive::AdaptiveState;
 pub use braided_state::{BraidedState, Realization};
+pub use bulk::{
+    BulkConfig, BulkState, UnfoldProgram, UnfoldStep, BULK_MAX_QUBITS, UNFOLD_MAX_STEP_QUBITS,
+};
 pub use clifford_frame::{
     conjugate_by_step, CliffordFrameStats, CliffordFramedState, CliffordStep, PauliString,
     CLIFFORD_DIAGONAL_MAX, CLIFFORD_RECOGNITION_MAX,
@@ -42,8 +47,9 @@ pub use factored::{FactoredState, FACTORED_MAX_QUBITS, FACTOR_MAX_QUBITS};
 pub use frames::{FrameStats, FramedState, FRAME_CONJUGATION_MAX};
 pub use interference::{InterferenceRecord, InterferenceState};
 pub use mera::{MeraConfig, MeraState, MERA_LOAD_MAX_QUBITS, MERA_MAX_QUBITS};
+pub use mosaic::{MosaicEvent, MosaicPolicy, MosaicState, MOSAIC_MAX_QUBITS};
 pub use mps::{MpsConfig, MpsState, MPS_LOAD_MAX_QUBITS, MPS_MAX_QUBITS, MPS_MAX_WINDOW};
-pub use phase_field::{PhaseFieldState, MAX_FIELD_MODULUS, MAX_ROOT_ORDER};
+pub use phase_field::{PhaseFieldState, MAX_DYADIC_ROOT_DEPTH, MAX_FIELD_MODULUS, MAX_ROOT_ORDER};
 pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
 
 use std::collections::HashMap;
@@ -320,11 +326,16 @@ impl<S: Scalar> BackendRegistry<S> {
     }
 
     /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"`,
-    /// `"factored"`, `"mps"`, `"mera"` and `"bundle"` backends.
+    /// `"factored"`, `"mps"`, `"mera"`, `"bulk"`, `"mosaic"`, `"bundle"`
+    /// and `"branched"` backends.
     /// (`"bundle"` is the graph-state
     /// [`PolarityBundle`](crate::bundle::PolarityBundle): exact and
     /// `O(n + |E|)` on the Clifford sector, refusing anything else by
-    /// name.) (`"mps"` and `"mera"`
+    /// name.) (`"branched"` is the
+    /// [`BranchedRegister`](crate::clock::BranchedRegister) with a
+    /// trivial selector over one **mosaic** branch: representation
+    /// election below, selector dimension above — the flat Backend
+    /// contract holds either way.) (`"mps"`, `"mera"` and `"bulk"`
     /// require a commutative division algebra and report an error at
     /// creation elsewhere.)
     pub fn standard() -> Self {
@@ -341,12 +352,20 @@ impl<S: Scalar> BackendRegistry<S> {
             .expect("fresh registry");
         reg.register("mera", |n| Ok(Box::new(MeraState::<S>::new(n)?)))
             .expect("fresh registry");
+        reg.register("bulk", |n| Ok(Box::new(BulkState::<S>::new(n)?)))
+            .expect("fresh registry");
+        reg.register("mosaic", |n| Ok(Box::new(MosaicState::<S>::new(n)?)))
+            .expect("fresh registry");
         reg.register("bundle", |n| {
             let mut bundle = crate::bundle::PolarityBundle::new(n)?;
             // The Backend contract starts at |0…0⟩; the bundle's own
             // description convention starts at |+…+⟩.
             <crate::bundle::PolarityBundle as Backend<S>>::reset(&mut bundle);
             Ok(Box::new(bundle) as Box<dyn Backend<S>>)
+        })
+        .expect("fresh registry");
+        reg.register("branched", |n| {
+            Ok(Box::new(crate::clock::BranchedRegister::<S>::new(n, 1)?))
         })
         .expect("fresh registry");
         reg

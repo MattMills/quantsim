@@ -63,8 +63,8 @@
 //! area law `log rank = Σ_{e∈cut} log rank_e` this implements and tests.
 
 use crate::error::{Error, Result};
-use crate::support::Support;
 use crate::scalar::C64;
+use crate::support::Support;
 
 /// Largest cut dimension [`CutGraph::exact_rank`] will build.
 ///

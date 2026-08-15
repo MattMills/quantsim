@@ -594,7 +594,11 @@ impl WidePauli {
     /// `(X^a Z^b)(X^c Z^d) = sign · X^{a⊕c} Z^{b⊕d}`, with the same
     /// reordering sign the bounded version uses.
     pub fn mul(&self, other: &WidePauli) -> (WidePauli, f64) {
-        let sign = if self.z.and_parity(&other.x) { -1.0 } else { 1.0 };
+        let sign = if self.z.and_parity(&other.x) {
+            -1.0
+        } else {
+            1.0
+        };
         (
             WidePauli {
                 x: self.x.xor(&other.x),

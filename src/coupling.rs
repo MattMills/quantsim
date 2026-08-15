@@ -423,10 +423,7 @@ impl DecouplingFrame {
             z: key.1,
             negative: false,
         });
-        (
-            (img.x, img.z),
-            if img.negative { -1.0 } else { 1.0 },
-        )
+        ((img.x, img.z), if img.negative { -1.0 } else { 1.0 })
     }
 
     /// The circuit rewritten in the frame: each axis conjugated, with a
@@ -1085,7 +1082,6 @@ pub fn scramble(
     };
     let (key, sign) = frame.conjugate(observable);
     // `V†(X^xZ^z)V = σ · i^{|x'∧z'|}/i^{|x∧z|} · X^{x'}Z^{z'}`.
-    let coeff = C64::new(sign, 0.0) * axis_operator_phase(key)
-        / axis_operator_phase(observable);
+    let coeff = C64::new(sign, 0.0) * axis_operator_phase(key) / axis_operator_phase(observable);
     (frame.rewrite(rotations), key, coeff)
 }

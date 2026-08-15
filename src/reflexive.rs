@@ -449,8 +449,7 @@ impl Run {
     /// First event at which the absolute error stayed below `tol` for
     /// the rest of the run — `None` if it never settled.
     pub fn settled_at(&self, tol: f64) -> Option<usize> {
-        (0..self.error.len())
-            .find(|&i| self.error[i..].iter().all(|e| e.abs() <= tol))
+        (0..self.error.len()).find(|&i| self.error[i..].iter().all(|e| e.abs() <= tol))
     }
 }
 
@@ -519,7 +518,8 @@ impl Reflexive {
     pub fn apply(&mut self, emission: &Emission) -> Result<()> {
         let all: Vec<usize> = (0..self.qubits).collect();
         self.transforms += 1;
-        self.state.apply_diagonal(&emission.diagonal(self.qubits), &all)
+        self.state
+            .apply_diagonal(&emission.diagonal(self.qubits), &all)
     }
 
     /// One event: sense, compute, actuate.

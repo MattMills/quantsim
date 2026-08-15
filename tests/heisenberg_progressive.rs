@@ -84,7 +84,12 @@ fn rotation_gates_are_unitary_and_land_on_their_support() {
         assert_eq!(s.len(), rot.weight());
         assert_eq!(m.dim(), 1usize << rot.weight());
     }
-    assert!(Rotation { theta: 1.0, axis: (0, 0) }.gate().is_err());
+    assert!(Rotation {
+        theta: 1.0,
+        axis: (0, 0)
+    }
+    .gate()
+    .is_err());
 }
 
 // ── exactness ────────────────────────────────────────────────────────
@@ -104,8 +109,7 @@ fn the_propagation_is_exact_against_dense_at_non_clifford_angles() {
                     (PauliSum::y(q), vec![(q, Pauli::Y)]),
                 ] {
                     let p = propagate(&obs, &rots, &exact_cfg()).unwrap();
-                    let reference =
-                        pauli_expectation(&d as &dyn Backend<C64>, &ops).unwrap().re;
+                    let reference = pauli_expectation(&d as &dyn Backend<C64>, &ops).unwrap().re;
                     worst = worst.max((p.expectation() - reference).abs());
                     checks += 1;
                 }
@@ -242,8 +246,8 @@ fn the_error_bound_actually_bounds_the_error() {
                 threshold: th,
                 max_terms: None,
                 checkpoint_every: 0,
-        exclusion: true,
-        retire_frozen: true,
+                exclusion: true,
+                retire_frozen: true,
             };
             let p = propagate(&PauliSum::z(q), &rots, &cfg).unwrap();
             let error = (p.expectation() - reference).abs();
@@ -284,7 +288,11 @@ fn the_term_cap_is_respected_and_reported() {
     };
     let p = propagate(&PauliSum::z(8), &rots, &cfg).unwrap();
     assert!(p.hit_cap, "the cap should have bound");
-    assert!(p.peak_terms <= 201, "peak {} exceeded the cap", p.peak_terms);
+    assert!(
+        p.peak_terms <= 201,
+        "peak {} exceeded the cap",
+        p.peak_terms
+    );
     // dropping terms to meet a cap is still accounted
     assert!(p.discarded_l1 > 0.0);
 }
@@ -440,7 +448,10 @@ fn the_factored_form_agrees_with_dense_and_with_the_flat_walk() {
     }
     assert!(checks >= 60, "only {checks} checks");
     assert!(worst_dense < 1e-13, "factored vs dense: {worst_dense:.3e}");
-    assert!(worst_flat < 1e-13, "factored vs flat walk: {worst_flat:.3e}");
+    assert!(
+        worst_flat < 1e-13,
+        "factored vs flat walk: {worst_flat:.3e}"
+    );
 }
 
 #[test]
@@ -475,16 +486,26 @@ fn decoupled_blocks_cost_the_sum_not_the_product() {
         // the circuit never couples them, so nothing is ever merged
         assert_eq!(f.merges, 0, "a decoupled circuit forced a merge");
         // every block is the same size, so the largest is bounded
-        assert!(f.peak_largest_block <= 64, "block grew to {}", f.peak_largest_block);
+        assert!(
+            f.peak_largest_block <= 64,
+            "block grew to {}",
+            f.peak_largest_block
+        );
         stored.push(f.peak_stored);
         flat.push(f.peak_flat);
     }
     // linear in k
     let d1 = stored[1] - stored[0];
     let d2 = stored[2] - stored[1];
-    assert_eq!(d1, d2, "stored terms are not linear in the block count: {stored:?}");
+    assert_eq!(
+        d1, d2,
+        "stored terms are not linear in the block count: {stored:?}"
+    );
     // exponential in k, and enormously larger
-    assert!(flat[2] / flat[1] > 50, "flat count is not exponential: {flat:?}");
+    assert!(
+        flat[2] / flat[1] > 50,
+        "flat count is not exponential: {flat:?}"
+    );
     assert!(
         flat[2] / stored[2] as u128 > 1_000_000,
         "saving only {}x",
@@ -557,17 +578,17 @@ fn every_cut_gives_the_same_answer_as_dense() {
             let reference = pauli_expectation(&d as &dyn Backend<C64>, &[(q, Pauli::Z)])
                 .unwrap()
                 .re;
-            for cut in [0, rots.len() / 4, rots.len() / 2, 3 * rots.len() / 4, rots.len()] {
+            for cut in [
+                0,
+                rots.len() / 4,
+                rots.len() / 2,
+                3 * rots.len() / 4,
+                rots.len(),
+            ] {
                 for fwd in [Forward::Sparse, Forward::Mps { max_bond: 64 }] {
-                    let m = propagate_bidirectional(
-                        &PauliSum::z(q),
-                        &rots,
-                        n,
-                        cut,
-                        fwd,
-                        &exact_cfg(),
-                    )
-                    .unwrap();
+                    let m =
+                        propagate_bidirectional(&PauliSum::z(q), &rots, n, cut, fwd, &exact_cfg())
+                            .unwrap();
                     assert_eq!(m.cut, cut);
                     worst = worst.max((m.value - reference).abs());
                     checks += 1;
@@ -596,9 +617,15 @@ fn the_exclusions_are_boundary_conditions_and_are_switched_off_mid_walk() {
     let cut = rots.len() / 2;
 
     // the guarded path is right
-    let good =
-        propagate_bidirectional(&PauliSum::z(3), &rots, n, cut, Forward::Sparse, &exact_cfg())
-            .unwrap();
+    let good = propagate_bidirectional(
+        &PauliSum::z(3),
+        &rots,
+        n,
+        cut,
+        Forward::Sparse,
+        &exact_cfg(),
+    )
+    .unwrap();
     assert!((good.value - reference).abs() < 1e-12);
 
     // and doing it unguarded is measurably wrong
@@ -632,7 +659,10 @@ fn the_meeting_cost_has_an_interior_minimum_when_the_resources_differ() {
     // Sparse forward: the state saturates at once, so the best cut is 0
     // — meeting in the middle buys nothing.
     let sparse = auto_cut(&PauliSum::z(n / 2), &rots, n, 4, Forward::Sparse, &cfg).unwrap();
-    assert_eq!(sparse.cut, 0, "sparse forward should not want an interior cut");
+    assert_eq!(
+        sparse.cut, 0,
+        "sparse forward should not want an interior cut"
+    );
 
     // MPS forward: a genuine interior optimum, well below either end.
     let cuts: Vec<usize> = (0..=4).map(|i| i * rots.len() / 4).collect();
@@ -654,8 +684,14 @@ fn the_meeting_cost_has_an_interior_minimum_when_the_resources_differ() {
         &cfg,
     )
     .unwrap();
-    assert!(best.cut > 0 && best.cut < rots.len(), "cut {} is an end", best.cut);
-    let ends = sweep[0].meeting_cost.min(sweep[sweep.len() - 1].meeting_cost);
+    assert!(
+        best.cut > 0 && best.cut < rots.len(),
+        "cut {} is an end",
+        best.cut
+    );
+    let ends = sweep[0]
+        .meeting_cost
+        .min(sweep[sweep.len() - 1].meeting_cost);
     assert!(
         best.meeting_cost * 2 < ends,
         "interior optimum {} vs best end {ends}",
@@ -728,14 +764,16 @@ fn the_shared_walk_matches_the_sum_of_separate_walks_and_costs_less() {
     let d = dense_run(&rots, n);
     let mut reference = 0.0;
     for k in 0..n - 1 {
-        reference -= pauli_expectation(&d as &dyn Backend<C64>, &[(k, Pauli::Z), (k + 1, Pauli::Z)])
-            .unwrap()
-            .re;
+        reference -=
+            pauli_expectation(&d as &dyn Backend<C64>, &[(k, Pauli::Z), (k + 1, Pauli::Z)])
+                .unwrap()
+                .re;
     }
     for k in 0..n {
-        reference -= 0.7 * pauli_expectation(&d as &dyn Backend<C64>, &[(k, Pauli::X)])
-            .unwrap()
-            .re;
+        reference -= 0.7
+            * pauli_expectation(&d as &dyn Backend<C64>, &[(k, Pauli::X)])
+                .unwrap()
+                .re;
     }
     assert!(
         (r.total - reference).abs() < 1e-4,

@@ -287,10 +287,7 @@ impl Radix {
 
     /// Residues of `a` in each component.
     pub fn residues(&self, a: u64) -> Vec<u64> {
-        self.component_moduli()
-            .iter()
-            .map(|&m| a % m)
-            .collect()
+        self.component_moduli().iter().map(|&m| a % m).collect()
     }
 
     /// CRT weights `w_i = (M/m_i)·((M/m_i)^{-1} mod m_i) mod M`, so that

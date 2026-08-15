@@ -76,7 +76,10 @@ fn three_resolvers_answer_the_same_question_in_three_currencies() {
             let a = state.expectation(&ops).unwrap();
             let b = cone.expectation(&ops).unwrap();
             let c = heis.expectation(&ops).unwrap();
-            assert!((a.value - b.value).abs() < 1e-11, "n={n} q={q}: state vs cone");
+            assert!(
+                (a.value - b.value).abs() < 1e-11,
+                "n={n} q={q}: state vs cone"
+            );
             assert!(
                 (a.value - c.value).abs() < 1e-11,
                 "n={n} q={q}: state vs heisenberg"

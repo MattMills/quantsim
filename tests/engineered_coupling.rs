@@ -328,7 +328,10 @@ fn the_engineered_walk_is_exact_on_scrambled_all_to_all_circuits() {
         }
     }
     assert!(checks >= 60, "only {checks} checks");
-    assert!(worst < 1e-11, "engineered propagation deviated by {worst:.3e}");
+    assert!(
+        worst < 1e-11,
+        "engineered propagation deviated by {worst:.3e}"
+    );
     assert!(
         best_ratio > 1.0,
         "the factorization never paid: best ratio {best_ratio}"

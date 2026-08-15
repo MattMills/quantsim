@@ -24,19 +24,33 @@ fn bind(c: &Circuit<C64>, reg: &GateRegistry<C64>) -> Result<Vec<BoundGate<C64>>
 
 fn layer(n: usize, reg: &GateRegistry<C64>) -> Result<Vec<BoundGate<C64>>> {
     let mut c = Circuit::new(n);
-    for q in 0..n { c.gate("h", vec![], vec![q]); }
-    for q in (0..n - 1).step_by(2) { c.gate("cx", vec![], vec![q, q + 1]); }
+    for q in 0..n {
+        c.gate("h", vec![], vec![q]);
+    }
+    for q in (0..n - 1).step_by(2) {
+        c.gate("cx", vec![], vec![q, q + 1]);
+    }
     bind(&c, reg)
 }
 
 fn prepared(n: usize, reg: &GateRegistry<C64>, seed: u64) -> Result<DenseState<C64>> {
     let mut rng = Prng::new(seed);
     let mut c = Circuit::new(n);
-    for q in 0..n { c.gate("ry", vec![0.3 + 0.1 * (rng.next_u64() % 7) as f64], vec![q]); }
+    for q in 0..n {
+        c.gate("ry", vec![0.3 + 0.1 * (rng.next_u64() % 7) as f64], vec![q]);
+    }
     // A real state sits at a stationary point of every diagonal drive,
     // so the phases are what make the problem non-degenerate.
-    for q in 0..n { c.gate("rz", vec![0.2 + 0.13 * (rng.next_u64() % 9) as f64], vec![q]); }
-    for q in 0..n - 1 { c.gate("cx", vec![], vec![q, q + 1]); }
+    for q in 0..n {
+        c.gate(
+            "rz",
+            vec![0.2 + 0.13 * (rng.next_u64() % 9) as f64],
+            vec![q],
+        );
+    }
+    for q in 0..n - 1 {
+        c.gate("cx", vec![], vec![q, q + 1]);
+    }
     let mut st = DenseState::<C64>::new(n)?;
     for g in bind(&c, reg)? {
         match &g.kernel {
@@ -65,7 +79,13 @@ fn main() -> Result<()> {
         let eps = 1e-6;
         let mut worst = 0.0f64;
         for s in [1u64, 3, 5, 11, 64, 129, 200, 255] {
-            let em = Emission { event: 0, coefficients: vec![(s, eps)], fired: 0, error: 0.0, gain: 0.0 };
+            let em = Emission {
+                event: 0,
+                coefficients: vec![(s, eps)],
+                fired: 0,
+                error: 0.0,
+                gain: 0.0,
+            };
             let mut probe = Reflexive::from_state(prepared(n, &reg, 1)?);
             probe.apply(&em)?;
             let after = probe.sense()?.x_string(tgt.a);
@@ -90,10 +110,17 @@ fn main() -> Result<()> {
         let mut l = Proportional::new(tgt, gain);
         let r = m.run(&mut l, &lay, events)?;
         let s = r.settled_at(0.05);
-        println!("  {gain:5}  {:11.6} {:12.6}   {:>11}   {}",
-            r.final_error(), r.best_error(),
+        println!(
+            "  {gain:5}  {:11.6} {:12.6}   {:>11}   {}",
+            r.final_error(),
+            r.best_error(),
             s.map(|i| i.to_string()).unwrap_or_else(|| "never".into()),
-            if s.is_some() { "converged" } else { "oscillates" });
+            if s.is_some() {
+                "converged"
+            } else {
+                "oscillates"
+            }
+        );
     }
 
     println!("\n── first order, driving along the measured Jacobian ──\n");
@@ -103,10 +130,13 @@ fn main() -> Result<()> {
         let mut l = Gradient::new(tgt, gain);
         let r = m.run(&mut l, &lay, events)?;
         let s = r.settled_at(0.05);
-        println!("  {gain:5}  {:11.6} {:12.6}   {:>11}   {:>7}",
-            r.final_error(), r.best_error(),
+        println!(
+            "  {gain:5}  {:11.6} {:12.6}   {:>11}   {:>7}",
+            r.final_error(),
+            r.best_error(),
             s.map(|i| i.to_string()).unwrap_or_else(|| "never".into()),
-            r.trace.last().map(|e| e.coefficients.len()).unwrap_or(0));
+            r.trace.last().map(|e| e.coefficients.len()).unwrap_or(0)
+        );
     }
 
     println!("\n  Same loop, same state, same events — only the direction changed.\n");
@@ -117,15 +147,22 @@ fn main() -> Result<()> {
     println!("  the state — which is exactly what a reflexive program does not");
     println!("  know before it runs. Read the 0.05 row against the 0.05 row above.\n");
     println!("   start gain  climb  cut    final |err|   settled at   final gain");
-    for (g0, climb, cut) in [(0.05f64, 0.2f64, 0.5f64), (0.1, 0.2, 0.5), (0.2, 0.2, 0.5), (0.8, 0.2, 0.5)] {
+    for (g0, climb, cut) in [
+        (0.05f64, 0.2f64, 0.5f64),
+        (0.1, 0.2, 0.5),
+        (0.2, 0.2, 0.5),
+        (0.8, 0.2, 0.5),
+    ] {
         let mut m = Reflexive::from_state(prepared(n, &reg, 1)?);
         let mut l = Adaptive::new(Gradient::new(tgt, g0), climb, cut, 4.0);
         let r = m.run(&mut l, &lay, events)?;
         let s = r.settled_at(0.05);
-        println!("  {g0:10}  {climb:5}  {cut:5}  {:11.6}   {:>11}   {:10.4}",
+        println!(
+            "  {g0:10}  {climb:5}  {cut:5}  {:11.6}   {:>11}   {:10.4}",
             r.final_error(),
             s.map(|i| i.to_string()).unwrap_or_else(|| "never".into()),
-            l.gain());
+            l.gain()
+        );
     }
 
     println!("\n── what the loop costs ──\n");
@@ -139,34 +176,57 @@ fn main() -> Result<()> {
     let mut m = Reflexive::from_state(prepared(n, &reg, 1)?);
     let v = m.sense()?;
     let mut gl = Gradient::new(tgt, 0.2);
-    println!("   generic entangled           {:5} / {:<6} {:7.3}%        {:4} / {}",
-        v.fired(1e-12).len(), 1usize<<n, 100.0*v.sparsity(1e-12),
-        gl.phases(&v, &v.fired(1e-12), 0).len(), 1usize<<n);
+    println!(
+        "   generic entangled           {:5} / {:<6} {:7.3}%        {:4} / {}",
+        v.fired(1e-12).len(),
+        1usize << n,
+        100.0 * v.sparsity(1e-12),
+        gl.phases(&v, &v.fired(1e-12), 0).len(),
+        1usize << n
+    );
     // GHZ
     let mut c = Circuit::new(n);
     c.gate("h", vec![], vec![0]);
-    for q in 1..n { c.gate("cx", vec![], vec![0, q]); }
+    for q in 1..n {
+        c.gate("cx", vec![], vec![0, q]);
+    }
     let mut st = DenseState::<C64>::new(n)?;
     for g in bind(&c, &reg)? {
-        if let GateKernel::Matrix(mm) = &g.kernel { st.apply(mm, &g.qubits)?; }
+        if let GateKernel::Matrix(mm) = &g.kernel {
+            st.apply(mm, &g.qubits)?;
+        }
     }
     let mut mg = Reflexive::from_state(st);
     let vg = mg.sense()?;
-    println!("   GHZ                         {:5} / {:<6} {:7.3}%        {:4} / {}",
-        vg.fired(1e-12).len(), 1usize<<n, 100.0*vg.sparsity(1e-12),
-        gl.phases(&vg, &vg.fired(1e-12), 0).len(), 1usize<<n);
+    println!(
+        "   GHZ                         {:5} / {:<6} {:7.3}%        {:4} / {}",
+        vg.fired(1e-12).len(),
+        1usize << n,
+        100.0 * vg.sparsity(1e-12),
+        gl.phases(&vg, &vg.fired(1e-12), 0).len(),
+        1usize << n
+    );
     // product
     let mut c = Circuit::new(n);
-    for q in 0..n { c.gate("ry", vec![0.7], vec![q]); }
+    for q in 0..n {
+        c.gate("ry", vec![0.7], vec![q]);
+    }
     let mut st = DenseState::<C64>::new(n)?;
     for g in bind(&c, &reg)? {
-        if let GateKernel::Matrix(mm) = &g.kernel { st.apply(mm, &g.qubits)?; }
+        if let GateKernel::Matrix(mm) = &g.kernel {
+            st.apply(mm, &g.qubits)?;
+        }
     }
     let mut mp = Reflexive::from_state(st);
     let vp = mp.sense()?;
-    println!("   product                     {:5} / {:<6} {:7.3}%        {:4} / {}",
-        vp.fired(1e-12).len(), 1usize<<n, 100.0*vp.sparsity(1e-12),
-        gl.phases(&vp, &vp.fired(1e-12), 0).len(), 1usize<<n);
+    println!(
+        "   product                     {:5} / {:<6} {:7.3}%        {:4} / {}",
+        vp.fired(1e-12).len(),
+        1usize << n,
+        100.0 * vp.sparsity(1e-12),
+        gl.phases(&vp, &vp.fired(1e-12), 0).len(),
+        1usize << n
+    );
 
     // invariance under the drive
     let mut m2 = Reflexive::from_state(prepared(n, &reg, 1)?);
@@ -185,14 +245,19 @@ fn main() -> Result<()> {
     let mut l = Proportional::new(tgt, 0.6);
     let run = m.run(&mut l, &lay, 12)?;
     let same = replay(&run.trace, &lay, prepared(n, &reg, 1)?)?;
-    println!("   replayed from its OWN initial state:   deviation {:.3e}", deviation(&same, m.state())?);
+    println!(
+        "   replayed from its OWN initial state:   deviation {:.3e}",
+        deviation(&same, m.state())?
+    );
     for seed in [2u64, 3, 4] {
         let rep = replay(&run.trace, &lay, prepared(n, &reg, seed)?)?;
         let mut o = Reflexive::from_state(prepared(n, &reg, seed)?);
         let mut ll = Proportional::new(tgt, 0.6);
         o.run(&mut ll, &lay, 12)?;
-        println!("   replayed from a DIFFERENT state ({seed}):  deviation {:.3e}",
-            deviation(&rep, o.state())?);
+        println!(
+            "   replayed from a DIFFERENT state ({seed}):  deviation {:.3e}",
+            deviation(&rep, o.state())?
+        );
     }
     println!("\n── what this is, and is not ──\n");
     println!("  This is measurement-fed adaptive control: sense the register,");

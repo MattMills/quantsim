@@ -167,10 +167,20 @@ host:
   factored backend today — 1.6 KiB at t=32 — composing that with the
   tableau would make the resource cheap to hold *and* consume in the
   same run, collapsing the Upfront/JustInTime gap),
-  **log compaction** (tableau →
-  minimal Clifford circuit synthesis, replacing replay of the full log —
-  measurement repairs now prepend to the log, so long adaptive runs
-  raise its value),
+  **log compaction** (the storage half is done: kernels are interned —
+  each distinct gate matrix stored once and shared across the log —
+  which corrected the frame's log-diluted memory fit from 1.75^n to an
+  honest 1.85^n on random 3n² and flipped Clifford brickwork's memory
+  law from size^2 to constant, 19.3 KiB → 4.8 KiB. The replay half —
+  tableau → minimal Clifford circuit synthesis, replacing replay of the
+  full log — remains, and measurement repairs prepending to the log
+  keep raising its value for long adaptive runs; note synthesis
+  reproduces the tableau only up to global phase, which replay
+  currently preserves exactly),
+  **packed stored state** (the other constant: at saturated support the
+  sparse map's per-entry overhead runs ~6× a flat array — the frame's
+  remaining byte gap to dense on random circuits, 412 KiB vs 64 KiB at
+  n = 12, lives here, not in the log any more),
   **per-factor multi-qubit frames** (frames over a factor's whole region —
   can absorb CX-like inject/remove pairs, making parity signal threads
   representation-free), and **MPS bond gauges** (the tensor-network
@@ -193,18 +203,94 @@ at depth 1 *is* a maximally entangled super-site pair, both coarse
 singular values exactly 1/√2) — with `refine_basis` as the per-site
 descent dictionary. Conformance-swept over the full registry;
 truncation degrades measurably, never silently; composes with `Ball`
-so representation resolution and numeric resolution stack. The
-remaining rungs, in dependency order:
+so representation resolution and numeric resolution stack.
+
+**Rung 2 — SHIPPED** (`BulkState`, registered `"bulk"`,
+`tests/bulk_register.rs`, `examples/dynamic_register.rs`): the
+hierarchy in its **projective form** — every node tensor kept
+isometric, all state weight in one explicit bulk record (`top`), the
+state stored across depth as a stack of isometries under the record.
+What the form buys, measured:
+
+- **the gauge-maintenance rung, delivered** — not by center transport
+  but by *environment-weighted rebuilds*: the record's Gram factor
+  (`X` with `X†X = ρ`) is transported down the path before every
+  re-compression, so every discarded singular value is **global**
+  Schmidt weight; the ledger resolves **per depth**
+  (`discarded_by_depth`) and certifies
+  `‖ψ_ideal − ψ_stored‖ ≤ Σ√ε` (asserted against dense across seeds;
+  *equality* on single-event runs; a pinned seed where the weighted
+  rebuild beats the block-local one by > 4× — and no dominance claim:
+  greedy sequential truncations do not commute, seeds exist where the
+  orderings trade places, the certified bound is the invariant).
+  `‖ψ‖² = ‖top‖²` identically — norm at width 40 is an `O(χ)` read.
+- **dynamic width** — `grow` appends boundary qubits in amortized
+  `O(1)` (within capacity: bookkeeping over a pristine dormant suffix;
+  past it: the register **re-roots**, becoming the left *site* of a
+  register twice its size — `recursive`'s point-is-a-lattice move
+  applied to the representation; a live GHZ grown 2 → 32 with exactly
+  4 re-roots, amplitudes exact throughout). `release` detaches
+  boundary qubits, refusing with the **measured leakage** unless the
+  qubit is verifiably `|0⟩`; `release_measured` measures first. The
+  flagship: 48 logical qubits streamed through a register with peak
+  width 2, outcomes GHZ-correlated — width tracks *live entanglement*,
+  not problem size. The price, also measured: the capacity tree is
+  dyadic, so hierarchy-locality means power-of-two alignment (a
+  5-block circuit that was tree-aligned on `mera`'s div-ceil tree
+  crosses dyadic boundaries here, and the guard refuses the block).
+- **the structured unfold** — `unfold_program` compiles the depth
+  store into a seed plus one Stinespring-dilated unitary per node;
+  replayed on dense it reproduces the state to `3e-17`; stopped after
+  `ℓ` levels it **is** `coarse_state(ℓ)` on the channel wires with
+  every un-injected wire exactly `|0⟩` (asserted per depth); each
+  wire's `sequence` is the complete list of interactions it ever has
+  (nested spans down its tree path), and measured Schmidt rank across
+  any tree-aligned cut never exceeds the crossing channel's bond —
+  entanglement relocated into nameable, sequenced channel wires, the
+  up-a-dimension move `lift`/`upembed` make for magic, made for
+  entanglement.
+
+The remaining rungs, in dependency order:
 
 - **Path updates instead of block materialization** — apply a cross-cut
   2q gate as its operator-Schmidt sum (rank ≤ 4) of single-site terms,
   then hierarchical rounding along the tree path (bond direct sums +
   SVD truncation): removes the `2^{block}` transient, making GHZ-across-
-  the-root bond-2 *during* the gate, not just after.
-- **Gauge maintenance** — keep the tree root-canonical so per-node
-  truncation weights are environment-correct and the discarded ledger
-  becomes a *certified* global L2 bound (today it is block-local, like
-  the MPS backend's, and labeled as such).
+  the-root bond-2 *during* the gate, not just after. (On `bulk` the
+  environment factors for the path are already in hand.)
+- **Gauge maintenance on `mera` itself** — the rung is delivered on
+  `bulk`; back-porting either the weighted rebuild or true center
+  transport to `MeraState` (or retiring the distinction) remains, as
+  does a non-greedy truncation order (the pinned seed where orderings
+  trade places is the test case).
+- **The atlas axis for `bulk` needs octave-aligned sampling.** A probe
+  was measured and backed out: the dyadic capacity tree makes memory a
+  **sawtooth** in width — skewed cuts at non-power-of-two sizes cap
+  rank by the short side (random family: ~2× under `mera` at
+  n = 10, 12; equal within 1% at n = 4, 8) — and a four-point fit
+  across an octave misreads the sawtooth as `size^4.7` while the true
+  per-step factor is 1.7×, leaving certification to the
+  contention-fragile time law (the verdict flipped under parallel test
+  execution; solo it held). Either the scan samples the axis at
+  power-of-two sizes or the fit learns sawtooth envelopes; both keep
+  the finding: bulk at pow2 widths **is** mera's cost, and the skew
+  discount between octaves is real structure, not error.
+- **The post-reroot crossing ceiling, measured.** Growth is O(1)
+  (4 µs for grow #31 at width 32), but the *first entangling gate*
+  across a freshly created root cut materializes the live block —
+  2^33 elements refused by the guard at width 33 — so streaming
+  growth patterns must keep entanglement inside the pre-reroot span,
+  and the path-updates rung above is what removes the ceiling.
+- **Interior release / renumbering** — `release` is boundary-only
+  (stack discipline); releasing an interior qubit means renumbering
+  the leaf map, and the honest cost of the re-alignment should be
+  measured, not assumed.
+- **Streaming unfold on the dynamic register** — the unfold currently
+  replays onto a fixed-width backend; running it *on a `BulkState`
+  that grows as wires are injected* would make the width trajectory
+  literal (peak width = channel count at the widest level), and the
+  dilated steps are capped at `2^6` wires — factorized dilations
+  (cascades of two-wire isometries) would lift the cap.
 - **Disentanglers** — the u-layer between levels (the MERA proper):
   variationally chosen to minimize truncation across cuts; the
   measured payoff target is bond growth on critical/area-law states
@@ -219,6 +305,213 @@ remaining rungs, in dependency order:
   resolution without re-simulating from scratch — the last step of
   "refine infinitely", currently approximated by re-running at a finer
   dial (larger `max_bond`, finer `Ball::quantize`).
+
+## The scale-time register (clock program) — SHIPPED (core)
+
+`clock` is live: internal, relational time as a **selector qudit**
+whose entanglement with the system is mandatory, with scale as its
+axis. `BranchedRegister` (selector over shared,
+representation-heterogeneous branches; lazy interference; polynomial
+Gram machinery for Born statistics, conditioning and the
+selector↔system Schmidt rank), `scale_history` (the Page–Wootters
+register over the bulk depth axis, every slice an `O(tree)`
+`scale_snapshot` — no gate applied, width-32 six-scale histories in
+kilobytes), `tick` (`|ℓ⟩⟨ℓ|⊗V_ℓ` — one unit of internal time is one
+level of coarse-to-fine information flow), and scale interferometry
+(inter-scale overlap as clock Born statistics; the structured test
+state moves by exactly `1/√2` per RG step). The measured payoff: four
+width-16 slices, each cheap in its own representation and hostile to
+the others', held additively at 3,845 B against 68–850× for every
+single-representation alternative — new qudit dimension above the
+problem, lower representational structure below. Remaining rungs:
+
+- **The native bulk tick.** `tick` applies the level's dilated
+  unitaries through `Backend::apply`, which on a `bulk` branch
+  materializes the root-crossing block. The refinement isometries are
+  tree-structured by construction, so a bulk-native controlled
+  refinement (splice one level of the stored program directly into the
+  snapshot's tree, the way `scale_snapshot` already splices basis
+  embeddings) would make ticking as free as snapshotting — internal
+  time at width 32+ with no dense transient anywhere.
+- **Branching histories.** The clock is currently a line
+  (`ℓ → ℓ+1`). A *tree* of ticks — different refinement or gate
+  futures in superposition, selector states labelling paths — would
+  let the register hold alternative coarse-to-fine routes coherently,
+  with the same Gram machinery pricing their interference. The memo
+  journal's unwind/rewind is the classical shadow of this.
+- **Phase pinning for phase-loose branches.** The measured boundary:
+  superposition makes branch global phases relative, so the
+  graph-state bundle (defined up to global phase; vertex-operator
+  reductions rotate it — classified in development at exactly
+  `e^{−iπ/4}` on the pinned case) is sound as a static slice but not
+  under broadcast dynamics. The vop reduction *knows* the phase it
+  drops; journaling it would upgrade the bundle to phase-faithful and
+  open the door to graph-state slices under full dynamics.
+- **Selector structure as an atlas axis.** Branch count and unique
+  states are honest resources; registering a policy-constructed
+  contracted view would let `advantage_scan` classify selector growth
+  laws next to support, clusters, bonds and hierarchy.
+- **Selector gates through the scheduler.** Clock operations are
+  method calls today; routing them through the registry/schedule (the
+  `mixed` module's `clock_d`/`shift_d` are the natural names) would
+  let evented circuits steer the internal time system, including
+  measurement-conditioned ticks — dynamics that choose their own
+  resolution.
+- **Exotic clock weights.** Selector weights already live in the
+  amplitude algebra; a split-complex clock (signed slice weights, net
+  vs path statistics) would connect the time system to the
+  inclusion–exclusion program.
+
+## The mosaic register (multi-representation program) — SHIPPED (core)
+
+`MosaicState` (registered `"mosaic"`) is live: the register
+partitioned into regions, each held by its own backend — the factored
+backend's geometry with factors generalized from dense blocks to
+arbitrary representations. Gates inside a region run natively; gates
+across regions merge with the representation chosen from measured
+predictions (sparse support-product vs dense `2^w`, both ledgered);
+migration is refusal-driven and **partial before total** — a bundle
+region hit by its first T first fractures along its own graph
+components (`PolarityBundle::graph_components` + `restrict`, exact by
+the product structure of graph states), so only the touched component
+leaves and the rest stay graphs — then converts down the policy's
+candidate list and retries, once, with every split, merge and
+migration ledgered with its cause. Regions can themselves be mosaics
+(tested), the flagship holds a width-40 register at the sum of ideal
+costs through a Clifford→T→entangling era sequence (dense-verified at
+16), and the phase contract is the measured dual of the clock's:
+products forgive phase-loose tiles, superpositions do not. Remaining
+rungs:
+
+- **Cross-representation bonds.** The real frontier: two regions
+  *entangled* while each keeps its own lens. The braided module's
+  mutual (Schmidt/purification) encoding across a cut is the natural
+  machinery — a bond as a shared index between a bundle tile and an
+  mps tile would remove the merge-on-entangle limitation that makes
+  rung 1 a product mosaic.
+- **Generic partial structure.** The bundle fractures because its
+  graph is readable; other representations should carry a coupling
+  history (union–find over the entangling gates the mosaic routed into
+  them) so any region can split along provable product boundaries, and
+  factored-style rank-1 detection should re-separate merged regions
+  when gates disentangle them.
+- **Policy from recognition, not just refusal.** Today the bundle's
+  refusal is the era detector. Recognizing Clifford gates on the way
+  in (the frame's `recognize` machinery) would let regions *return* to
+  cheap representations when a magic era ends, and bond/hierarchy
+  predictors would let merges target mps/bulk instead of only
+  sparse/dense.
+- **The mosaic as an atlas axis — SHIPPED, and it taught the atlas
+  something.** The first probe flipped the candidate verdict to
+  `Classical via ["mosaic"]`: not an advantage discovery but
+  **prefactor aliasing** — the policy elected sparse at one size and
+  dense at its neighbours, and a four-point fit read the jumping
+  constant (≈50 B/entry vs 16 B/amplitude on the same 2^n states) as
+  `size^4`. The atlas assumes each axis has one stable cost model; a
+  policy-composite axis violates that unless its elections track the
+  state. The fix was owed anyway: **memory-pressure re-election**
+  (`MosaicPolicy::pressure_factor`/`pressure_floor` — the adaptive
+  backend's promotion rule generalized, hysteresis + floor, every
+  re-election ledgered with measured-vs-predicted bytes). With it the
+  axis reads `1.89^size` on the candidate family, the escape verdict
+  stands, and the scan now shows the composite certifying exactly
+  where its lenses reach: constant on ghz (349 B) and rainbow
+  (896 B), `size^3.3` on nearest-neighbour IQP, `size^5.1` on
+  t = n/2 doped Clifford — and honestly exponential on qft, brickwork,
+  random universal and long-range IQP. Still open here: elections
+  beyond the sparse/dense pair (bond/hierarchy predictors), and
+  recognition-driven *return* to bundle when a magic era ends.
+- **Mosaic × clock — SHIPPED (default).** The branched register's
+  default branch is now a mosaic: representation election below the
+  selector, qudit dimension above it. Measured in the atlas, the
+  `branched` axis moved from sparse-tracking (three verdict
+  memberships) to mosaic-tracking plus ~80 B of selector bookkeeping
+  (nine: ghz 437 B, qft 872 B constant where the sparse branch paid
+  200 KiB exponential, rainbow, qft|x⟩, nearest-neighbour IQP,
+  t = n/2 doped, shallow-2D, aqft, linear-budget random).
+  scale_time §5 measures the election against the hand-picked
+  four-slice register and reports the boundary honestly: election
+  matches assignment where the slice's structure is support or
+  product (GHZ 373 B, rainbow 1016 B — the region partition *is* the
+  factored lens), and pays 2^region where the ideal lens is bond
+  (brickwork: 1 MiB vs mps's 1.5 KiB) or stabilizer (graph state:
+  525 KiB vs bundle's 1 KiB) — those lenses are not yet in the
+  mosaic's within-region vocabulary, which makes the "elections
+  beyond the sparse/dense pair" rung above the composition's
+  measured bottleneck, not a nice-to-have.
+
+## Retrocorrection (surface code over the record) — SHIPPED (core)
+
+`retro` inverts error correction with the simulator's own powers: the
+rotated surface code as a constraint set ([`SurfaceCode`], any odd
+distance, patch offsets so several share a register), syndromes as
+**deterministic reads** (`±1` generator expectations — no ancillas, no
+randomness, nothing disturbed), a decoder whose lookup table is
+**measured from the code's own generators** and refuses beyond it, and
+the retrocorrection theorem made operational: a correction decoded once
+at the end of the record, conjugated backward through the intervening
+Clifford segments (`transport_back`), repairs every stored slice of a
+branched clock register via slice-addressed surgery
+(`BranchedRegister::apply_at`, which refuses through shared walls).
+Measured end to end (tests/retro.rs, examples/retrocorrection.rs): a Y
+fault after slice 1 of a two-patch record spreads through the
+transversal logical CX onto both patches (syndromes 2 + 4), the
+generators transported to the fault's time predict the end-of-record
+reading exactly, one decode yields weight-1 corrections per patch, and
+every slice returns to the clean history at machine epsilon — with the
+logical entanglement graph's sign history (+1/+1 → −1/−1 across the
+logical Pauli era) intact. 77 KB for the 3-slice 18-qubit record
+against 4.2 MB per dense slice.
+
+The toric extension — SHIPPED — makes it a **logical network**: the
+`ToricCode` carries two logical wires per physical set (the torus's
+non-contractible cycle pairs, X̄ on dual cuts and Z̄ on direct cycles),
+one transversal CX between nodes raises two logical Bell links at
+once, and the links live in the selector: the Schmidt-branched form
+(four mosaic branches, each a *product* of per-node code states, the
+node cut never crossed) equals the flat state to 1.4e-17 with selector
+rank 4 = 2^links at 4.7 KB against 12.8 KB flat sparse and 1 MB dense.
+Sequential node-local eras keep faults node-local — the end-of-record
+syndromes fire on the faulted node only, its own decoder names the
+correction, transport through the other node's era is the identity —
+and the four-slice record restores to exactly 0e0. Two honest clauses
+came out of the build, both now instrumented: the decoder distinguishes
+**degeneracy from logical ambiguity** by asking the stabilizer group
+(at L = 2 every weight-1 X/Z syndrome is ambiguous and refused by name
+— distance 2 detects, never corrects — while every weight-1 Y decodes),
+and syndromes are **sign-blind** (dynamics anticommuting with a fault
+flip its residual to −P, physical in a branched record) — resolved by
+the record itself: each slice must equal its predecessor pushed through
+the segment, the last clean slice anchors the chain, one amplitude
+comparison names the sign.
+
+Constraint-driven compression — SHIPPED (phase 1). The `logical`
+backend (src/logical.rs) holds the register as P·Enc·|l⟩: toric nodes
+tiled over the width, encoders recognized op by op, every physical
+Pauli absorbed into the frame (a fault is one bookkeeping update, its
+syndrome the frame's signature — no state work), transversal CX blocks
+committed as logical CXs on a 2-wires-per-node inner register, reads
+answered exactly by F2 coset membership, anything else escaping to an
+exact materialization. Measured in the atlas on the new encoded-toric
+family over widths 8–32: logical mem size^0.6 at 1.7 KiB where sparse
+pays 1.29^size (200 KiB), dense/factored/mps/mera/phase-field wall
+outright, and the family reads CLASSICAL via logical / braided /
+clifford-framed / bundle — the family is Clifford, so the
+Gottesman–Knill axes also hold it (at 10–100× the bytes); the logical
+axis's distinct content is the constant and the constraint structure.
+One convention scar worth remembering: the crate's PauliString is
+Hermitian (i^{|x∧z|}X^xZ^z) while the frame is raw, and conjugation
+changes the Y-overlap — the raw phase picks up i^{Δy} beside the sign,
+measured as a per-codeword sign error before the fix.
+
+Remaining rungs: weight->1 decoding (matching over the syndrome
+graph), measurement-conditioned records (retrocorrection through frame
+repairs), logical vocabulary growth (logical magic escapes today; the
+frame-vs-logical split should let a t on the inner wires cost 2^t at
+the LOGICAL width), a non-sparse inner for the logical layer (a graph
+bundle holding the LINK GRAPH rather than its Schmidt expansion), and
+the non-Clifford boundary (transport through magic via the
+up-embedding's ancilla frame rather than refusal).
 
 ## Further non-Cayley–Dickson explorations
 

@@ -26,7 +26,9 @@ fn ghz(n: usize) -> Circuit {
 fn main() -> Result<()> {
     println!("== the mutual boundary encoding ==\n");
     let sim: Simulator = Simulator::new();
-    println!("  state          |A|  rank  max  spec dev   purif dev  purif spec  rebuild   stored/dense");
+    println!(
+        "  state          |A|  rank  max  spec dev   purif dev  purif spec  rebuild   stored/dense"
+    );
     for (label, circuit, cut) in [
         ("GHZ-8", ghz(8), vec![0, 1, 2, 3]),
         ("GHZ-8 (1|7)", ghz(8), vec![0]),
@@ -65,8 +67,10 @@ fn main() -> Result<()> {
     let d = BraidWord::from_letters(4, &[3, 1])?;
     println!("  σ1σ2σ1 == σ2σ1σ2 : {}", a.equals(&b));
     println!("  σ1σ3   == σ3σ1   : {}  (far commutation)", c.equals(&d));
-    println!("  σ1σ2   == σ2σ1   : {}",
-        BraidWord::from_letters(4, &[1, 2])?.equals(&BraidWord::from_letters(4, &[2, 1])?));
+    println!(
+        "  σ1σ2   == σ2σ1   : {}",
+        BraidWord::from_letters(4, &[1, 2])?.equals(&BraidWord::from_letters(4, &[2, 1])?)
+    );
     let w = BraidWord::from_letters(3, &[1, 2, 1, -2, -1, -2])?;
     println!(
         "  σ1σ2σ1σ2⁻σ1⁻σ2⁻ is trivial: {}  — length 6, freely irreducible,\n    and trivial only through the braid relation. permutation {:?}",
@@ -78,8 +82,10 @@ fn main() -> Result<()> {
         "  σ1σ2σ1⁻σ2⁻ is trivial: {}   (the commutator is not)",
         nw.is_trivial()
     );
-    println!("\n  x_1 under σ1 is {:?} — one boundary conjugated by the other,",
-        BraidWord::generator(3, 0, 1)?.artin_images()[0].letters());
+    println!(
+        "\n  x_1 under σ1 is {:?} — one boundary conjugated by the other,",
+        BraidWord::generator(3, 0, 1)?.artin_images()[0].letters()
+    );
     println!("  which is the mutual encoding written as a substitution.");
 
     println!("\n== the infinite graph the path navigates ==\n");
@@ -185,7 +191,12 @@ fn main() -> Result<()> {
 
     println!("\n== does the path close? ==\n");
     for (label, gens, radius, cap) in [
-        ("Majorana 4-strand", majorana_generators(4)?, 20usize, 200_000usize),
+        (
+            "Majorana 4-strand",
+            majorana_generators(4)?,
+            20usize,
+            200_000usize,
+        ),
         ("Majorana 6-strand", majorana_generators(6)?, 20, 200_000),
         ("Fibonacci B_3", fib.clone(), 12, 200_000),
     ] {
@@ -269,8 +280,16 @@ fn main() -> Result<()> {
     println!("\n== the ledger: descend a periodic path, then ascend it ==\n");
     println!("  realization        period            cycle order  distinct  ascent dev");
     for (label, gens, period) in [
-        ("Majorana 4-strand", majorana_generators(4)?, vec![0usize, 1, 2, 1]),
-        ("Majorana 6-strand", majorana_generators(6)?, vec![0usize, 2, 4, 1]),
+        (
+            "Majorana 4-strand",
+            majorana_generators(4)?,
+            vec![0usize, 1, 2, 1],
+        ),
+        (
+            "Majorana 6-strand",
+            majorana_generators(6)?,
+            vec![0usize, 2, 4, 1],
+        ),
         ("Fibonacci B_3", fib.clone(), vec![0usize, 1]),
         ("Fibonacci B_3", fib.clone(), vec![0usize, 1, 1, 0]),
         ("Fibonacci B_3", fib.clone(), vec![0usize, 1, 0, 1, 1]),

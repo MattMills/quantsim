@@ -237,7 +237,11 @@ fn triples(n: usize) -> Vec<[usize; 3]> {
 /// variable is ever hidden: `h*` is zero however much magic is loaded in.
 fn diagonal_core(n: usize, k: usize) -> Circuit<C64> {
     let ts = triples(n);
-    assert!(k <= ts.len(), "only {} distinct triples on {n} qubits", ts.len());
+    assert!(
+        k <= ts.len(),
+        "only {} distinct triples on {n} qubits",
+        ts.len()
+    );
     let mut c = Circuit::new(n);
     for q in 0..n {
         c.gate("t", vec![], vec![q]);
@@ -600,7 +604,11 @@ fn h_star_is_capped_by_hadamards_and_sublinear_in_magic() {
             .map(|s| h_star(&with_magic(&skel, t, s)))
             .sum::<usize>()
             / 6;
-        println!("   t={t:3}  h*={h:3}   h*/#H={:.2}   h*/t={:.3}", h as f64 / hs as f64, h as f64 / t as f64);
+        println!(
+            "   t={t:3}  h*={h:3}   h*/#H={:.2}   h*/t={:.3}",
+            h as f64 / hs as f64,
+            h as f64 / t as f64
+        );
         assert!(
             h <= hs,
             "h* = {h} exceeded the Hadamard count {hs}, which is structurally \
@@ -649,7 +657,10 @@ fn the_exponent_per_qubit_plateaus_rather_than_decaying() {
         let skel = skeleton(n, 2, 11);
         let h = h_star(&with_magic(&skel, n, 5));
         let r = h as f64 / n as f64;
-        println!("   n={n:4}  #H={:4}  h*={h:4}   h*/n={r:.3}", hadamards(&skel));
+        println!(
+            "   n={n:4}  #H={:4}  h*={h:4}   h*/n={r:.3}",
+            hadamards(&skel)
+        );
         assert!(
             h <= hadamards(&skel),
             "h* exceeded the Hadamard count at n={n}"
@@ -755,7 +766,11 @@ fn the_gadget_count_grows_on_random_clifford_t() {
     let mut counts = Vec::new();
     for t in [4usize, 8, 12] {
         let c = clifford_t(4, t, 3);
-        counts.push((t, upembed::magic_events(&c).expect("events"), gadgets_needed(&c)));
+        counts.push((
+            t,
+            upembed::magic_events(&c).expect("events"),
+            gadgets_needed(&c),
+        ));
     }
     println!("random Clifford+T gadget counts (T, events, needed):");
     for (t, e, n) in &counts {

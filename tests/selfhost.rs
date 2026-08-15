@@ -213,8 +213,7 @@ fn the_per_use_slope_is_lower_even_where_the_constant_is_not() {
         "and the steady state should cost no entangling operations at all"
     );
     assert_eq!(
-        r.direct_entangling,
-        r.repetitions,
+        r.direct_entangling, r.repetitions,
         "while the direct route pays one multi-controlled phase per use"
     );
     // The other half of the original claim — that the stack's CONSTANT is

@@ -38,7 +38,9 @@ fn word(n: usize, gates: usize, t_share: u64, seed: u64) -> Circuit<C64> {
 fn dense_of(c: &Circuit<C64>) -> Vec<C64> {
     let sim: Simulator = Simulator::new();
     let s = sim.run(c).unwrap();
-    (0..1u64 << c.num_qubits()).map(|b| s.amplitude(b)).collect()
+    (0..1u64 << c.num_qubits())
+        .map(|b| s.amplitude(b))
+        .collect()
 }
 
 fn worst_deviation(c: &Circuit<C64>) -> f64 {
@@ -68,11 +70,13 @@ fn a_composed_path_sum_reproduces_dense_amplitudes_including_global_phase() {
 
 #[test]
 fn the_dyadic_rotations_reduce_to_the_same_fragment() {
-    // rz/rx/rzz/cp/sx/ccx are not primitive letters — they are compiled
-    // into the fragment, and the compilation has to be phase-exact.
+    // rz/rx/ry/rzz/cp/sx/ccx are not primitive letters — they are
+    // compiled into the fragment, and the compilation has to be
+    // phase-exact.
     let mut c = Circuit::new(3);
     c.gate("h", vec![], vec![0]);
     c.gate("rx", vec![std::f64::consts::FRAC_PI_2], vec![1]);
+    c.gate("ry", vec![3.0 * std::f64::consts::PI / 8.0], vec![2]);
     c.gate("rz", vec![std::f64::consts::FRAC_PI_4], vec![0]);
     c.gate("rzz", vec![std::f64::consts::FRAC_PI_2], vec![0, 2]);
     c.gate("cp", vec![std::f64::consts::FRAC_PI_2], vec![1, 2]);
@@ -137,6 +141,55 @@ fn readout_costs_two_to_the_h_star_and_not_two_to_the_width() {
         quantsim::DenseState::<C64>::new(32).is_err(),
         "dense must refuse this width, or the comparison proves nothing"
     );
+}
+
+// ── the QFT is its phase polynomial; the dyadic regime is priced ─────
+
+#[test]
+fn the_qft_operator_reduces_to_its_phase_polynomial() {
+    // The atlas's QFT verdicts, restated as one number: the operator
+    // path sum of qft(n) reduces to h* = 0 with zero splits —
+    // ⟨y|QFT|x⟩ = 2^{−n/2}·ω^{x·y} survives as exactly its n(n+1)/2
+    // cross terms and nothing else. Readout is one term per amplitude
+    // at any width the fragment holds.
+    for n in [8usize, 16, 24, 30] {
+        let ps = operator(&library::qft(n)).unwrap();
+        assert_eq!(ps.internal_vars(), 0, "qft({n}) kept internal variables");
+        assert_eq!(ps.splits(), 0, "qft({n}) needed case analysis");
+        assert_eq!(ps.terms(), n * (n + 1) / 2, "qft({n}) term count");
+    }
+    // The state form agrees with dense amplitude for amplitude where
+    // dense can still speak…
+    assert!(worst_deviation(&library::qft(8)) < 1e-12);
+    // …and at width 30 — a gigabyte-scale ask for dense — the readout
+    // is still one closed-form term.
+    let wide = PathSum::from_circuit(&library::qft(30)).unwrap();
+    assert_eq!(wide.internal_vars(), 0);
+    let a = wide.amplitude(0);
+    assert!((a.re - 2f64.powi(-15)).abs() < 1e-15 && a.im.abs() < 1e-15);
+    // And the fragment ends by name, not by rounding: qft(31)'s finest
+    // controlled phase is π/2^30 — one level past MAX_DYADIC_DEPTH —
+    // and the instrument refuses it rather than discretizing.
+    assert!(operator(&library::qft(31)).is_err());
+}
+
+#[test]
+fn the_dyadic_random_regime_never_leaves_the_fragment_but_pays_in_h_star() {
+    // The counterpart to the atlas's CANDIDATE verdict on dyadic-angle
+    // random circuits: every gate compiles into the fragment — nothing
+    // is refused — yet h* tracks the gate budget, so exact readout
+    // costs 2^{h*} ≫ 2^n. Holding the state exactly and reading it out
+    // cheaply are different assumptions, and only the second fails.
+    // (Reduction is deterministic, so these are pins, not bounds.)
+    for (n, expect) in [(6usize, 32usize), (8, 50), (10, 80)] {
+        let c = library::random_dyadic(n, 3 * n * n, 7);
+        let ps = operator(&c).unwrap();
+        assert_eq!(ps.internal_vars(), expect, "h* moved at n={n}");
+        assert!(
+            ps.internal_vars() > 2 * n,
+            "readout must cost more than dense enumeration for the point to stand"
+        );
+    }
 }
 
 // ── the exponent is the T-count, not the width ───────────────────────
@@ -294,10 +347,9 @@ fn a_gate_outside_the_fragment_is_refused_by_name() {
     c.gate("h", vec![], vec![0]);
     c.gate("rz", vec![0.3], vec![0]); // 0.3 rad is not dyadic
     match PathSum::from_circuit(&c) {
-        Err(Error::InvalidState(msg)) => assert!(
-            msg.contains("dyadic"),
-            "the refusal should say why: {msg}"
-        ),
+        Err(Error::InvalidState(msg)) => {
+            assert!(msg.contains("dyadic"), "the refusal should say why: {msg}")
+        }
         other => panic!("expected a refusal, got {other:?}"),
     }
 
@@ -338,7 +390,12 @@ fn dense_equal(a: &Circuit<C64>, b: &Circuit<C64>) -> bool {
                 }
             }
             for op in c.ops() {
-                if let Op::Named { name, params, qubits } = op {
+                if let Op::Named {
+                    name,
+                    params,
+                    qubits,
+                } = op
+                {
                     full.gate(name, params.clone(), qubits.clone());
                 }
             }
@@ -418,6 +475,24 @@ fn a_circuit_is_always_decided_equal_to_itself() {
         let (eq, h) = equivalent_verdict(&c, &c).unwrap();
         assert!(eq, "n={n}: a circuit must decide equal to itself");
         assert_eq!(h, 0, "and the reduction must finish");
+    }
+    // The dyadic random pool exercises the dagger path over every
+    // compiled letter — rx, ry, rz, cp among them, angles negated.
+    // Outside Clifford the rewrite system may stall, so the check is
+    // against literal amplitudes, which no stall can confuse:
+    // U†·U|0…0⟩ enumerated from the closed form must be |0…0⟩ exactly.
+    let c = library::random_dyadic(3, 24, 11);
+    let mut ps = PathSum::new(3);
+    ps.apply_circuit(&c, false).unwrap();
+    ps.apply_circuit(&c, true).unwrap();
+    ps.reduce();
+    let d = ps.to_dense();
+    assert!((d[0].re - 1.0).abs() < 1e-12 && d[0].im.abs() < 1e-12);
+    for (i, a) in d.iter().enumerate().skip(1) {
+        assert!(
+            a.re.abs() < 1e-12 && a.im.abs() < 1e-12,
+            "amplitude {i} survived the dagger: {a:?}"
+        );
     }
 }
 

@@ -209,7 +209,11 @@ fn where_the_cone_buys_nothing_the_up_embedding_still_does() {
     let mut cone = ConeResolver::new(c.clone(), &reg, Inner::Dense);
     let cheap = cone.expectation(&ops).unwrap();
     assert_eq!(cheap.cost.qubits, n, "an all-to-all layer has no outside");
-    assert_eq!(cheap.cost.compression(), 1.0, "and therefore no compression");
+    assert_eq!(
+        cheap.cost.compression(),
+        1.0,
+        "and therefore no compression"
+    );
 
     let mut up = UpEmbedResolver::new(c.clone());
     let a = up.expectation(&ops).unwrap();
@@ -373,7 +377,10 @@ fn a_clifford_perturbation_is_absorbed_and_a_magic_one_is_refused() {
     };
     match up.response(5, 3, magic, &ops) {
         Err(Error::InvalidState(msg)) => {
-            assert!(msg.contains("Clifford"), "the refusal should say why: {msg}")
+            assert!(
+                msg.contains("Clifford"),
+                "the refusal should say why: {msg}"
+            )
         }
         other => panic!("expected a refusal, got {other:?}"),
     }
@@ -546,7 +553,12 @@ fn a_circuit_whose_magic_cancels_needs_no_gadgets_at_all() {
     for k in [4usize, 8, 32] {
         let c = cancelling(3, k);
         let t = upembed::magic_events(&c).unwrap();
-        assert_eq!(t, 2 * k, "the gate list really does carry {} T gates", 2 * k);
+        assert_eq!(
+            t,
+            2 * k,
+            "the gate list really does carry {} T gates",
+            2 * k
+        );
         assert_eq!(
             pathsum::operator(&c).unwrap().internal_vars(),
             0,
@@ -635,4 +647,149 @@ fn h_star_is_an_amplitude_exponent_and_not_a_magic_monotone() {
         huv > hu,
         "h* {huv} should rise above {hu} even though the right factor is Clifford"
     );
+}
+
+// ── the equator: the grid was the π/4 slice all along ────────────────
+
+#[test]
+fn the_equatorial_gadget_reproduces_dense_at_any_angle() {
+    // Continuous rx/ry/rz/cp at arbitrary angles, each one ancilla
+    // after its Clifford quarter-turns peel off — against dense,
+    // amplitude-level, on every single-site observable. The cluster
+    // spectrum is priced first so the sum is only paid where payable
+    // (measured: every one of these fits).
+    let sim: Simulator = Simulator::new();
+    let mut worst = 0.0f64;
+    for n in 3..=5usize {
+        for seed in 0..4u64 {
+            let c = library::random_circuit(n, 3 * n, seed);
+            let emb = upembed::gadgetize_equatorial(&c).unwrap();
+            let state = sim.run(&c).unwrap();
+            for q in 0..n {
+                for p in [Pauli::X, Pauli::Y, Pauli::Z] {
+                    let ops = [(q, p)];
+                    let spec = upembed::cluster_spectrum(&emb, &ops).unwrap();
+                    assert!(
+                        spec.first().copied().unwrap_or(0) <= 24,
+                        "n={n} seed={seed}: cluster outgrew the measured bound"
+                    );
+                    let got = upembed::cluster_readout_equatorial(&emb, &ops).unwrap();
+                    let want = pauli_expectation(&*state, &ops).unwrap();
+                    worst = worst.max((want.re - got.value).abs());
+                }
+            }
+        }
+    }
+    assert!(worst < 1e-12, "worst deviation {worst:e}");
+}
+
+#[test]
+fn the_grid_is_the_quarter_slice_of_the_equator() {
+    // On a Clifford+T circuit the two readouts are the same physics:
+    // same clusters, same value, and both match dense.
+    let sim: Simulator = Simulator::new();
+    let c = word(3, 14, 3, 41);
+    let state = sim.run(&c).unwrap();
+    for q in 0..3 {
+        let ops = [(q, Pauli::Z)];
+        let ex = upembed::expectation(&c, &ops).unwrap();
+        let eq = upembed::expectation_equatorial(&c, &ops).unwrap();
+        let want = pauli_expectation(&*state, &ops).unwrap().re;
+        assert_eq!(ex.clusters, eq.clusters, "same geometry either way");
+        assert!((ex.value - eq.value).abs() < 1e-12);
+        assert!((eq.value - want).abs() < 1e-12);
+    }
+
+    // The ancilla economics differ: a dyadic rz is a T-chain on the
+    // grid but a single ancilla on the equator, and both are right.
+    let mut d = Circuit::new(2);
+    d.h(0)
+        .gate("rz", vec![3.0 * std::f64::consts::FRAC_PI_4], vec![0])
+        .cx(0, 1);
+    let g = upembed::gadgetize(&d).unwrap();
+    let ge = upembed::gadgetize_equatorial(&d).unwrap();
+    assert_eq!(g.magic(), 3, "3π/4 is three eighths on the grid");
+    assert_eq!(ge.magic(), 1, "and one ancilla after the S² peels off");
+    // The quarter-turn peel landed the remainder exactly on ∓π/4, so
+    // the equatorial embedding is *still grid* — one T† where the
+    // T-chain spent three T's — and the exact ring applies to both.
+    assert!(g.is_grid() && ge.is_grid());
+    let state_d = sim.run(&d).unwrap();
+    let want = pauli_expectation(&*state_d, &[(1, Pauli::X)]).unwrap().re;
+    let via_grid = upembed::cluster_readout(&g, &[(1, Pauli::X)]).unwrap();
+    let via_peel = upembed::cluster_readout(&ge, &[(1, Pauli::X)]).unwrap();
+    let via_eq = upembed::cluster_readout_equatorial(&ge, &[(1, Pauli::X)]).unwrap();
+    assert!((via_grid.value - want).abs() < 1e-12);
+    assert!((via_peel.value - want).abs() < 1e-12);
+    assert!((via_eq.value - want).abs() < 1e-12);
+
+    // Refusals stay loud in both directions: the exact readout will
+    // not evaluate cos θ it cannot hold, and the grid gadgetizer will
+    // not approximate an angle it cannot name.
+    let mut cc = Circuit::new(2);
+    cc.gate("rz", vec![0.37], vec![0]);
+    let emb = upembed::gadgetize_equatorial(&cc).unwrap();
+    assert!(!emb.is_grid(), "0.37 rad is genuinely off the grid");
+    match upembed::cluster_readout(&emb, &[(0, Pauli::Z)]) {
+        Err(Error::InvalidState(msg)) => {
+            assert!(
+                msg.contains("equatorial"),
+                "the refusal should say why: {msg}"
+            )
+        }
+        other => panic!("expected a loud refusal, got {other:?}"),
+    }
+    assert!(upembed::gadgetize(&cc).is_err());
+}
+
+#[test]
+fn the_qft_magic_adjacency_is_total_where_the_path_sum_holds_zero() {
+    // Two instruments, one circuit, opposite exponents — and both are
+    // measurements. The QFT's controlled phases put every ancilla in
+    // ONE overlap cluster (3·n(n−1)/2 of them, through the shared
+    // wires), so the up-embedded readout prices it at 2^{3n(n−1)/2};
+    // the path sum reduces the same operator to h* = 0. Clusters price
+    // magic adjacency; h* prices magic structure. The QFT has total
+    // adjacency and no structure that survives reduction — which is
+    // why the phase field holds it and this frame does not.
+    for n in [4usize, 6, 8] {
+        let emb = upembed::gadgetize_equatorial(&library::qft(n)).unwrap();
+        let t = 3 * n * (n - 1) / 2;
+        assert_eq!(emb.magic(), t, "three ancillas per controlled phase");
+        let spec = upembed::cluster_spectrum(&emb, &[(0, Pauli::Z)]).unwrap();
+        assert_eq!(spec, vec![t], "one blob at width {n}");
+        assert_eq!(
+            pathsum::operator(&library::qft(n)).unwrap().internal_vars(),
+            0,
+            "h* = 0 on the same circuit"
+        );
+    }
+    // Where the blob is still payable, the value is right: after the
+    // QFT on |0…0⟩ the register is |+…+⟩, so ⟨Z₀⟩ = 0 and ⟨X₀⟩ = 1.
+    let emb = upembed::gadgetize_equatorial(&library::qft(4)).unwrap();
+    let z = upembed::cluster_readout_equatorial(&emb, &[(0, Pauli::Z)]).unwrap();
+    let x = upembed::cluster_readout_equatorial(&emb, &[(0, Pauli::X)]).unwrap();
+    assert!(z.value.abs() < 1e-12);
+    assert!((x.value - 1.0).abs() < 1e-12);
+    assert_eq!(z.max_cluster(), 18);
+}
+
+#[test]
+fn the_spectrum_is_priced_before_the_sum_is_paid() {
+    // cluster_spectrum is t + 1 transports and a union-find — no
+    // enumeration — so the exponent of a hopeless readout is measured
+    // in microseconds. The random 3n² regime is one blob (108 ancillas
+    // at n = 8), and the readout itself refuses past MAX_CLUSTER
+    // rather than starting a sum it cannot finish.
+    let c = library::random_circuit(8, 192, 3);
+    let emb = upembed::gadgetize_equatorial(&c).unwrap();
+    let spec = upembed::cluster_spectrum(&emb, &[(0, Pauli::Z)]).unwrap();
+    assert_eq!(spec.first().copied().unwrap(), 108, "measured blob size");
+    match upembed::cluster_readout_equatorial(&emb, &[(0, Pauli::Z)]) {
+        Err(Error::TooManyQubits { requested, max }) => {
+            assert_eq!(requested, 108);
+            assert_eq!(max, upembed::MAX_CLUSTER);
+        }
+        other => panic!("expected the cluster wall, got {other:?}"),
+    }
 }

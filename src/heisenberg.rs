@@ -574,10 +574,7 @@ impl Journal {
 
     /// The latest checkpoint at or before `step`.
     fn checkpoint_at_or_before(&self, step: usize) -> Option<&Checkpoint> {
-        self.checkpoints
-            .iter()
-            .rev()
-            .find(|c| c.step <= step)
+        self.checkpoints.iter().rev().find(|c| c.step <= step)
     }
 
     /// Approximate stored bytes, checkpoints included — the space half of
@@ -1387,10 +1384,7 @@ impl FactoredReport {
 /// error bound has to be carried across the product and that is not
 /// implemented. The point being measured here is structural — how much
 /// of the sum never needed to be formed.
-pub fn propagate_factored(
-    observable: PauliKey,
-    rotations: &[Rotation],
-) -> Result<FactoredReport> {
+pub fn propagate_factored(observable: PauliKey, rotations: &[Rotation]) -> Result<FactoredReport> {
     let mut f = FactoredPauliSum::from_key(observable);
     let mut peak_stored = f.stored_terms();
     let mut peak_flat = f.flat_terms();
@@ -1550,9 +1544,9 @@ pub fn propagate_bidirectional(
                 trunc_tol: 1e-14,
             },
         )?),
-        Forward::CliffordFramed => Box::new(
-            crate::backend::CliffordFramedState::<C64>::new(num_qubits)?,
-        ),
+        Forward::CliffordFramed => {
+            Box::new(crate::backend::CliffordFramedState::<C64>::new(num_qubits)?)
+        }
     };
     for r in &rotations[..cut] {
         let (m, s) = r.gate()?;
@@ -1620,7 +1614,10 @@ pub fn auto_cut(
         .collect();
     let mut best: Option<Meeting> = None;
     for m in cut_sweep(observable, rotations, num_qubits, &cuts, forward, cfg)? {
-        if best.as_ref().map_or(true, |b| m.meeting_cost < b.meeting_cost) {
+        if best
+            .as_ref()
+            .map_or(true, |b| m.meeting_cost < b.meeting_cost)
+        {
             best = Some(m);
         }
     }

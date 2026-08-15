@@ -225,10 +225,7 @@ impl<'a> StateResolver<'a> {
         }
     }
 
-    fn run(
-        &self,
-        extra: Option<(usize, Rotation)>,
-    ) -> Result<(f64, Cost, Box<dyn Backend<C64>>)> {
+    fn run(&self, extra: Option<(usize, Rotation)>) -> Result<(f64, Cost, Box<dyn Backend<C64>>)> {
         let n = self.circuit.num_qubits();
         let mut state = self.inner.build(n)?;
         let bound = self.circuit.bind(self.registry)?;
@@ -297,9 +294,8 @@ fn remap_rotation(
 ) -> Result<(GateMatrix<C64>, Vec<usize>)> {
     let (m, qs) = rot.gate()?;
     let mapped: Option<Vec<usize>> = qs.iter().map(|q| map.get(q).copied()).collect();
-    let mapped = mapped.ok_or_else(|| {
-        Error::InvalidState("perturbation acts outside the query's cone".into())
-    })?;
+    let mapped = mapped
+        .ok_or_else(|| Error::InvalidState("perturbation acts outside the query's cone".into()))?;
     Ok((m, mapped))
 }
 
@@ -373,8 +369,7 @@ impl<'a> ConeResolver<'a> {
 
     /// Build the compact circuit on the cone's own indices.
     fn compact(&self, cone: &[usize], keep: &[usize]) -> (Circuit<C64>, HashMap<usize, usize>) {
-        let map: HashMap<usize, usize> =
-            cone.iter().enumerate().map(|(i, &q)| (q, i)).collect();
+        let map: HashMap<usize, usize> = cone.iter().enumerate().map(|(i, &q)| (q, i)).collect();
         let mut out = Circuit::new(cone.len());
         for &i in keep {
             let relabel = |qs: &[usize]| -> Vec<usize> { qs.iter().map(|q| map[q]).collect() };
@@ -405,11 +400,7 @@ impl<'a> ConeResolver<'a> {
         (out, map)
     }
 
-    fn answer(
-        &self,
-        ops: &[(usize, Pauli)],
-        extra: Option<(usize, Rotation)>,
-    ) -> Result<Answer> {
+    fn answer(&self, ops: &[(usize, Pauli)], extra: Option<(usize, Rotation)>) -> Result<Answer> {
         let observed: Vec<usize> = ops.iter().map(|&(q, _)| q).collect();
         let (cone, keep) = self.cone(&observed, 0);
         if cone.len() > self.max_cone {

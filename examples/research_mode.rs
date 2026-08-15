@@ -76,10 +76,9 @@ fn main() -> Result<()> {
         .register("phase-field", |n| Ok(Box::new(PhaseFieldState::new(n)?)))?;
     sim.backends_mut()
         .register("braided", |n| Ok(Box::new(BraidedState::new(n)?)))?;
-    sim.backends_mut()
-        .register("clifford-framed", |n| {
-            Ok(Box::new(CliffordFramedState::<C64>::new(n)?))
-        })?;
+    sim.backends_mut().register("clifford-framed", |n| {
+        Ok(Box::new(CliffordFramedState::<C64>::new(n)?))
+    })?;
 
     // ── Step 1: conformance before benchmarks ─────────────────────────────
     // Every standard representation must pass the registry-wide sweep —
@@ -172,7 +171,14 @@ fn main() -> Result<()> {
             }),
             Workload::from_circuit("braid-word-20", braid(20)),
         ],
-        &["dense", "sparse", "mps", "phase-field", "braided", "clifford-framed"],
+        &[
+            "dense",
+            "sparse",
+            "mps",
+            "phase-field",
+            "braided",
+            "clifford-framed",
+        ],
         &BenchConfig::default(),
     )?;
     println!("\n{research}");
