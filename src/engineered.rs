@@ -126,8 +126,15 @@ impl EngineeredSurface {
 
 /// The volume behind `after_qubit` with its `T` gates replaced by the
 /// arm `mask` selects: bit `i` clear takes `I`, set takes `Z`.
+///
+/// Cut down to `after_qubit + 2` world-lines, because the carry the
+/// sweep holds at a bond is a function of the volume behind it and
+/// nothing above — so the branch sweeps walk the volume rather than the
+/// register. The existing deviation check against the full circuit's
+/// surface is what keeps that honest.
 fn branch_circuit(circuit: &Circuit<C64>, after_qubit: usize, mask: u64) -> Result<Circuit<C64>> {
-    let mut out = Circuit::<C64>::new(circuit.num_qubits());
+    let top = after_qubit + 1;
+    let mut out = Circuit::<C64>::new(top + 1);
     let mut seen = 0usize;
     for op in circuit.ops() {
         let Op::Named {
@@ -140,6 +147,9 @@ fn branch_circuit(circuit: &Circuit<C64>, after_qubit: usize, mask: u64) -> Resu
                 "engineered: only named registry gates branch".into(),
             ));
         };
+        if qubits.iter().any(|q| *q > top) {
+            continue;
+        }
         let magic = (name == "t" || name == "tdg") && qubits[0] <= after_qubit;
         if magic {
             if (mask >> seen) & 1 == 1 {
