@@ -73,9 +73,9 @@ fn main() {
             if c.abs() <= 1e-9 { continue; }
             nz += 1;
             let mut q = (Mask::zero(), Mask::zero());
-            for bit in 0..n {
+            for (bit, img) in zim.iter().enumerate().take(n) {
                 if s >> bit & 1 == 1 {
-                    q = (q.0.xor(&zim[bit].0), q.1.xor(&zim[bit].1));
+                    q = (q.0.xor(&img.0), q.1.xor(&img.1));
                 }
             }
             let k = axes.iter().filter(|a| anti(a, &q)).count();
