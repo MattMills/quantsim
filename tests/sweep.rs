@@ -78,7 +78,12 @@ fn an_independent_volume_costs_two_surfaces_whatever_its_width() {
             (70..=71).contains(p),
             "an independent volume peaked at {p} legs, not the two surfaces"
         );
-        assert!(*p >= 2 * sequential - 2, "independence came for free at {p}");
+        // The two surfaces are 35 legs each; the sweep's 36 is one of
+        // them plus the qubit in hand.
+        assert!(
+            *p >= 2 * (sequential - 1),
+            "independence came for free at {p}"
+        );
     }
 
     // The whole register as one volume has no surfaces, so it is the

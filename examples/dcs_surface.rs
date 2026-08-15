@@ -73,8 +73,15 @@ fn main() -> Result<()> {
     let d = Dcs::scaled(20);
     let circuit = d.circuit();
     let surfaces = sweep::surfaces(&circuit, 0)?;
-    let mid = &surfaces[surfaces.len() / 2];
-    let comp = surface::compete(mid, Some(&circuit), 0, &cfg)?;
+    // The deepest bond whose volume still fits under MAX_VOLUME_WIRES,
+    // so that every entrant including the symbolic one actually runs.
+    // Section C then shows all of them, refusals included.
+    let deepest = surfaces
+        .iter()
+        .rev()
+        .find(|s| s.after_qubit + 1 + s.legs.len() <= surface::MAX_VOLUME_WIRES)
+        .expect("some bond fits");
+    let comp = surface::compete(deepest, Some(&circuit), 0, &cfg)?;
     println!(
         "  n = 20, bond after qubit {}, {} legs, raw {} indices",
         comp.after_qubit, comp.legs, comp.raw
@@ -135,9 +142,15 @@ fn main() -> Result<()> {
     println!(
         "     bond   legs    dense  support    walsh  mps-svd  phase-poly  path-sum   read(ps)"
     );
+    // Section B already showed the polyadic fit in full; per bond the
+    // question is description length, so it is not re-run here.
+    let per_bond = CompeteConfig {
+        cp_max_legs: 0,
+        ..cfg.clone()
+    };
     let mut runs = Vec::new();
     for s in &surfaces {
-        let c = surface::compete(s, Some(&circuit), 0, &cfg)?;
+        let c = surface::compete(s, Some(&circuit), 0, &per_bond)?;
         println!(
             "  {:>7}   {:>4}  {:>7}  {:>7}  {:>7}  {:>7}  {:>10}  {:>8}  {:>9}",
             c.after_qubit,
@@ -174,7 +187,7 @@ fn main() -> Result<()> {
     }
 
     rule();
-    println!("E. ARITY — the same surface read at higher polarity");
+    println!("D. ARITY — the same surface read at higher polarity");
     rule();
     println!("  Everything above is bipolar. A bipartition is a ± split, the Walsh");
     println!("  characters are the ±1 characters of F2^m, and an independent volume is");
@@ -218,7 +231,101 @@ fn main() -> Result<()> {
     println!("  is the column that answers whether compound polarity buys anything.");
 
     rule();
-    println!("D. SCALING — which descriptions double with the surface and which do not");
+    println!("E. THE ARITY THAT PAYS — the phase group, not the harmonic group");
+    rule();
+    println!("  Harmonics of every arity are dense. The phases are not. `phase_arity` is");
+    println!("  the smallest Z_D holding every phase against the surface's largest entry,");
+    println!("  and on the Clifford skeleton it never exceeds 4 — quarter turns — at any");
+    println!("  bond, at any size, however deep the circuit behind it. Some bonds land in");
+    println!("  the Z/2 subgroup, which is stronger still. Meanwhile the bipartition");
+    println!("  reports a bond dimension and calls the same object irreducible.");
+    println!();
+    for n in [16usize, 24] {
+        let sk = Dcs::scaled(n).with_t(0).skeleton();
+        let ss = sweep::surfaces(&sk, 0)?;
+        println!(
+            "    Clifford skeleton, n = {n}  ({} legs/bond, {} raw)",
+            ss[0].legs.len(),
+            1usize << ss[0].legs.len()
+        );
+        println!("       bond   arity     dense   mps-svd   phase-poly   what phase-poly found");
+        for s in ss.iter().step_by(if n > 20 { 5 } else { 4 }) {
+            let c = surface::compete(
+                s,
+                None,
+                0,
+                &CompeteConfig {
+                    cp_max_legs: 0,
+                    ..cfg.clone()
+                },
+            )?;
+            let mps = c.get(Technique::Mps).unwrap();
+            let pp = c.get(Technique::PhasePoly).unwrap();
+            println!(
+                "    {:>7}   {:>5}   {:>7}   {:>7}   {:>10}   {}",
+                s.after_qubit,
+                surface::phase_arity(&s.amps)
+                    .map(|d| d.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                c.raw,
+                mps.scalars,
+                if pp.applicable {
+                    pp.scalars.to_string()
+                } else {
+                    "—".into()
+                },
+                pp.detail
+            );
+        }
+        println!();
+    }
+    println!("  Doping breaks it, and the rate is measurable. With the T gates back in,");
+    println!("  the surface is still ONE stabilizer term only while almost no magic sits");
+    println!("  behind the bond:");
+    println!();
+    println!("       n   bond   T behind   arity   one term?");
+    for n in [16usize, 20, 24] {
+        let dd = Dcs::scaled(n);
+        let cc = dd.circuit();
+        for s in sweep::surfaces(&cc, 0)?.iter().take(5) {
+            let behind = dd
+                .doping()
+                .iter()
+                .filter(|site| site.qubit <= s.after_qubit)
+                .count();
+            println!(
+                "    {n:>4}   {:>4}   {behind:>8}   {:>5}   {}",
+                s.after_qubit,
+                surface::phase_arity(&s.amps)
+                    .map(|d| d.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                if surface::phase_poly(&s.amps, s.legs.len())?.is_some() {
+                    "yes"
+                } else {
+                    "no"
+                }
+            );
+        }
+    }
+    println!();
+    let exp = Dcs::experiment();
+    let behind_mid = exp
+        .doping()
+        .iter()
+        .filter(|site| site.qubit <= exp.qubits / 2 - 1)
+        .count();
+    println!();
+    println!("  Three T gates behind a bond is already enough to end it. So the O(m^2)");
+    println!("  description is not something the doped instance can be carried in, and the");
+    println!("  stabilizer-sum route is priced out by that measured rate rather than by");
+    println!(
+        "  assumption: {behind_mid} of the experiment's {} T gates sit behind its",
+        exp.t_gates
+    );
+    println!("  middle bond, against a threshold of three.");
+
+    rule();
+    println!("F. SCALING — which descriptions double with the surface and which do not");
     rule();
     println!();
     println!("     n   legs        raw   support     walsh   mps-svd  path-sum   h*");

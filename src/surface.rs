@@ -69,6 +69,25 @@
 //! [`checked`](Decomposition::checked) records how many entries that
 //! measurement actually covered — `0` marks a claim rather than a
 //! result.
+//!
+//! ## Arity
+//!
+//! Every one of those techniques is **bipolar**, and so is the price of
+//! a volume: [`crate::sweep::plan_volumes`] charges an independent
+//! volume for two surfaces. Arity two is a choice. Two functions ask
+//! what higher arity finds, and they answer differently:
+//!
+//! * [`grain_scan`] groups the legs into digits of arity `2^b` and
+//!   reads the surface in that axis's own `ℤ_d` characters. On DCS the
+//!   answer is nothing — occupancy stays at 98–100% from arity two up to
+//!   arity `2^m`, at every bond.
+//! * [`phase_arity`] asks the same question of the **phase** group
+//!   instead of the harmonic group, and there it pays. A Clifford
+//!   surface's phases never leave `ℤ/4`, at any bond, at any depth, and
+//!   the affine description writes such a surface in `O(m²)` numbers
+//!   while the bipartition reports a bond dimension and calls it
+//!   irreducible. Doping is what ends it, at a measured rate: three `T`
+//!   gates behind a bond are already enough.
 
 use std::collections::HashMap;
 use std::f64::consts::TAU;
@@ -89,6 +108,20 @@ pub const DEFAULT_EPSILON: f64 = 1e-10;
 
 /// Amplitude below which a surface entry counts as absent.
 pub const ZERO_TOLERANCE: f64 = 1e-12;
+
+/// Wires past which [`symbolic`] refuses to build the volume behind a
+/// bond.
+///
+/// Not a property of the path sum, which has no width ceiling — a
+/// property of how its budget is enforced. [`crate::pathsum`] observes
+/// an armed deadline between reduction sweeps, and on a volume this
+/// wide a *single* sweep over the grown polynomial can outlast any
+/// budget set around it. Measured on DCS at `n = 20`: the volume behind
+/// bond 7 (18 wires) reduces in seconds, and the one behind bond 9 (20
+/// wires) had not returned in two minutes under an eight-second budget.
+/// So the ceiling is stated and refused at, rather than discovered by
+/// waiting. Raise it deliberately with [`symbolic_within`].
+pub const MAX_VOLUME_WIRES: usize = 18;
 
 // ---------------------------------------------------------------------
 // The matrix product chain — one entrant, in its own basis.
@@ -705,8 +738,8 @@ impl Grain {
     /// Numbers to describe the surface at this grain, taking whichever
     /// of the three readings is smallest.
     pub fn scalars(&self) -> u128 {
-        let chain = 2 * self.radix as u128 * self.chi as u128 * self.chi as u128
-            * self.sites as u128;
+        let chain =
+            2 * self.radix as u128 * self.chi as u128 * self.chi as u128 * self.sites as u128;
         (2 * self.cyclic_nnz as u128)
             .min(2 * self.walsh_nnz as u128)
             .min(2 * self.direct_nnz as u128)
@@ -745,6 +778,40 @@ fn cyclic_transform(amps: &mut [C64], radix: usize, sites: usize) {
         }
         stride = span;
     }
+}
+
+/// The smallest `ℤ_D` holding every one of the surface's phases,
+/// measured against its largest entry, or `None` if no `D` up to `2^20`
+/// does.
+///
+/// This is the *other* arity, and the one the measurements point at. A
+/// surface's harmonics can be spread across the whole character group
+/// at every reading ([`grain_scan`]) while its phases still sit in a
+/// small cyclic group — those are independent facts. A single stabilizer
+/// term over Clifford+`T` has `D = 8`; a sum of them generally has no
+/// `D` at all, because the sum of eighth roots is not a root of unity.
+/// So this rises with how much circuit stands behind the bond, and
+/// where it stops existing is where the surface stopped being one term.
+pub fn phase_arity(amps: &[C64]) -> Option<i64> {
+    let peak = amps
+        .iter()
+        .max_by(|a, b| a.norm().partial_cmp(&b.norm()).unwrap())
+        .copied()?;
+    if peak.norm() <= ZERO_TOLERANCE {
+        return None;
+    }
+    let mut d = 1i64;
+    while d <= 1 << 20 {
+        let ok = amps.iter().filter(|z| z.norm() > ZERO_TOLERANCE).all(|z| {
+            let t = (*z / peak).arg() / TAU * d as f64;
+            (t - t.round()).abs() < 1e-6
+        });
+        if ok {
+            return Some(d);
+        }
+        d <<= 1;
+    }
+    None
 }
 
 /// Occupied entries, relative to the largest — so a change of
@@ -864,11 +931,21 @@ impl SymbolicSurface {
     }
 }
 
-/// The volume behind one bond, reduced.
+/// The volume behind one bond, reduced, up to [`MAX_VOLUME_WIRES`].
 pub fn symbolic(
     circuit: &crate::circuit::Circuit<C64>,
     after_qubit: usize,
     bits: u64,
+) -> Result<SymbolicSurface> {
+    symbolic_within(circuit, after_qubit, bits, MAX_VOLUME_WIRES)
+}
+
+/// [`symbolic`] with the wire ceiling chosen by the caller.
+pub fn symbolic_within(
+    circuit: &crate::circuit::Circuit<C64>,
+    after_qubit: usize,
+    bits: u64,
+    max_wires: usize,
 ) -> Result<SymbolicSurface> {
     use crate::circuit::{Circuit, Op};
     let q = after_qubit;
@@ -888,6 +965,12 @@ pub fn symbolic(
         return Err(Error::InvalidState(format!(
             "surface: the volume behind bond {q} needs {width} wires, past the 64 \
              an amplitude index addresses"
+        )));
+    }
+    if width > max_wires {
+        return Err(Error::InvalidState(format!(
+            "surface: the volume behind bond {q} needs {width} wires, past the {max_wires} \
+             where one reduction sweep can outlast the budget set around it"
         )));
     }
     let mut left = Circuit::<C64>::new(width);
@@ -1057,7 +1140,9 @@ pub struct CompeteConfig {
     pub epsilon: f64,
     /// Relative deviation the polyadic fit aims for.
     pub cp_epsilon: f64,
-    /// Largest polyadic rank tried.
+    /// Largest polyadic rank tried. Each alternating step inverts a
+    /// `rank × rank` Gram through a Jacobi decomposition, so this is
+    /// the term that sets what a fit costs — not the surface's size.
     pub cp_max_rank: usize,
     /// Legs past which the polyadic fit is skipped — its sweeps cost
     /// `O(m² · 2^m · R)` and stop being worth running.
@@ -1075,6 +1160,10 @@ pub struct CompeteConfig {
     /// Wall-clock the path sum may spend reducing the volume before it
     /// is abandoned and reports why.
     pub symbolic_budget: std::time::Duration,
+    /// Wires the volume behind a bond may have; see
+    /// [`MAX_VOLUME_WIRES`] for why a wall-clock budget alone is not
+    /// enough.
+    pub symbolic_max_wires: usize,
 }
 
 impl Default for CompeteConfig {
@@ -1082,12 +1171,13 @@ impl Default for CompeteConfig {
         Self {
             epsilon: DEFAULT_EPSILON,
             cp_epsilon: 1e-8,
-            cp_max_rank: 64,
+            cp_max_rank: 16,
             cp_max_legs: 12,
-            cp_sweeps: 60,
+            cp_sweeps: 25,
             seed: 0x51DE_0F00,
             pathsum_budget: 1 << 24,
             symbolic_budget: std::time::Duration::from_secs(10),
+            symbolic_max_wires: MAX_VOLUME_WIRES,
         }
     }
 }
@@ -1342,7 +1432,7 @@ pub fn compete(
 
     if let Some(circuit) = volume {
         match crate::guard::with_time_budget(cfg.symbolic_budget, || {
-            symbolic(circuit, surface.after_qubit, bits)
+            symbolic_within(circuit, surface.after_qubit, bits, cfg.symbolic_max_wires)
         }) {
             Ok(sym) => {
                 // One entry sums over 2^{h*} internal assignments and

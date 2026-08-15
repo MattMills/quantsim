@@ -179,9 +179,16 @@ fn the_arity_ladder_changes_only_the_compound_reading() {
         assert!(!grains.is_empty());
         let (direct, walsh) = (grains[0].direct_nnz, grains[0].walsh_nnz);
         for g in &grains {
-            assert_eq!(g.legs_per_digit * g.sites, m, "the grain must tile the legs");
+            assert_eq!(
+                g.legs_per_digit * g.sites,
+                m,
+                "the grain must tile the legs"
+            );
             assert_eq!(g.radix, 1 << g.legs_per_digit);
-            assert_eq!(g.direct_nnz, direct, "the grouping moved the direct reading");
+            assert_eq!(
+                g.direct_nnz, direct,
+                "the grouping moved the direct reading"
+            );
             assert_eq!(g.walsh_nnz, walsh, "the grouping moved the Walsh reading");
             assert!(g.cyclic_nnz <= 1 << m);
         }
@@ -218,13 +225,105 @@ fn a_product_surface_stays_narrow_at_every_arity() {
         amps,
     };
     for g in surface::grain_scan(&s, surface::DEFAULT_EPSILON).unwrap() {
-        assert_eq!(g.chi, 1, "a product surface needs no bond at arity {}", g.radix);
+        assert_eq!(
+            g.chi, 1,
+            "a product surface needs no bond at arity {}",
+            g.radix
+        );
         assert!(
             g.cyclic_nnz <= 1 << m,
             "arity {} found more coefficients than indices",
             g.radix
         );
     }
+}
+
+/// The arity that carries the structure is the phase group, not the
+/// harmonic group — and on the Clifford skeleton it is 4 at every bond,
+/// at every size, however deep the circuit behind it. This is the case
+/// a bipartition misreads: it reports a bond dimension and calls the
+/// surface irreducible while the affine description writes it in
+/// `O(m²)` numbers.
+#[test]
+fn the_clifford_skeleton_is_a_quarter_turn_polynomial_at_every_bond() {
+    let mut best = 0u128;
+    for n in [12usize, 16, 20] {
+        let sk = Dcs::scaled(n).with_t(0).skeleton();
+        for s in sweep::surfaces(&sk, 0).unwrap() {
+            let m = s.legs.len();
+            // Quarter turns at most — some bonds land in the ℤ/2
+            // subgroup, which is a stronger statement, not a weaker one.
+            let arity = surface::phase_arity(&s.amps)
+                .unwrap_or_else(|| panic!("n={n} bond {} left every cyclic group", s.after_qubit));
+            assert!(
+                arity <= 4,
+                "n={n} bond {}: a Clifford surface sat in ℤ/{arity}, past quarter turns",
+                s.after_qubit
+            );
+            let pp = surface::phase_poly(&s.amps, m)
+                .unwrap()
+                .unwrap_or_else(|| panic!("n={n} bond {} is not one term", s.after_qubit));
+            assert!(pp.degree <= 2, "a stabilizer phase is at most quadratic");
+            assert!(pp.denominator <= 4, "over ℤ/{}", pp.denominator);
+            assert!(pp
+                .rebuild(m)
+                .iter()
+                .zip(&s.amps)
+                .all(|(a, b)| (*a - *b).norm() < 1e-12));
+
+            // And it beats both baselines, on an object the chain calls
+            // wide.
+            let c = surface::compete(&s, None, 0, &cfg()).unwrap();
+            let mps = c.get(Technique::Mps).unwrap();
+            assert!(
+                pp.scalars() < c.raw,
+                "n={n} bond {}: {} numbers against {} raw",
+                s.after_qubit,
+                pp.scalars(),
+                c.raw
+            );
+            assert!(
+                pp.scalars() < mps.scalars,
+                "n={n} bond {}: the bipartition was cheaper",
+                s.after_qubit
+            );
+            best = best.max(c.raw / pp.scalars());
+        }
+    }
+    // The description is O(m²) against the surface's 2^m, so the margin
+    // is a function of size and only means anything once there is size.
+    assert!(best >= 30, "the widest margin over dense was only {best}×");
+}
+
+/// Doping breaks it at a measurable rate. Once a few `T` gates sit
+/// behind a bond the surface is a sum of stabilizer terms and no single
+/// cyclic group holds its phases — which is what prices the
+/// stabilizer-sum route out on the doped instance.
+#[test]
+fn a_little_magic_behind_a_bond_ends_the_single_term() {
+    let d = Dcs::scaled(20);
+    let circuit = d.circuit();
+    let surfaces = sweep::surfaces(&circuit, 0).unwrap();
+    let mut last_single = 0usize;
+    for s in &surfaces {
+        let behind = d
+            .doping()
+            .iter()
+            .filter(|site| site.qubit <= s.after_qubit)
+            .count();
+        if surface::phase_poly(&s.amps, s.legs.len())
+            .unwrap()
+            .is_some()
+        {
+            last_single = last_single.max(behind);
+        }
+    }
+    assert!(
+        last_single <= 3,
+        "a surface stayed a single term with {last_single} T gates behind it"
+    );
+    // And the deep ones have left every cyclic group.
+    assert_eq!(surface::phase_arity(&surfaces.last().unwrap().amps), None);
 }
 
 /// Cost is counted the same way for everyone, so the baseline is
