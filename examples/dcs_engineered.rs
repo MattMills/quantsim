@@ -65,11 +65,16 @@ fn main() -> Result<()> {
         let c = d.circuit();
         for s in sweep::surfaces(&c, 0)? {
             // The span is a Jacobi decomposition of a 2^t × 2^m matrix,
-            // so the cost grows as the branch count squared and the
-            // rank, not the sweeps, is what a deep bond spends. Every
-            // structural point the table makes is visible well below
-            // the module's own ceiling.
-            if engineered::magic_behind(&c, s.after_qubit) > 9 {
+            // and Jacobi's cost is set by the SMALLER side: roughly
+            // `sweeps · min² · max`. So the expensive rows are the ones
+            // where both the branch count and the surface are large,
+            // and capping on `t` alone does not find them — a bond with
+            // ten T gates over a six-leg surface is a 1024 × 64 problem
+            // and cheap, while nine over ten legs is 512 × 1024 and
+            // minutes. Capping the work dimension keeps every row the
+            // table needs, saturation included.
+            let t = engineered::magic_behind(&c, s.after_qubit);
+            if t.min(s.legs.len()) > 8 {
                 println!(
                     "  {n:>4}   {:>4}   past what this display will spend",
                     s.after_qubit
