@@ -71,8 +71,8 @@
 //! need to.
 
 use super::{
-    validate_apply, validate_apply_diagonal, Backend, BulkState, DenseState, FactoredState,
-    MpsState, SparseState,
+    validate_apply, validate_apply_diagonal, Backend, BulkState, CliffordFramedState, DenseState,
+    FactoredState, MpsState, SparseState,
 };
 use crate::error::{Error, Result};
 use crate::math::GateMatrix;
@@ -305,6 +305,7 @@ impl<S: Scalar> MosaicState<S> {
             "mps" => Box::new(MpsState::<S>::new(width)?),
             "bulk" => Box::new(BulkState::<S>::new(width)?),
             "factored" => Box::new(FactoredState::<S>::new(width)?),
+            "clifford-framed" => Box::new(CliffordFramedState::<S>::new(width)?),
             other => {
                 return Err(Error::UnknownBackend(other.to_string()));
             }
@@ -359,7 +360,8 @@ impl<S: Scalar> MosaicState<S> {
             names.push(self.regions[r].state.name().to_string());
             supports.push(local);
         }
-        // Predict: sparse pays the product of supports; dense pays 2^w.
+        // Predict: a support-keyed representation pays the product of
+        // supports; dense pays 2^w.
         let support_product = supports
             .iter()
             .map(|s| s.len().max(1) as f64)
@@ -367,8 +369,32 @@ impl<S: Scalar> MosaicState<S> {
         let entry = (std::mem::size_of::<S>() + 24) as f64;
         let sparse_cost = support_product * entry;
         let dense_cost = (1u128 << width.min(80)) as f64 * std::mem::size_of::<S>() as f64;
-        let target = if sparse_cost <= dense_cost * self.policy.sparse_bias {
-            "sparse"
+        // Which support-keyed representation to elect is the policy's
+        // call, not a hardcoded pair. It used to be hardcoded, which made
+        // `clifford-framed` unreachable: a frame seeded into a region was
+        // flushed by the support gather above at its first merge and
+        // could never be elected back, on any circuit.
+        //
+        // It is off by default, and the reason is measured rather than
+        // assumed. This election prices the state **at rest**, which is
+        // right for support-keyed representations — they do not
+        // accumulate — and wrong for the frame, whose whole value is
+        // deferred and whose whole cost is accrued: a fresh frame's
+        // replay log is empty at merge and then grows one entry per
+        // absorbed Clifford gate. On a deep circuit that log is the
+        // dominant term and the at-rest price never sees it coming.
+        // Measured on `examples/dcs_mosaic.rs`, a 12-qubit depth-12
+        // brickwork: electing the frame gave 6.4x dense memory where
+        // electing sparse gave 1.0x. Opt in when the remaining circuit is
+        // Clifford-heavy *and* short; the election cannot tell.
+        let frame_cost = sparse_cost + (4 * width * std::mem::size_of::<u64>()) as f64;
+        let cheap = if self.policy.fallbacks.iter().any(|f| f == "clifford-framed") {
+            ("clifford-framed", frame_cost)
+        } else {
+            ("sparse", sparse_cost)
+        };
+        let target = if cheap.1 <= dense_cost * self.policy.sparse_bias {
+            cheap.0
         } else {
             "dense"
         };
