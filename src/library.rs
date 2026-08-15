@@ -426,3 +426,56 @@ pub fn random_circuit<S: Scalar>(n: usize, gates: usize, seed: u64) -> Circuit<S
     }
     c
 }
+
+/// An encoded computation over `nodes` L = 2 toric patches: every
+/// node's `|0̄0̄⟩` encoder, then `gates` random **logical** operations
+/// compiled to physical gates — logical Paulis (X̄/Z̄ strings on a
+/// random wire) and transversal CX blocks between random node pairs.
+/// The family the constraint-compression backend bets on: `8·nodes`
+/// physical qubits computing on `2·nodes` logical wires.
+pub fn logical_random<S: Scalar>(nodes: usize, gates: usize, seed: u64) -> Circuit<S> {
+    let n = 8 * nodes;
+    let mut c = Circuit::new(n);
+    let codes: Vec<crate::retro::ToricCode> = (0..nodes)
+        .map(|i| crate::retro::ToricCode::new(2, 8 * i).expect("tiling fits"))
+        .collect();
+    for code in &codes {
+        for op in code.encoder(n, [false, false]).ops() {
+            if let crate::circuit::Op::Named { name, qubits, .. } = op {
+                c.gate(name.as_str(), vec![], qubits.clone());
+            }
+        }
+    }
+    let mut rng = Prng::new(seed);
+    let emit_string = |c: &mut Circuit<S>, mask: u64, gate: &str| {
+        let mut rest = mask;
+        while rest != 0 {
+            let q = rest.trailing_zeros() as usize;
+            rest &= rest - 1;
+            c.gate(gate, vec![], vec![q]);
+        }
+    };
+    for _ in 0..gates {
+        let arm = rng.next_u64() % 5;
+        if arm < 3 || nodes < 2 {
+            let node = (rng.next_u64() as usize) % nodes;
+            let wire = (rng.next_u64() as usize) % 2;
+            if rng.next_u64() % 2 == 0 {
+                emit_string(&mut c, codes[node].logical_x(wire).x, "x");
+            } else {
+                emit_string(&mut c, codes[node].logical_z(wire).z, "z");
+            }
+        } else {
+            let a = (rng.next_u64() as usize) % nodes;
+            let mut b = (rng.next_u64() as usize) % nodes;
+            if b == a {
+                b = (b + 1) % nodes;
+            }
+            use crate::retro::Code;
+            for q in 0..Code::qubits(&codes[a]) {
+                c.cx(codes[a].offset() + q, codes[b].offset() + q);
+            }
+        }
+    }
+    c
+}

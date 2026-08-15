@@ -390,6 +390,34 @@ pub fn resource_profile(circuit: &Circuit) -> ResourceProfile {
             )
         },
     ));
+    // The constraint-compression register: the code space as the bet.
+    // Toric nodes tile the register (widths that do not tile start
+    // materialized — the bet is vacuous there and prices as sparse);
+    // an encoded computation runs on the logical wires at 2^{n/4}
+    // against the physical 2^n, and anything outside the encoded
+    // vocabulary escapes to an exact materialization.
+    axes.push(probe(
+        "logical",
+        crate::logical::LogicalState::tiled,
+        circuit,
+        &reg,
+        |s: &crate::logical::LogicalState| {
+            let st = s.stats();
+            (
+                if s.is_logical() {
+                    format!(
+                        "{} wires, {} frame Paulis, {} logical cx",
+                        s.logical_qubits(),
+                        st.frame_paulis,
+                        st.logical_cx
+                    )
+                } else {
+                    format!("materialized ({} escapes)", st.escapes)
+                },
+                true,
+            )
+        },
+    ));
     // The phase-field representation: cost is the phase polynomial's
     // monomial count, and the assumption is that the circuit stays
     // diagonal-with-root-of-unity-entries over an affine subcube. A gate
