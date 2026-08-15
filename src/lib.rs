@@ -121,6 +121,7 @@ pub mod schedule;
 pub mod selfhost;
 pub mod sim;
 pub mod support;
+pub mod sweep;
 pub mod upembed;
 
 pub use backend::{AdaptiveState, Backend, BackendRegistry, DenseState, SparseState};
