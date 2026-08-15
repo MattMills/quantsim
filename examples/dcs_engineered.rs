@@ -12,7 +12,7 @@
 //!
 //! `cargo run --release --example dcs_engineered`
 
-use quantsim::dcs::Dcs;
+use quantsim::dcs::{Dcs, Doping};
 use quantsim::engineered;
 use quantsim::prelude::*;
 use quantsim::sweep;
@@ -65,7 +65,10 @@ fn main() -> Result<()> {
         let c = d.circuit();
         for s in sweep::surfaces(&c, 0)? {
             if engineered::magic_behind(&c, s.after_qubit) > 11 {
-                println!("  {n:>4}   {:>4}   past what this display will spend", s.after_qubit);
+                println!(
+                    "  {n:>4}   {:>4}   past what this display will spend",
+                    s.after_qubit
+                );
                 break;
             }
             match engineered::engineered_surface(&c, s.after_qubit, 0) {
@@ -154,7 +157,9 @@ fn main() -> Result<()> {
             exp.qubits - 1,
             covered
         ),
-        None => println!("  The engineered register is cheaper on no bond of the experiment, and is"),
+        None => {
+            println!("  The engineered register is cheaper on no bond of the experiment, and is")
+        }
     }
     println!("  saturated on the rest. The magic is spread uniformly, so roughly");
     println!(
@@ -170,6 +175,62 @@ fn main() -> Result<()> {
     println!("  Up to four cosets across thousands of branches, so the engineered part");
     println!("  of the entanglement is stored once and the magic lives entirely in the");
     println!("  phase — which is where the branches are linearly independent.");
+
+    rule();
+    println!("D. DOES CONCENTRATING THE MAGIC HELP? — no, and the reason is the order");
+    rule();
+    println!("  The obvious hope is that the boundary is about the doping being spread,");
+    println!("  and that banding the same 468 T gates onto few world-lines would let the");
+    println!("  register hold more of the circuit. It does the opposite, and the counting");
+    println!("  says why: `T behind` is CUMULATIVE along the sweep, so coverage is always");
+    println!("  a prefix of the bonds. Magic on low world-lines lands behind exactly the");
+    println!("  bonds that were the only candidates.");
+    println!();
+    println!("     doping                            T placed   covered   T behind bonds 0,2,8,34");
+    let mut rows: Vec<(String, Dcs)> = vec![("uniform (the experiment)".into(), exp)];
+    for (w, g) in [(1usize, 9usize), (5, 30), (10, 60), (35, 35)] {
+        rows.push((
+            format!("banded width {w}, gap {g}"),
+            exp.with_doping(Doping::Banded {
+                width: w,
+                gap: g,
+                layers: exp.depth,
+                late: false,
+            }),
+        ));
+    }
+    rows.push((
+        "late (last 10 layers)".into(),
+        exp.with_doping(Doping::Late { layers: 10 }),
+    ));
+    for (label, d) in &rows {
+        let dc = d.circuit();
+        let dp = sweep::plan(&dc)?;
+        let cov = (0..d.qubits - 1)
+            .filter(|&b| {
+                let legs = dp.legs_per_bond[b];
+                let t = engineered::magic_behind(&dc, b);
+                let dense = 1u128 << legs.min(100);
+                let span = if t >= legs { dense } else { 1u128 << t };
+                span.saturating_mul((legs as u128 + 1).pow(2)) < dense
+            })
+            .count();
+        let profile: Vec<usize> = [0usize, 2, 8, 34]
+            .iter()
+            .map(|&b| engineered::magic_behind(&dc, b))
+            .collect();
+        println!(
+            "  {label:<34}   {:>6}   {cov:>7}   {profile:?}",
+            d.doping().len()
+        );
+    }
+    println!();
+    println!("  Banding onto few world-lines is strictly worse — one covered bond, or");
+    println!("  none — because it front-loads the cumulative profile. Only magic on the");
+    println!("  world-lines the sweep reaches LAST would extend the prefix, and the sweep");
+    println!("  cannot be reordered to arrange that: it requires nearest-neighbour CZ, so");
+    println!("  the circuit's own connectivity fixes the order. The coverage is decided");
+    println!("  by the layout, not chosen.");
     rule();
     Ok(())
 }

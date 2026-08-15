@@ -1,7 +1,7 @@
 //! The register that holds only engineered entanglement, and the exact
 //! price the magic charges it.
 
-use quantsim::dcs::Dcs;
+use quantsim::dcs::{Dcs, Doping};
 use quantsim::engineered;
 use quantsim::prelude::*;
 use quantsim::sweep;
@@ -124,6 +124,67 @@ fn the_experiment_crosses_the_boundary_almost_immediately() {
     // Past the crossing the magic only grows, so nothing comes back.
     let deep = engineered::magic_behind(&c, exp.qubits / 2);
     assert!(deep > plan.legs_per_bond[exp.qubits / 2] * 5);
+}
+
+/// Concentrating the magic does not help, and the reason is that the
+/// count is cumulative along the sweep.
+///
+/// `magic_behind` accumulates from qubit 0 upward, so the bonds the
+/// engineered register can hold are always a *prefix*. Banding the same
+/// `T` gates onto few world-lines front-loads that profile and lands
+/// the magic behind exactly the bonds that were the only candidates —
+/// so it is strictly worse than spreading it, not better. Only magic on
+/// the world-lines the sweep reaches last would extend the prefix, and
+/// the sweep cannot be reordered to arrange it: it requires
+/// nearest-neighbour `CZ`, so the circuit's connectivity fixes the
+/// order.
+#[test]
+fn banding_the_magic_onto_few_world_lines_is_strictly_worse() {
+    fn covered(d: Dcs) -> usize {
+        let c = d.circuit();
+        let plan = sweep::plan(&c).unwrap();
+        (0..d.qubits - 1)
+            .filter(|&b| {
+                let legs = plan.legs_per_bond[b];
+                let t = engineered::magic_behind(&c, b);
+                let dense = 1u128 << legs.min(100);
+                let span = if t >= legs { dense } else { 1u128 << t };
+                span.saturating_mul((legs as u128 + 1).pow(2)) < dense
+            })
+            .count()
+    }
+    let exp = Dcs::experiment();
+    let uniform = covered(exp);
+    assert!(uniform > 0 && uniform < 10, "uniform covered {uniform}");
+    for (w, g) in [(1usize, 9usize), (5, 30), (10, 60), (35, 35)] {
+        let banded = covered(exp.with_doping(Doping::Banded {
+            width: w,
+            gap: g,
+            layers: exp.depth,
+            late: false,
+        }));
+        assert!(
+            banded <= uniform,
+            "banding width {w} gap {g} covered {banded} bonds against uniform's {uniform}"
+        );
+    }
+
+    // Cumulative, so the profile never decreases along the sweep.
+    let c = exp.circuit();
+    let mut last = 0usize;
+    for b in 0..exp.qubits - 1 {
+        let t = engineered::magic_behind(&c, b);
+        assert!(t >= last, "the magic behind bond {b} went down");
+        last = t;
+    }
+    // The last bond sits below the top world-line, so its volume is
+    // everything except that line's own magic.
+    assert!(last < exp.t_gates);
+    assert_eq!(
+        engineered::magic_behind(&c, exp.qubits - 1),
+        exp.t_gates,
+        "every T gate is behind the top of the register"
+    );
 }
 
 /// The branch budget is stated and refused at, rather than discovered
