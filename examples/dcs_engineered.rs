@@ -64,7 +64,12 @@ fn main() -> Result<()> {
         let d = Dcs::scaled(n);
         let c = d.circuit();
         for s in sweep::surfaces(&c, 0)? {
-            if engineered::magic_behind(&c, s.after_qubit) > 11 {
+            // The span is a Jacobi decomposition of a 2^t × 2^m matrix,
+            // so the cost grows as the branch count squared and the
+            // rank, not the sweeps, is what a deep bond spends. Every
+            // structural point the table makes is visible well below
+            // the module's own ceiling.
+            if engineered::magic_behind(&c, s.after_qubit) > 9 {
                 println!(
                     "  {n:>4}   {:>4}   past what this display will spend",
                     s.after_qubit
