@@ -76,5 +76,38 @@ fn main() {
     println!("  For comparison, the paper's own extrapolations for this instance:");
     println!("    MPS (quimb, measured + fitted)      10^25 s");
     println!("    stabilizer decomposition (QuiZX)    10^42 s");
+
+    println!("{}", "─".repeat(76));
+    println!("D. INDEPENDENT VOLUMES  (what parallelism across the register costs)");
+    println!("{}", "─".repeat(76));
+    println!("  The sweep is volumes of one world-line, composed sequentially: each one");
+    println!("  sums its incoming legs out before the next begins, so only one surface");
+    println!("  is ever live. A volume that does NOT know its left neighbour cannot sum");
+    println!("  those legs out — they are free arguments of the tensor it returns — so");
+    println!("  it holds its left AND right surfaces at once, for its whole life.");
+    println!();
+    println!("  Experiment (n = 70, depth 70). What each volume width buys and costs:");
+    println!();
+    println!("     width   volumes   in-legs   out-legs   PEAK legs   memory   parallel");
+    let c = Dcs::experiment().circuit();
+    for width in [1usize, 2, 5, 7, 10, 14, 35, 70] {
+        let vp = sweep::plan_volumes(&c, width).unwrap();
+        let mid = vp.volumes.len() / 2;
+        println!(
+            "  {width:>8}  {:>8}  {:>8}  {:>9}   {:>9}   2^{:<6}  {:>7}×",
+            vp.parallelism(),
+            vp.incoming[mid],
+            vp.outgoing[mid],
+            vp.peak(),
+            vp.peak() + 1,
+            vp.parallelism()
+        );
+    }
+    println!();
+    println!("  The peak does not depend on the width. A volume of one world-line and a");
+    println!("  volume of thirty-five cost the same, because the cost is the two");
+    println!("  surfaces and not what is between them. Independence is priced at exactly");
+    println!("  one extra surface — 2^36 sequential against 2^71 for any independent");
+    println!("  volume — so the register's volumes compose sequentially or not at all.");
     println!("{}", "─".repeat(76));
 }

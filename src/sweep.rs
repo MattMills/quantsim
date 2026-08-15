@@ -175,6 +175,119 @@ pub fn plan(circuit: &Circuit<C64>) -> Result<SweepPlan> {
     Ok(schedule(circuit)?.1)
 }
 
+/// What it costs to cut the register into **independent** volumes of
+/// world-lines instead of sweeping it in one pass.
+///
+/// A volume that does not know what is to its left cannot sum its
+/// incoming legs out — they are free arguments of the tensor it
+/// produces, open from its first gate to its last. Its outgoing legs
+/// are open too, from the moment they are emitted. So an independent
+/// volume holds *both* of its surfaces at once, where the sweep holds
+/// one.
+#[derive(Debug, Clone)]
+pub struct VolumePlan {
+    /// Register width.
+    pub qubits: usize,
+    /// World-lines per volume, as asked for.
+    pub width: usize,
+    /// Volumes as inclusive qubit ranges, in order.
+    pub volumes: Vec<(usize, usize)>,
+    /// Legs on each volume's left surface — free arguments throughout.
+    pub incoming: Vec<usize>,
+    /// Legs on each volume's right surface.
+    pub outgoing: Vec<usize>,
+    /// Widest live leg set inside each volume, measured by walking it.
+    pub peak_live_legs: Vec<usize>,
+}
+
+impl VolumePlan {
+    /// The binding volume's peak.
+    pub fn peak(&self) -> usize {
+        self.peak_live_legs.iter().copied().max().unwrap_or(0)
+    }
+
+    /// `2^{peak+1}` amplitudes — the memory one volume needs.
+    pub fn peak_amplitudes(&self) -> u128 {
+        1u128 << (self.peak() + 1).min(127)
+    }
+
+    /// Volumes that can be contracted at the same time.
+    pub fn parallelism(&self) -> usize {
+        self.volumes.len()
+    }
+}
+
+/// Measure [`VolumePlan`] for a given volume width.
+///
+/// `width == qubits` is the whole register as one volume, which has no
+/// surfaces and so reduces to the sweep's own peak.
+pub fn plan_volumes(circuit: &Circuit<C64>, width: usize) -> Result<VolumePlan> {
+    if width == 0 {
+        return Err(Error::InvalidState(
+            "sweep: a volume of zero world-lines contracts nothing".into(),
+        ));
+    }
+    let (lines, base) = schedule(circuit)?;
+    let n = base.qubits;
+    let mut volumes = Vec::new();
+    let mut a = 0usize;
+    while a < n {
+        let b = (a + width - 1).min(n - 1);
+        volumes.push((a, b));
+        a = b + 1;
+    }
+
+    let mut incoming = Vec::new();
+    let mut outgoing = Vec::new();
+    let mut peaks = Vec::new();
+    for &(a, b) in &volumes {
+        let in_legs = if a == 0 { 0 } else { base.legs_per_bond[a - 1] };
+        let out_legs = if b + 1 >= n { 0 } else { base.legs_per_bond[b] };
+        // Incoming legs are open for the whole volume; outgoing ones
+        // from the moment they are emitted; internal ones open and
+        // close exactly as the sweep makes them.
+        let mut internal = 0usize;
+        let mut emitted = 0usize;
+        let mut peak = in_legs;
+        for (q, line) in lines.iter().enumerate().take(b + 1).skip(a) {
+            peak = peak.max(in_legs + internal + emitted);
+            for e in line {
+                match e {
+                    Event::Consume(_) => {
+                        // A leg consumed by the volume's first world-line
+                        // came from outside and stays an argument.
+                        if q > a {
+                            internal -= 1;
+                        }
+                    }
+                    Event::Emit(_) => {
+                        if q == b && b + 1 < n {
+                            emitted += 1;
+                        } else {
+                            internal += 1;
+                        }
+                    }
+                    Event::Local(_) => {}
+                }
+                peak = peak.max(in_legs + internal + emitted);
+            }
+        }
+        debug_assert_eq!(emitted, out_legs);
+        incoming.push(in_legs);
+        outgoing.push(out_legs);
+        peaks.push(peak);
+    }
+
+    Ok(VolumePlan {
+        qubits: n,
+        width,
+        volumes,
+        incoming,
+        outgoing,
+        peak_live_legs: peaks,
+    })
+}
+
 /// The live tensor: amplitudes indexed by `(legs << 1) | s`, where `s`
 /// is the current qubit's own value and `legs` runs over the open leg
 /// bits in `order`.
@@ -215,11 +328,44 @@ impl Live {
     }
 }
 
+/// The open-leg amplitudes standing between one qubit and the next.
+///
+/// This is the whole of what crosses the bond, and it is *not* a
+/// register in the space direction: bit `p` of an index is leg
+/// `legs[p]`, and the legs arrive in circuit order, so a surface is a
+/// register whose sites are **times**. The sweep walks space carrying a
+/// temporal register — two geometric modes, composed.
+#[derive(Debug, Clone)]
+pub struct Surface {
+    /// The bond sits between this qubit and the one above it.
+    pub after_qubit: usize,
+    /// Leg identities, low bit first: one `CZ` each, in time order.
+    pub legs: Vec<usize>,
+    /// `2^{legs.len()}` amplitudes.
+    pub amps: Vec<C64>,
+}
+
 /// `⟨bits|C|0…0⟩`, contracted one qubit at a time.
 ///
 /// Exact. Costs `2^{peak_live_legs + 1}` amplitudes of memory and one
 /// pass per world-line event, with the `T` count entering neither.
 pub fn amplitude(circuit: &Circuit<C64>, bits: u64) -> Result<C64> {
+    run(circuit, bits, |_| {})
+}
+
+/// Every bond's [`Surface`], recorded as the sweep crosses it.
+///
+/// Exponential in the legs on a bond — this is the instrument for
+/// asking how much of the surface is actually occupied, not a way to
+/// run the sweep.
+pub fn surfaces(circuit: &Circuit<C64>, bits: u64) -> Result<Vec<Surface>> {
+    let mut out = Vec::new();
+    run(circuit, bits, |s| out.push(s))?;
+    Ok(out)
+}
+
+/// The sweep proper: `observe` sees each bond's surface in turn.
+fn run(circuit: &Circuit<C64>, bits: u64, mut observe: impl FnMut(Surface)) -> Result<C64> {
     let (lines, _) = schedule(circuit)?;
     let reg = GateRegistry::<C64>::standard();
     let bound = circuit.bind(&reg)?;
@@ -290,6 +436,13 @@ pub fn amplitude(circuit: &Circuit<C64>, bits: u64) -> Result<C64> {
         }
         carry = next;
         carry_order = live.order;
+        if q + 1 < lines.len() {
+            observe(Surface {
+                after_qubit: q,
+                legs: carry_order.clone(),
+                amps: carry.clone(),
+            });
+        }
     }
 
     if !carry_order.is_empty() {
