@@ -95,6 +95,7 @@ pub mod heisenberg;
 pub mod horizon;
 pub mod library;
 pub mod lift;
+pub mod logical;
 pub mod math;
 pub mod memo;
 pub mod mixed;

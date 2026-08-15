@@ -511,13 +511,23 @@ pub struct Decoder {
 }
 
 impl Decoder {
-    /// Build the measured table for one code.
+    /// Build the measured table for one code, at weight 1.
     pub fn new(code: &impl Code) -> Self {
+        Self::to_weight(code, 1)
+    }
+
+    /// Build the measured table up to `max_weight`: minimum-weight
+    /// decoding by enumeration, lowest weight first, with the same
+    /// group-membership honesty at every weight — a signature reached
+    /// by two corrections of equal weight separated by a logical is
+    /// poisoned and refused; one first reached at a lower weight keeps
+    /// its minimum-weight correction. Enumeration is exponential in
+    /// `max_weight` and says so by being a parameter.
+    pub fn to_weight(code: &impl Code, max_weight: usize) -> Self {
         let group = Stabilizer::new(code.generators());
         let mut table: Vec<(Vec<bool>, Option<PauliString>)> = Vec::new();
-        for q in 0..code.qubits() {
-            let bit = 1u64 << (code.offset() + q);
-            for p in [
+        let paulis = |bit: u64| {
+            [
                 x_string(bit),
                 z_string(bit),
                 PauliString {
@@ -525,22 +535,64 @@ impl Decoder {
                     z: bit,
                     negative: false,
                 },
-            ] {
-                let sig = signature(code, p);
-                if sig.iter().all(|&b| !b) {
-                    continue;
-                }
-                match table.iter_mut().find(|(s, _)| *s == sig) {
-                    None => table.push((sig, Some(p))),
-                    Some((_, entry)) => {
-                        if let Some(prior) = entry {
-                            // Same signature: degenerate only if the
-                            // difference is a stabilizer element.
-                            let product = (p.x ^ prior.x, p.z ^ prior.z);
-                            if group.expectation(product) == 0.0 {
-                                *entry = None; // a logical separates them
-                            }
+            ]
+        };
+        // Weight-w candidates: combinations of w distinct qubits, all
+        // 3^w Pauli assignments, visited weight by weight so the first
+        // signature hit is minimum weight.
+        let n = code.qubits();
+        let consider = |p: PauliString, table: &mut Vec<(Vec<bool>, Option<PauliString>)>| {
+            let sig = signature(code, p);
+            if sig.iter().all(|&b| !b) {
+                return;
+            }
+            match table.iter_mut().find(|(s, _)| *s == sig) {
+                None => table.push((sig, Some(p))),
+                Some((_, entry)) => {
+                    if let Some(prior) = entry {
+                        let same_weight =
+                            (prior.x | prior.z).count_ones() == (p.x | p.z).count_ones();
+                        let product = (p.x ^ prior.x, p.z ^ prior.z);
+                        if same_weight && group.expectation(product) == 0.0 {
+                            *entry = None;
                         }
+                    }
+                }
+            }
+        };
+        for w in 1..=max_weight {
+            let mut qubits: Vec<usize> = (0..w).collect();
+            'combos: loop {
+                for assign in 0..3usize.pow(w as u32) {
+                    let mut p = PauliString {
+                        x: 0,
+                        z: 0,
+                        negative: false,
+                    };
+                    let mut a = assign;
+                    for &q in &qubits {
+                        let bit = 1u64 << (code.offset() + q);
+                        let choice = paulis(bit)[a % 3];
+                        p.x |= choice.x;
+                        p.z |= choice.z;
+                        a /= 3;
+                    }
+                    consider(p, &mut table);
+                }
+                // Advance to the next combination; when no position can
+                // move, every combination has been processed.
+                let mut i = w;
+                loop {
+                    if i == 0 {
+                        break 'combos;
+                    }
+                    i -= 1;
+                    if qubits[i] != i + n - w {
+                        qubits[i] += 1;
+                        for j in i + 1..w {
+                            qubits[j] = qubits[j - 1] + 1;
+                        }
+                        break;
                     }
                 }
             }

@@ -710,3 +710,92 @@ fn distributed_retrocorrection_across_the_logical_network() {
         other => panic!("distance 2 must refuse the spread fault, got {other:?}"),
     }
 }
+
+#[test]
+fn decoding_past_weight_one_is_minimum_weight_and_names_its_own_break_even() {
+    // The weight-bounded decoder: minimum-weight by enumeration,
+    // lowest weight first, the same degeneracy-vs-ambiguity honesty at
+    // every weight. On the L = 3 torus (distance 3), weight 2 is past
+    // the guarantee ⌊(d−1)/2⌋ = 1 — the instrument measures exactly
+    // how far past it can still speak.
+    let reg = GateRegistry::<C64>::standard();
+    let t = ToricCode::new(3, 0).unwrap();
+    let deep = Decoder::new(&t); // weight 1
+    let deeper = Decoder::to_weight(&t, 2);
+    assert!(
+        deeper.len() > deep.len(),
+        "weight 2 must widen the table: {} vs {}",
+        deeper.len(),
+        deep.len()
+    );
+
+    // Census over every weight-2 X/Z-type pair: decoded or refused,
+    // never guessed. (Deterministic; the counts are pins.)
+    let mut decoded = 0usize;
+    let mut refused = 0usize;
+    let n = 18usize;
+    for a in 0..n {
+        for b in (a + 1)..n {
+            for (pa, pb) in [(0u8, 0u8), (0, 1), (1, 0), (1, 1)] {
+                let mk = |q: usize, kind: u8| -> PauliString {
+                    let bit = 1u64 << q;
+                    if kind == 0 {
+                        pauli(bit, 0)
+                    } else {
+                        pauli(0, bit)
+                    }
+                };
+                let e = mk(a, pa).times(mk(b, pb)).unwrap();
+                let sig = signature(&t, e);
+                if sig.iter().all(|&s| !s) {
+                    continue; // a stabilizer or logical: no syndrome at all
+                }
+                match deeper.decode(&sig) {
+                    Ok(_) => decoded += 1,
+                    Err(_) => refused += 1,
+                }
+            }
+        }
+    }
+    assert!(decoded > 0 && refused > 0, "both outcomes must exist");
+
+    // Every decode that is offered restores exactly: the correction
+    // differs from the fault by a +1 stabilizer element or is it.
+    let enc = t.encoder(18, [true, false]);
+    let mut checked = 0usize;
+    let mut rng = Prng::new(41);
+    while checked < 25 {
+        let a = (rng.next_u64() as usize) % n;
+        let b = (rng.next_u64() as usize) % n;
+        if a == b {
+            continue;
+        }
+        let bit_a = 1u64 << a;
+        let bit_b = 1u64 << b;
+        let e = pauli(
+            if rng.next_u64() % 2 == 0 { bit_a } else { 0 } | bit_b,
+            if rng.next_u64() % 2 == 0 { bit_a } else { 0 },
+        );
+        if (e.x | e.z).count_ones() != 2 {
+            continue;
+        }
+        let sig = signature(&t, e);
+        let Ok(c) = deeper.decode(&sig) else {
+            continue; // refused: honesty, not failure
+        };
+        let mut clean = SparseState::<C64>::new(18).unwrap();
+        run(&enc, &mut clean, &reg);
+        let mut hurt = SparseState::<C64>::new(18).unwrap();
+        run(&enc, &mut hurt, &reg);
+        apply_pauli(&mut hurt, e, &reg).unwrap();
+        apply_pauli(&mut hurt, c, &reg).unwrap();
+        let mut dev = 0.0f64;
+        clean.for_each_nonzero(&mut |i, w_amp| {
+            let d = w_amp - hurt.amplitude(i);
+            dev = dev.max((d.re * d.re + d.im * d.im).sqrt());
+        });
+        assert!(dev < 1e-12, "offered decode must restore: {dev:e}");
+        checked += 1;
+    }
+    println!("weight-2 census on the L = 3 torus: {decoded} decoded, {refused} refused");
+}

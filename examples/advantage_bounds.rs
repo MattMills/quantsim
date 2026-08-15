@@ -186,6 +186,14 @@ fn main() -> Result<()> {
         |n| library::random_dyadic(n, 3 * n * n, 7),
         &[6, 8, 10, 12],
     ));
+    // The constraint dial: the same register, computed on THROUGH a
+    // code. Every physical axis prices the 8-per-node physical qubits;
+    // the logical axis prices the 2-per-node logical wires.
+    show(&advantage_scan(
+        "encoded toric (logical random)",
+        |n| library::logical_random(n / 8, 15 * (n / 8), 7),
+        &[8, 16, 24, 32],
+    ));
     println!("  measured dial findings: the SAME IQP core is a candidate with long-range");
     println!("  couplings and classical with nearest-neighbour ones (note mps on the");
     println!("  long-range family: time polynomial, memory exponential — one ledger is");

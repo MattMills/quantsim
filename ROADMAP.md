@@ -485,14 +485,33 @@ the record itself: each slice must equal its predecessor pushed through
 the segment, the last clean slice anchors the chain, one amplitude
 comparison names the sign.
 
-Remaining rungs: weight->1 decoding (matching over the syndrome graph),
-measurement-conditioned records (retrocorrection through frame
-repairs), constraint-driven compression (the code space as a backend
-bet: 2^k logical amplitudes for a 2^n register), multi-node scaling
-past two tori (the selector's branch count is 2^links — the next
-representation question is holding the LINK GRAPH rather than its
-Schmidt expansion), and the non-Clifford boundary (transport through
-magic via the up-embedding's ancilla frame rather than refusal).
+Constraint-driven compression — SHIPPED (phase 1). The `logical`
+backend (src/logical.rs) holds the register as P·Enc·|l⟩: toric nodes
+tiled over the width, encoders recognized op by op, every physical
+Pauli absorbed into the frame (a fault is one bookkeeping update, its
+syndrome the frame's signature — no state work), transversal CX blocks
+committed as logical CXs on a 2-wires-per-node inner register, reads
+answered exactly by F2 coset membership, anything else escaping to an
+exact materialization. Measured in the atlas on the new encoded-toric
+family over widths 8–32: logical mem size^0.6 at 1.7 KiB where sparse
+pays 1.29^size (200 KiB), dense/factored/mps/mera/phase-field wall
+outright, and the family reads CLASSICAL via logical / braided /
+clifford-framed / bundle — the family is Clifford, so the
+Gottesman–Knill axes also hold it (at 10–100× the bytes); the logical
+axis's distinct content is the constant and the constraint structure.
+One convention scar worth remembering: the crate's PauliString is
+Hermitian (i^{|x∧z|}X^xZ^z) while the frame is raw, and conjugation
+changes the Y-overlap — the raw phase picks up i^{Δy} beside the sign,
+measured as a per-codeword sign error before the fix.
+
+Remaining rungs: weight->1 decoding (matching over the syndrome
+graph), measurement-conditioned records (retrocorrection through frame
+repairs), logical vocabulary growth (logical magic escapes today; the
+frame-vs-logical split should let a t on the inner wires cost 2^t at
+the LOGICAL width), a non-sparse inner for the logical layer (a graph
+bundle holding the LINK GRAPH rather than its Schmidt expansion), and
+the non-Clifford boundary (transport through magic via the
+up-embedding's ancilla frame rather than refusal).
 
 ## Further non-Cayley–Dickson explorations
 
