@@ -88,6 +88,7 @@ pub mod dcs;
 pub mod discovery;
 pub mod dyadic;
 pub mod e8;
+pub mod engineered;
 pub mod error;
 pub mod exact;
 pub mod gates;
