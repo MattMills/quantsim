@@ -8,6 +8,7 @@ use quantsim::backend::{conjugate_by_step, CliffordStep, PauliString};
 use quantsim::gates::Pauli;
 use quantsim::prelude::*;
 use quantsim::query::{ConeResolver, Inner, Resolver, StateResolver};
+use quantsim::recursive::{RecursiveLattice, Shape};
 use quantsim::upembed::{self, UpEmbedResolver};
 
 fn word(n: usize, gates: usize, t_share: u64, seed: u64) -> Circuit<C64> {
@@ -792,4 +793,113 @@ fn the_spectrum_is_priced_before_the_sum_is_paid() {
         }
         other => panic!("expected the cluster wall, got {other:?}"),
     }
+}
+
+// ── the coupling topology as a separability axis ─────────────────────
+
+/// H wall, bonds, magic, then `rounds` further Clifford layers over the
+/// same bonds. The layers are what let an axis spread at all: `cz` is
+/// diagonal, so it commutes with the `Z` the gadget transports and a
+/// graph-state circuit alone never widens a cone.
+fn topology_circuit(
+    n: usize,
+    bonds: &[(usize, usize)],
+    magic: &[usize],
+    rounds: usize,
+) -> Circuit<C64> {
+    let mut c = Circuit::new(n);
+    for q in 0..n {
+        c.h(q);
+    }
+    for &(a, b) in bonds {
+        c.gate("cz", [], [a, b]);
+    }
+    for &p in magic {
+        c.t(p);
+    }
+    for _ in 0..rounds {
+        for q in 0..n {
+            c.h(q);
+        }
+        for &(a, b) in bonds {
+            c.gate("cz", [], [a, b]);
+        }
+    }
+    c
+}
+
+fn readout_terms(n: usize, bonds: &[(usize, usize)], magic: &[usize], rounds: usize) -> u128 {
+    let c = topology_circuit(n, bonds, magic, rounds);
+    let emb = upembed::gadgetize(&c).unwrap();
+    upembed::cluster_readout(&emb, &[(0usize, Pauli::Z)])
+        .map(|r| r.terms)
+        .unwrap_or(u128::MAX)
+}
+
+/// **Separability is a property of the coupling topology, not only of
+/// the doping profile.** `dcs_separability` varies *where* the magic
+/// sits; this varies only *which pairs the bonds join* — the width, the
+/// T-count, the T sites, the bond count and the Clifford depth are all
+/// held equal.
+///
+/// A nested block network keeps its magic clusters bounded as Clifford
+/// depth grows: the lattice is regular enough that transported lines
+/// re-cancel, so the cluster size oscillates instead of climbing.
+/// Random graphs of identical size climb toward saturation, and their
+/// readout cost with them — four orders of magnitude apart by depth 6.
+///
+/// Stated as a tendency, because it is one: the assertion below allows a
+/// random control to stay flat (seed 13 does), and requires only that
+/// most of them do not.
+#[test]
+fn the_block_topology_keeps_magic_separable_where_random_coupling_does_not() {
+    let lat = RecursiveLattice::nest(Shape::CUBE, 2).unwrap();
+    let n = lat.width();
+    let nested = lat.bond_pairs();
+    let mut magic: Vec<usize> = lat
+        .bonds()
+        .iter()
+        .filter(|b| b.depth == 0)
+        .flat_map(|b| [b.a, b.b])
+        .collect();
+    magic.sort_unstable();
+    magic.dedup();
+    assert_eq!((n, magic.len()), (64, 24));
+
+    // The structured network stays cheap at every depth measured, and
+    // nowhere near the flat 2^24 the T-count alone would predict.
+    let flat = 1u128 << magic.len();
+    for rounds in [2usize, 4, 6, 8] {
+        let terms = readout_terms(n, &nested, &magic, rounds);
+        assert!(
+            terms <= 128,
+            "nested network cost {terms} at depth {rounds}; it is meant to stay bounded"
+        );
+        assert!(terms * 100_000 < flat, "and far below the flat {flat}");
+    }
+
+    // Same width, same bond count, same magic, same depth — random
+    // coupling instead. Most seeds blow up.
+    let rounds = 6;
+    let nested_terms = readout_terms(n, &nested, &magic, rounds);
+    let mut blew_up = 0;
+    for seed in [7u64, 11, 13, 17] {
+        let mut rng = Prng::new(seed);
+        let mut bonds: Vec<(usize, usize)> = Vec::with_capacity(nested.len());
+        while bonds.len() < nested.len() {
+            let a = (rng.next_u64() % n as u64) as usize;
+            let b = (rng.next_u64() % n as u64) as usize;
+            if a != b {
+                bonds.push((a.min(b), a.max(b)));
+            }
+        }
+        if readout_terms(n, &bonds, &magic, rounds) > nested_terms * 1000 {
+            blew_up += 1;
+        }
+    }
+    assert!(
+        blew_up >= 3,
+        "only {blew_up} of 4 random controls exceeded the block network by 1000x; \
+         the separation is supposed to be a strong tendency"
+    );
 }
