@@ -9,6 +9,7 @@ mod common;
 use common::{assert_close, sim};
 use quantsim::backend::{BulkState, MosaicPolicy, MosaicState};
 use quantsim::prelude::*;
+use quantsim::recursive::{RecursiveLattice, Shape};
 
 /// Local expander-ish graph circuit (H wall + seeded long-range CZs).
 fn graph_circuit(n: usize, edges: usize, seed: u64) -> Circuit<C64> {
@@ -545,4 +546,136 @@ fn qft_controlled_phases_collapse_instead_of_merging() {
         m.memory_bytes()
     );
     assert_close(m.total_abs_sqr(), 1.0, 1e-9);
+}
+
+// ── structural merge: the graph of graphs, joined without materializing ──
+
+/// A block network of graph states — the `recursive` module's nested
+/// lattice, every bond a `cz` — held by a mosaic seeded with bundle
+/// regions.
+fn nested_graph_state(shape: Shape, depth: usize) -> (RecursiveLattice, MosaicState<C64>) {
+    let lat = RecursiveLattice::nest(shape, depth).unwrap();
+    let n = lat.width();
+    let reg: GateRegistry<C64> = GateRegistry::standard();
+    let h = reg.resolve("h").unwrap().matrix(&[]).unwrap();
+    let cz = reg.resolve("cz").unwrap().matrix(&[]).unwrap();
+    let mut m = MosaicState::<C64>::graph_seeded(n).unwrap();
+    for q in 0..n {
+        m.apply(&h, &[q]).unwrap();
+    }
+    for (a, b) in lat.bond_pairs() {
+        m.apply(&cz, &[a, b]).unwrap();
+    }
+    (lat, m)
+}
+
+/// **The merge is a graph union, not an enumeration.** Regions that are
+/// all bundles join by disjoint union of their graphs — exact, `O(n +
+/// |E|)` — where the support-gathering path would pay the product of
+/// the supports, and a graph state's support is *full*. The register
+/// stays one bundle region and still agrees with dense amplitude for
+/// amplitude.
+#[test]
+fn bundle_regions_merge_by_graph_union_not_by_enumeration() {
+    for (shape, depth) in [(Shape::CUBE, 1), (Shape::SQUARE, 2), (Shape::Cycle(3), 2)] {
+        let (lat, m) = nested_graph_state(shape, depth);
+        let n = lat.width();
+
+        let reg: GateRegistry<C64> = GateRegistry::standard();
+        let h = reg.resolve("h").unwrap().matrix(&[]).unwrap();
+        let cz = reg.resolve("cz").unwrap().matrix(&[]).unwrap();
+        let mut dense = DenseState::<C64>::new(n).unwrap();
+        for q in 0..n {
+            dense.apply(&h, &[q]).unwrap();
+        }
+        for (a, b) in lat.bond_pairs() {
+            dense.apply(&cz, &[a, b]).unwrap();
+        }
+        assert_matches_dense(&m, &dense, n, "nested graph state");
+
+        let layout = m.layout();
+        assert_eq!(layout.len(), 1, "the connected network is one region");
+        assert_eq!(layout[0].1, "bundle", "and it never left the bundle");
+
+        // Every merge on the way was structural — no support gather.
+        assert!(
+            m.events()
+                .iter()
+                .filter(|e| e.kind == "merge")
+                .all(|e| e.to == "bundle" && e.cause.contains("graph union")),
+            "a merge fell back to enumeration"
+        );
+        assert_eq!(m.conversions_bytes(), 0, "nothing was ever materialized");
+    }
+}
+
+/// **The width bound is measured, not declared.** The mosaic never
+/// forms a global `2^n` vector, so its construction is admitted against
+/// memory rather than cut off at the `u64` basis index — and a nested
+/// block network of 4096 qubits is held in a few hundred kilobytes,
+/// with 2^4096 the number a state vector would have needed.
+#[test]
+fn the_graph_seeded_mosaic_scales_past_any_state_vector() {
+    let mut last_bytes_per_qubit = f64::MAX;
+    for (shape, depth, want) in [
+        (Shape::CUBE, 2, 64usize),
+        (Shape::CUBE, 3, 512),
+        (Shape::SQUARE, 5, 1024),
+        (Shape::CUBE, 4, 4096),
+    ] {
+        let (lat, m) = nested_graph_state(shape, depth);
+        assert_eq!(lat.width(), want);
+        assert_eq!(m.layout().len(), 1);
+        assert_eq!(m.layout()[0].1, "bundle");
+
+        let per = m.memory_bytes() as f64 / want as f64;
+        assert!(
+            per < 128.0,
+            "{want} qubits cost {per} bytes each; the hold is meant to be linear"
+        );
+        // Linear, so the per-qubit cost does not climb with width.
+        assert!(
+            per <= last_bytes_per_qubit + 1.0,
+            "per-qubit cost rose from {last_bytes_per_qubit} to {per} at n={want}"
+        );
+        last_bytes_per_qubit = per;
+    }
+}
+
+/// The structure is free; the magic is the bill. One `t` on the network
+/// is refused by the bundle, the region migrates down the policy's
+/// fallbacks, and the result is still exact — the boundary is a
+/// measured migration, not a silent approximation.
+#[test]
+fn magic_still_leaves_the_bundle_by_refusal() {
+    let (lat, mut m) = nested_graph_state(Shape::SQUARE, 2);
+    let n = lat.width();
+    let reg: GateRegistry<C64> = GateRegistry::standard();
+    let h = reg.resolve("h").unwrap().matrix(&[]).unwrap();
+    let cz = reg.resolve("cz").unwrap().matrix(&[]).unwrap();
+    let t = reg.resolve("t").unwrap().matrix(&[]).unwrap();
+
+    let mut dense = DenseState::<C64>::new(n).unwrap();
+    for q in 0..n {
+        dense.apply(&h, &[q]).unwrap();
+    }
+    for (a, b) in lat.bond_pairs() {
+        dense.apply(&cz, &[a, b]).unwrap();
+    }
+
+    assert_eq!(m.layout()[0].1, "bundle");
+    m.apply(&t, &[0]).unwrap();
+    dense.apply(&t, &[0]).unwrap();
+    assert_matches_dense(&m, &dense, n, "after the magic");
+
+    assert_ne!(
+        m.layout()[0].1,
+        "bundle",
+        "the bundle cannot hold a T and must have said so"
+    );
+    let migrated = m
+        .events()
+        .iter()
+        .any(|e| e.kind == "migrate" && e.from == "bundle");
+    assert!(migrated, "the migration was not ledgered");
 }

@@ -78,7 +78,23 @@ use crate::error::{Error, Result};
 use crate::math::GateMatrix;
 use crate::scalar::Scalar;
 
-/// Maximum register width (basis indices are `u64`).
+/// Width past which the **enumeration** methods can no longer address
+/// the register: `Backend::amplitude` and `for_each_nonzero` are keyed
+/// by a `u64` basis index, so beyond this a global index does not
+/// exist.
+///
+/// This is **not** a capacity policy and **not** a construction bound.
+/// The mosaic never forms a global `2^n` vector — its cost is the sum
+/// of its regions — so a register wider than this is perfectly
+/// representable as long as its regions are held structurally (a
+/// bundle region costs `O(n + |E|)` at any width). Construction is
+/// admitted against *measured* memory by the [resource
+/// guard](crate::guard) instead, which is the crate's convention:
+/// width constants are structural, scale inhibition is measured.
+///
+/// Past this width the register is structural-only, and the
+/// `u64`-keyed methods yield nothing — the same boundary the bundle
+/// already has past its own materialization bound.
 pub const MOSAIC_MAX_QUBITS: usize = 63;
 
 /// How the mosaic chooses and changes representations.
@@ -160,17 +176,74 @@ impl<S: Scalar> MosaicState<S> {
     /// policy — the conformance-facing constructor; structure emerges
     /// from the gates.
     pub fn new(num_qubits: usize) -> Result<Self> {
-        if num_qubits == 0 || num_qubits > MOSAIC_MAX_QUBITS {
-            return Err(Error::TooManyQubits {
-                requested: num_qubits,
-                max: MOSAIC_MAX_QUBITS,
-            });
+        if num_qubits == 0 {
+            return Err(Error::InvalidState(
+                "a mosaic needs at least one qubit".into(),
+            ));
         }
+        // No width constant stands here. The mosaic's cost is the sum of
+        // its regions, never a global `2^n`, so the bound that belongs
+        // at construction is the measured one — see [`MOSAIC_MAX_QUBITS`]
+        // for what the `u64` basis index does and does not limit.
+        crate::guard::admit(
+            num_qubits.saturating_mul(std::mem::size_of::<Region<S>>() + 64),
+            "mosaic regions",
+        )?;
         let regions = (0..num_qubits)
             .map(|q| {
                 Ok(Region {
                     qubits: vec![q],
                     state: Box::new(SparseState::<S>::new(1)?) as Box<dyn Backend<S>>,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(MosaicState {
+            n: num_qubits,
+            regions,
+            policy: MosaicPolicy::default(),
+            events: Vec::new(),
+            conversions_bytes: 0,
+            collapses: 0,
+        })
+    }
+
+    /// `|0…0⟩` as per-qubit **bundle** regions: the same register,
+    /// seeded so that Clifford structure is held structurally from the
+    /// first gate rather than discovered after a materialization.
+    ///
+    /// The difference is not a constant factor. Seeded sparse, a block
+    /// network of graph states is merged by support enumeration, and a
+    /// graph state's support is full — so the register pays `2^w` for a
+    /// state whose graph is `O(n + |E|)`. Seeded here, the merges are
+    /// graph unions — the disjoint union of the regions' own graphs,
+    /// via [`PolarityBundle::tensor`](crate::bundle::PolarityBundle::tensor)
+    /// — and the network stays a bundle: the graph, and the graph of
+    /// graphs.
+    ///
+    /// The policy is unchanged, so the honesty of the representation is
+    /// too: the first non-Clifford gate is refused by name, the region
+    /// splits along its components so only the touched one leaves, and
+    /// that one migrates down the fallbacks. Structure while structure
+    /// lasts, and a measured migration when it stops.
+    pub fn graph_seeded(num_qubits: usize) -> Result<Self> {
+        if num_qubits == 0 {
+            return Err(Error::InvalidState(
+                "a mosaic needs at least one qubit".into(),
+            ));
+        }
+        // No width constant stands here. The mosaic's cost is the sum of
+        // its regions, never a global `2^n`, so the bound that belongs
+        // at construction is the measured one — see [`MOSAIC_MAX_QUBITS`]
+        // for what the `u64` basis index does and does not limit.
+        crate::guard::admit(
+            num_qubits.saturating_mul(std::mem::size_of::<Region<S>>() + 64),
+            "mosaic regions",
+        )?;
+        let regions = (0..num_qubits)
+            .map(|q| {
+                Ok(Region {
+                    qubits: vec![q],
+                    state: Self::construct("bundle", 1)?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -306,6 +379,13 @@ impl<S: Scalar> MosaicState<S> {
             "bulk" => Box::new(BulkState::<S>::new(width)?),
             "factored" => Box::new(FactoredState::<S>::new(width)?),
             "clifford-framed" => Box::new(CliffordFramedState::<S>::new(width)?),
+            "bundle" => {
+                let mut bundle = crate::bundle::PolarityBundle::new(width)?;
+                // The Backend contract starts at |0…0⟩; the bundle's own
+                // description convention starts at |+…+⟩.
+                <crate::bundle::PolarityBundle as Backend<S>>::reset(&mut bundle);
+                Box::new(bundle)
+            }
             other => {
                 return Err(Error::UnknownBackend(other.to_string()));
             }
@@ -343,6 +423,14 @@ impl<S: Scalar> MosaicState<S> {
         involved.dedup();
         if involved.len() == 1 {
             return Ok(involved[0]);
+        }
+        // Structure before materialization. The support gather below is
+        // an enumeration, and for a graph state that is `2^w` of exactly
+        // the thing the bundle exists in order not to store — so regions
+        // that are *all* bundles merge by graph union instead: `O(n+|E|)`,
+        // exact, no amplitude touched.
+        if let Some(keep) = self.try_structural_merge(&involved) {
+            return Ok(keep);
         }
         // One enumeration per region: the gathered supports feed both
         // the prediction and the merge (an earlier draft enumerated
@@ -436,6 +524,61 @@ impl<S: Scalar> MosaicState<S> {
             self.regions.remove(r);
         }
         Ok(keep)
+    }
+
+    /// Merge regions by **graph union** when every one of them is a
+    /// bundle — the structural counterpart of
+    /// [`try_split_components`](Self::try_split_components), and the
+    /// reason a block network of graph states stays a graph state.
+    ///
+    /// A graph state is the product of its components, so the union of
+    /// the involved bundles denotes exactly their tensor product: the
+    /// merge is `O(n + |E|)` and exact, where the enumerating path
+    /// costs the product of the supports — `2^w` for a graph state,
+    /// whose support is full. Returns the surviving region index, or
+    /// `None` when any region is held some other way (the caller then
+    /// takes the enumerating path).
+    fn try_structural_merge(&mut self, involved: &[usize]) -> Option<usize> {
+        use crate::bundle::PolarityBundle;
+        let mut joined: Option<PolarityBundle> = None;
+        let mut names = Vec::with_capacity(involved.len());
+        for &r in involved {
+            let bundle = self.regions[r]
+                .state
+                .as_any()
+                .downcast_ref::<PolarityBundle>()?;
+            names.push(self.regions[r].state.name().to_string());
+            joined = Some(match joined.take() {
+                None => bundle.clone(),
+                Some(acc) => acc.tensor(bundle).ok()?,
+            });
+        }
+        let joined = joined?;
+        let mut merged_qubits: Vec<usize> = Vec::new();
+        for &r in involved {
+            merged_qubits.extend(self.regions[r].qubits.iter().copied());
+        }
+        debug_assert_eq!(joined.sites(), merged_qubits.len());
+        self.events.push(MosaicEvent {
+            kind: "merge",
+            qubits: merged_qubits.clone(),
+            from: names.join("⊗"),
+            to: "bundle".to_string(),
+            cause: format!(
+                "graph union: {} sites, {} links, no amplitude enumerated",
+                joined.sites(),
+                joined.link_count()
+            ),
+        });
+        let keep = involved[0];
+        self.regions[keep] = Region {
+            qubits: merged_qubits,
+            state: Box::new(joined),
+        };
+        for &r in involved[1..].iter().rev() {
+            self.regions.remove(r);
+        }
+        Some(keep)
     }
 
     /// Split a region along structure its representation carries for
