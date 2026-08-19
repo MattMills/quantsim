@@ -442,3 +442,118 @@ fn degenerate_bundles_are_refused_by_reason() {
     let bundle = PolarityBundle::new(3).unwrap();
     assert!(bundle.inspect(7).is_err());
 }
+
+// ── the disjoint union: structure joined without materialization ─────
+
+/// **`tensor` denotes the product state**, and does it without ever
+/// forming one. Two bundles built independently join into the bundle
+/// whose graph is their disjoint union, and the state that bundle
+/// describes is exactly `|ψ_a⟩ ⊗ |ψ_b⟩` — checked against the product
+/// assembled by hand from the operands' own amplitudes, so the claim is
+/// measured against the operands rather than against a re-derivation of
+/// them.
+#[test]
+fn tensor_is_the_product_state() {
+    let cases: [(PolarityBundle, PolarityBundle); 3] = [
+        (ghz_bundle(3, false).unwrap(), ghz_bundle(4, true).unwrap()),
+        (ghz_bundle(4, true).unwrap(), ghz_bundle(3, false).unwrap()),
+        (
+            PolarityBundle::new(1).unwrap(),
+            ghz_bundle(5, false).unwrap(),
+        ),
+    ];
+    for (a, b) in cases {
+        let n1 = a.sites();
+        let joined = a.tensor(&b).unwrap();
+        assert_eq!(joined.sites(), n1 + b.sites());
+
+        // The product, assembled from the operands' amplitudes: site `s`
+        // of `b` lands at `n1 + s`, so index = i_a | (i_b << n1).
+        let (sa, sb) = (a.to_state().unwrap(), b.to_state().unwrap());
+        let mut product = Vec::new();
+        sa.for_each_nonzero(&mut |ia, va| {
+            sb.for_each_nonzero(&mut |ib, vb| product.push((ia | (ib << n1), va * vb)));
+        });
+        let mut want = DenseState::<C64>::new(joined.sites()).unwrap();
+        want.load(&product).unwrap();
+
+        let got = joined.to_state().unwrap();
+        let dev = max_amplitude_deviation(got.as_ref(), &want);
+        assert!(dev < 1e-12, "tensor deviated from the product by {dev:e}");
+    }
+}
+
+/// The union is **associative** and keeps the operands' components
+/// apart: nothing crosses between them, because a graph state factors
+/// exactly along its components and the join adds no edge.
+#[test]
+fn tensor_is_associative_and_adds_no_edge() {
+    let a = ghz_bundle(2, false).unwrap();
+    let b = ghz_bundle(3, true).unwrap();
+    let c = PolarityBundle::new(2).unwrap();
+
+    let left = a.tensor(&b).unwrap().tensor(&c).unwrap();
+    let right = a.tensor(&b.tensor(&c).unwrap()).unwrap();
+    assert_eq!(left.sites(), right.sites());
+    assert_eq!(left.link_signature(), right.link_signature());
+    assert_eq!(
+        max_amplitude_deviation(
+            left.to_state().unwrap().as_ref(),
+            right.to_state().unwrap().as_ref()
+        ),
+        0.0,
+        "the two groupings must be the same object, not merely close"
+    );
+
+    // Link counts add, and the components stay separate.
+    assert_eq!(
+        left.link_count(),
+        a.link_count() + b.link_count() + c.link_count()
+    );
+    let joined = a.tensor(&b).unwrap();
+    assert_eq!(joined.graph_components().len(), 2);
+    for s in 0..a.sites() as u32 {
+        for t in a.sites() as u32..joined.sites() as u32 {
+            assert!(!joined.linked(s, t), "the union invented a link {s}–{t}");
+        }
+    }
+}
+
+/// `restrict` is the structural inverse: splitting a joined bundle back
+/// along its components returns the operands.
+#[test]
+fn restrict_inverts_tensor_on_the_components() {
+    let a = ghz_bundle(3, true).unwrap();
+    let b = ghz_bundle(4, false).unwrap();
+    let joined = a.tensor(&b).unwrap();
+
+    let comps = joined.graph_components();
+    assert_eq!(comps.len(), 2);
+    let back_a = joined.restrict(&comps[0]).unwrap();
+    let back_b = joined.restrict(&comps[1]).unwrap();
+    assert_eq!(back_a.link_signature(), a.link_signature());
+    assert_eq!(back_b.link_signature(), b.link_signature());
+}
+
+/// The union is `O(n + |E|)`, so it holds a register far past anything
+/// a state vector could address — the property the mosaic's structural
+/// merge is built on.
+#[test]
+fn tensor_joins_registers_no_state_vector_could_hold() {
+    let mut joined = PolarityBundle::new(1).unwrap();
+    for _ in 0..12 {
+        joined = joined.tensor(&joined.clone()).unwrap();
+    }
+    assert_eq!(joined.sites(), 1 << 12);
+    // Doubling a linkless bundle keeps it linkless; the point is the width.
+    assert_eq!(joined.link_count(), 0);
+
+    let mut ring = PolarityBundle::new(1000).unwrap();
+    for i in 0..1000u32 {
+        ring.link(i, (i + 1) % 1000).unwrap();
+    }
+    let two = ring.tensor(&ring).unwrap();
+    assert_eq!(two.sites(), 2000);
+    assert_eq!(two.link_count(), 2 * ring.link_count());
+    assert_eq!(two.graph_components().len(), 2);
+}

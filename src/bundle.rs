@@ -193,6 +193,42 @@ pub enum BundleOp {
     },
 }
 
+/// Re-index a journalled op onto sites shifted by `by` — the
+/// bookkeeping behind [`PolarityBundle::tensor`], so a joined bundle
+/// still replays from `new`.
+fn shift_op(op: &BundleOp, by: u32) -> BundleOp {
+    match op {
+        BundleOp::Link(a, b) => BundleOp::Link(a + by, b + by),
+        BundleOp::Unlink(a, b) => BundleOp::Unlink(a + by, b + by),
+        BundleOp::Spin(s, v) => BundleOp::Spin(s + by, *v),
+        BundleOp::Reframe(s, f) => BundleOp::Reframe(s + by, *f),
+        BundleOp::Vertex(s, v) => BundleOp::Vertex(s + by, *v),
+        BundleOp::LocalComplement(s) => BundleOp::LocalComplement(s + by),
+        // A swap names a *position* in the generator ordering, and the
+        // joined ordering places `other`'s block after `self`'s, so the
+        // same shift is the right one.
+        BundleOp::SwapOrder(p) => BundleOp::SwapOrder(p + by),
+        BundleOp::Collapse {
+            site,
+            outcome,
+            neighbours,
+        } => BundleOp::Collapse {
+            site: site + by,
+            outcome: *outcome,
+            neighbours: *neighbours,
+        },
+        BundleOp::Merge {
+            into,
+            absorbed,
+            internal,
+        } => BundleOp::Merge {
+            into: into + by,
+            absorbed: absorbed.iter().map(|a| a + by).collect(),
+            internal: *internal,
+        },
+    }
+}
+
 /// A read-only view of one fiber and its immediate twist structure.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FiberView {
@@ -325,6 +361,12 @@ impl PolarityBundle {
         })
     }
 
+    /// Twist links currently held — the `|E|` the bundle's `O(n + |E|)`
+    /// storage is linear in.
+    pub fn link_count(&self) -> usize {
+        self.link_count
+    }
+
     /// Sites in the base.
     pub fn sites(&self) -> usize {
         self.fibers.len()
@@ -415,6 +457,77 @@ impl PolarityBundle {
             out.links[new].sort_unstable();
         }
         out.link_count = out.links.iter().map(|l| l.len()).sum::<usize>() / 2;
+        Ok(out)
+    }
+
+    /// The **disjoint union** of two bundles: `self`'s sites keep their
+    /// indices and `other`'s follow, shifted by `self.sites()`.
+    ///
+    /// This is the structural inverse of [`restrict`](Self::restrict)
+    /// and it is exact for the same reason — a graph state is the
+    /// product of its components, so the union of two bundles is the
+    /// disjoint union of their graphs. `O(n + |E|)`, and **no amplitude
+    /// is ever enumerated**: materializing to combine two graph states
+    /// would cost `2^{n₁+n₂}` to rebuild something already known
+    /// structurally, which is the whole reason the bundle exists.
+    ///
+    /// The journals concatenate (with `other`'s site indices shifted),
+    /// so the result replays from `new` exactly as its operands do.
+    ///
+    /// ```
+    /// use quantsim::bundle::PolarityBundle;
+    ///
+    /// let mut a = PolarityBundle::new(2).unwrap();
+    /// a.link(0, 1).unwrap();
+    /// let mut b = PolarityBundle::new(2).unwrap();
+    /// b.link(0, 1).unwrap();
+    ///
+    /// let joined = a.tensor(&b).unwrap();
+    /// assert_eq!(joined.sites(), 4);
+    /// assert!(joined.linked(0, 1) && joined.linked(2, 3));
+    /// // and nothing crosses: the union is two components, not one.
+    /// assert!(!joined.linked(1, 2));
+    /// assert_eq!(joined.graph_components().len(), 2);
+    /// ```
+    pub fn tensor(&self, other: &PolarityBundle) -> Result<PolarityBundle> {
+        let n1 = self.fibers.len();
+        let n2 = other.fibers.len();
+        if n1 + n2 > u32::MAX as usize {
+            return Err(Error::InvalidState(format!(
+                "{n1} + {n2} sites exceeds the u32 site index"
+            )));
+        }
+        let shift = n1 as u32;
+        let mut out = PolarityBundle::new(n1 + n2)?;
+        out.fibers[..n1].copy_from_slice(&self.fibers);
+        out.fibers[n1..].copy_from_slice(&other.fibers);
+        out.links[..n1].clone_from_slice(&self.links);
+        for (s, links) in other.links.iter().enumerate() {
+            out.links[n1 + s] = links.iter().map(|&nb| nb + shift).collect();
+        }
+        out.order = self
+            .order
+            .iter()
+            .copied()
+            .chain(other.order.iter().map(|&s| s + shift))
+            .collect();
+        out.position = self
+            .position
+            .iter()
+            .copied()
+            .chain(other.position.iter().map(|&p| p + shift))
+            .collect();
+        // The two orderings act on disjoint blocks, so the concatenated
+        // permutation's sign is the product of theirs.
+        out.chirality = self.chirality * other.chirality;
+        out.link_count = self.link_count + other.link_count;
+        out.absorbed_links = self.absorbed_links + other.absorbed_links;
+        out.journal = self
+            .journal
+            .iter()
+            .cloned()
+            .chain(other.journal.iter().map(|op| shift_op(op, shift)))
+            .collect();
         Ok(out)
     }
 
