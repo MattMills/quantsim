@@ -240,6 +240,46 @@ impl Topology {
         Self::custom(n, &edges).expect("hypercube edges are valid")
     }
 
+    /// **The dimensional lift**: `G □ K₂` — two copies of this fabric
+    /// joined by a perfect matching, site `v` to site `v + n`.
+    ///
+    /// On a hypercube this is exactly the next hypercube
+    /// (`hypercube(d).lift() == hypercube(d + 1)`), which is what makes a
+    /// cubic register *tesseractable*: the lift is **conservative**, so
+    /// every existing coupler survives and the register that was there is
+    /// still there, embedded as the lower half. Diameter rises by exactly
+    /// one and degree by exactly one, however wide the fabric already is.
+    ///
+    /// It is defined for any topology, not only hypercubes — the
+    /// Cartesian product with an edge always exists. What is special
+    /// about the hypercube is only that the lift lands back in the same
+    /// family.
+    ///
+    /// The crossing edges are vertex-disjoint by construction (each site
+    /// gains exactly one partner), so the cut between the two copies is a
+    /// perfect matching — the regime where the Schur bound on entanglement
+    /// across that cut is attained rather than merely bounded (see
+    /// [`crate::cut::CutGraph::is_matching`]).
+    pub fn lift(&self) -> Result<Self> {
+        let n = self.n;
+        let doubled = n.checked_mul(2).ok_or_else(|| {
+            Error::InvalidState(format!("lift: {n} sites doubled overflows usize"))
+        })?;
+        let mut edges = Vec::with_capacity(2 * self.num_edges() + n);
+        for (a, nbrs) in self.adjacency.iter().enumerate() {
+            for &b in nbrs {
+                if a < b {
+                    edges.push((a, b));
+                    edges.push((a + n, b + n));
+                }
+            }
+        }
+        for v in 0..n {
+            edges.push((v, v + n));
+        }
+        Topology::custom(doubled, &edges)
+    }
+
     /// Maximum vertex degree — 3 for heavy-hex, 4 for the diagonal
     /// lattice, `n − 1` for all-to-all.
     pub fn max_degree(&self) -> usize {
