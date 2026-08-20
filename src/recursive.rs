@@ -160,6 +160,31 @@ impl Shape {
         out
     }
 
+    /// **The dimensional lift**: one more axis.
+    ///
+    /// [`Shape::CUBE`] lifts to the tesseract, and a `dim`-cube to a
+    /// `dim+1`-cube — the block doubles, every existing bond survives,
+    /// and each old site gains exactly one partner. Only hypercubes lift:
+    /// the operation is `G □ K₂` and a cycle or a clique lands outside
+    /// its own family, so those refuse by name rather than returning
+    /// something that is no longer the shape it claims to be.
+    /// [`Topology::lift`](crate::backend::Topology::lift) is the same move
+    /// on a register fabric, where it is defined for every topology.
+    pub fn lift(self) -> Result<Shape> {
+        match self {
+            Shape::Hypercube(dim) => {
+                let lifted = Shape::Hypercube(dim + 1);
+                lifted.validate()?;
+                Ok(lifted)
+            }
+            other => Err(Error::InvalidState(format!(
+                "lift: {other:?} is not a hypercube; G □ K₂ leaves its family. \
+                 Lift the register fabric instead (Topology::lift), which is \
+                 defined for every topology."
+            ))),
+        }
+    }
+
     /// Reject degenerate shapes: a block needs at least two sites, and
     /// a cycle at least three (two sites in a "cycle" is one bond
     /// counted twice).
