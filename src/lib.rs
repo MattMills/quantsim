@@ -128,6 +128,7 @@ pub mod support;
 pub mod surface;
 pub mod sweep;
 pub mod upembed;
+pub mod volqudit;
 
 pub use backend::{AdaptiveState, Backend, BackendRegistry, DenseState, SparseState};
 pub use circuit::{BoundCircuit, BoundGate, Circuit, GateKernel, Op};

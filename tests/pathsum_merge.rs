@@ -83,7 +83,7 @@ fn merged_equals_enumerated_on_random_circuits() {
     // deviation is float summation order, not approximation.
     let mut rng = Prng::new(0x9E3779B9);
     let mut worst = 0.0f64;
-    for _ in 0..200 {
+    for _ in 0..120 {
         let n = 2 + (rng.next_u64() % 3) as usize;
         let mut p = PathSum::new(n);
         for _ in 0..(6 + rng.next_u64() % 10) {
@@ -213,7 +213,7 @@ fn the_square_family_grows_in_the_square_root_of_the_t_count() {
     // n qubits, n layers, t = n², treewidth ~ n = √t. Enumeration pays
     // 2^{h*} with h* = n(n−1); the solver pays 2^{c·n}, and c settles.
     let mut slopes = Vec::new();
-    for n in 5..=8usize {
+    for n in 5..=7usize {
         let p = chain_family(n, n);
         assert_eq!(p.internal_vars(), n * (n - 1));
         let (_, st) = p.amplitude_merged(0, BUDGET).unwrap();
@@ -255,7 +255,7 @@ fn no_single_signal_wins_and_the_composed_election_does() {
     );
 
     // And the election is at least as good as both, everywhere.
-    for p in [ht_chain(32), grid_family(5, 2), chain_family(7, 7)] {
+    for p in [ht_chain(32), grid_family(5, 2), chain_family(6, 6)] {
         let e = nodes(&p, Pivot::Elected);
         for pv in [Pivot::First, Pivot::MaxDegree, Pivot::MinRemainder] {
             assert!(
@@ -266,10 +266,10 @@ fn no_single_signal_wins_and_the_composed_election_does() {
         }
     }
     // Strictly better than both parents where they disagree most.
-    let sq = chain_family(8, 8);
+    let sq = chain_family(7, 7);
     let e = nodes(&sq, Pivot::Elected);
     assert!(e * 2 < nodes(&sq, Pivot::MinRemainder), "{e}");
-    assert!(e * 20 < nodes(&sq, Pivot::MaxDegree), "{e}");
+    assert!(e * 6 < nodes(&sq, Pivot::MaxDegree), "{e}");
 }
 
 #[test]

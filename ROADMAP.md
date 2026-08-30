@@ -910,6 +910,120 @@ Remaining rungs:
   rather than by re-reducing the whole would be the first thing here
   to speak to that question at all.
 
+## Geometric qudits (the obstruction and its boundary) — SHIPPED (core)
+
+`volqudit` builds the three geometry classes of the supplied object /
+frame / effective formalism on one ambient object: `stitch::Volume`,
+the phase-free Pauli group as an 𝔽₂ space under its symplectic form,
+whose meet, join and centraliser cost `O(rank · n)` and never mention
+`2ⁿ`.
+
+**The qudit is the obstruction.** Put an isotropic flat `V` into that
+space — an abelian subgroup, a stabilizer, a *constraint* — and three
+things follow at once, none of them declared:
+
+* `V` is the **position**: a flat, `O(r·n)` bits, movable;
+* `V^⊥ = centraliser(V)` is the **bounded boundary**, rank `2n − r`,
+  always containing `V`;
+* `V^⊥/V` carries a non-degenerate form of rank `2h`, `h = n − r`, so
+  `levels = 2^h`.
+
+That is the sheet-and-obstruction picture made exact, and the numbers
+come off the codes rather than off the claim: toric L=2 and L=3 both
+`h = 2`, surface d=3 and d=5 both `h = 1`, boundary rank `2n − r` in
+every case, `V ⊆ V^⊥` asserted, and each conjugate pair asserted to
+anticommute with its partner while commuting with the whole frame.
+`orthogonalize` on the boundary returns the frame as its radical and
+the `h` hyperbolic pairs as the qudit's logicals — *found*, not
+supplied. A non-isotropic frame is refused by name: it carves nothing
+and bounds nothing, and is not projected onto the nearest legal flat.
+
+**`A_V ⊊ End(V)` is forced, not chosen.** The geometry admits the
+logical Pauli group and nothing else, so naming an admissible
+operation costs `2h` **bits** while naming a general element of `End`
+on the same level space costs `4^h` **complex numbers** — 16 bits
+against 65,536 amplitudes for the same 256-level qudit. The theory's
+"large relational state volume, small admissible operator volume" is
+the shape, and `OperativeCost` reports both columns in their own units.
+
+**Motion, and holonomy from motion.** A Clifford is a symplectic map,
+so `transport` carries flats to flats: the frame moves and the
+signature does not, which is the frame/object covariance condition,
+asserted rather than assumed. A transport that returns the frame is a
+**loop**, and what the frame bounds need not come back with it.
+`holonomy` reports the induced action on `V^⊥/V`, `curvature` is
+`H(γ) − I`, and `holonomy_search` finds the non-flat loops by
+enumeration rather than by construction — which matters, because
+constructing one needs a symmetry you may not have while enumerating
+needs only a budget. On a free qubit the search recovers the whole of
+`SL(2,𝔽₂) ≅ S₃` — orders 2 and 3 — from motion alone; on the GHZ frame,
+which far fewer words fix, it still finds a curvature-1 loop of order
+2. Flat loops report curvature 0 and are excluded; the holonomy of an
+open path is refused, because it is not defined.
+
+**Frame in frame.** `nest` makes one qudit's ambient another's level
+space, with the inner frame priced in the outer's logical coordinates:
+`O(h)` bits rather than `O(n)`, because the outer geometry already
+paid for the reduction. **Promotion** exposes only the interface, and
+two structurally different frames with equal signatures promote to the
+same atom. Interface sufficiency is a conjecture in the theory and
+stays one here — what this adds is that it is now *checkable* at this
+scale rather than only stated.
+
+**The interior, with its control.** Split the ambient into slots and
+the face map `d_i` asks the **coset** — is there any representative of
+this logical class missing slot `i`? — so the answer cannot depend on
+how the basis happened to be spelled. Measured:
+
+```
+compound              h   faces        skeleton   interior
+3 free qubits         3   [4, 4, 4]           6          0
+GHZ frame             1   [1, 1, 1]           1          1
+toric L=2, halves     2   [2, 2]              2          2
+```
+
+The first row is the control and it is the important one: independent
+qudits side by side have every logical class representable on a single
+slot, so every face sees it, the skeleton is all of `V^⊥/V`, and the
+vol is **empty**. The GHZ frame keeps exactly one dimension no face
+can see — one member of its conjugate pair pushes onto a single qubit
+by multiplying in a stabilizer, and its partner `XXX` cannot be pushed
+off any qubit at all. That surviving dimension is the vol, in the
+theory's sense, computed rather than asserted. `is_brunnian` tests the
+stronger condition (nonzero interior, *every* face empty) and reports
+false on all three — the faces here are incomplete, not empty.
+
+Everything above is 𝔽₂ mask algebra: a `2^36`-level qudit on 40 qubits
+is 320 bits and 69 µs, and nothing anywhere materializes `2ⁿ`.
+
+**Honest scope.** The level space is a *Pauli* geometry, so the
+admissible algebra is the logical Pauli group and not the full logical
+unitary group; magic lives outside it, exactly as it does in `retro`
+and `logical`. Nothing here simulates a state — this is the geometry
+of where a qudit is and what it bounds, not an amplitude carrier.
+
+Remaining rungs:
+
+- **A Brunnian frame.** The construction can express the condition and
+  nothing tested so far satisfies it. Searching the frame lattice for
+  one — nonzero interior with every proper face empty — is the direct
+  test of the theory's operative-interiority claim, and its absence at
+  small `n` would itself be a result.
+- **The operative interior.** `I_op(V) = ∩ ker ∂_i^op` with
+  `∂_i^op(T) = d_i ∘ T ∘ s_i` is the operator-level analogue of the
+  vol, and it is not built. A logical operation that acts at full
+  arity and is invisible on every face is the object the braid
+  material points at, and this module now has the faces to define it.
+- **Effective geometry.** The third class of the formalism —
+  `Φ(P, U) = PU(I − P)`, the dynamic-sufficiency obstruction, and the
+  throat rank `min_k C_k` — has no representative here. `causal` and
+  `cut` carry pieces of it; a `VolQudit`-shaped closure operator with
+  `Im Γ` as the effective geometry would complete the trio.
+- **The operative tower.** `V_{k+1} = ΠΓ(V_k ⊠ V_k^∨)` and the fixed
+  point `σ(op_atom(V)) ≅ σ(V)`. `nest` gives one direction of this;
+  the self-compound with the dual, and whether any frame is a fixed
+  point of it, is the recursion the theory is actually named for.
+
 ## Further non-Cayley–Dickson explorations
 
 `SplitComplex` establishes the pattern (indefinite Born form surfaced through

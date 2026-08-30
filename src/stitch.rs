@@ -382,6 +382,18 @@ impl Volume {
         self.rank() == self.n && self.is_isotropic()
     }
 
+    /// Whether two volumes are the **same subspace**, independent of
+    /// how each was spelled.
+    ///
+    /// `PartialEq` compares the stored echelon rows, which depend on
+    /// insertion order; this compares the spaces. Equal rank plus
+    /// mutual containment is the whole test.
+    pub fn is_same(&self, other: &Volume) -> bool {
+        self.n == other.n
+            && self.rank() == other.rank()
+            && other.basis().iter().all(|p| self.contains(*p))
+    }
+
     /// The dimension of the region this volume carves: `2^{n − rank}`,
     /// which is `1` exactly when it is maximal isotropic.
     pub fn carves(&self) -> u128 {

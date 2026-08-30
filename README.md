@@ -1056,6 +1056,51 @@ measure rather than hide.
   than of the solver. Every policy returns the same amplitude; the
   budget refuses **by name** rather than quietly enumerating.
 
+- **Geometric qudits** ([`volqudit`](src/volqudit.rs)) — a qudit is
+  normally a declaration (`d` levels, a label space `ℂ^d` with no
+  geometry inside it). This derives one instead, from a single ambient
+  object: [`stitch::Volume`](src/stitch.rs), the phase-free Pauli group
+  as an 𝔽₂ space under its symplectic form. Put an **isotropic flat**
+  `V` into it — a constraint, an obstruction — and three things follow
+  at once. `V` is the qudit's **position**, `O(r·n)` bits and movable;
+  `V^⊥` is the **bounded boundary** it induces, rank `2n − r`, always
+  containing `V`; and `V^⊥/V` carries a non-degenerate form of rank
+  `2h` with `h = n − r`, so `levels = 2^h` — read off the geometry,
+  never declared. Measured against every code in the crate: toric L=2
+  and L=3 → `h = 2`, surface d=3 and d=5 → `h = 1`, boundary rank
+  `2n − r` in every case, and the conjugate pairs come back from
+  [`orthogonalize`](src/stitch.rs) with the radical *being* the frame.
+  A non-isotropic frame is refused by name — it carves nothing and
+  bounds nothing.
+  **The admissible algebra is small because the geometry says so**, not
+  because it was chosen: naming an admissible operation costs `2h`
+  *bits*, naming a general element of `End` on the same level space
+  costs `4^h` *complex numbers* — 16 bits against 65,536 amplitudes for
+  the same 256-level qudit.
+  **Motion and holonomy.** A Clifford is a symplectic map, so
+  `transport` moves the frame while the signature stays fixed —
+  covariance, asserted. A transport that returns the frame is a
+  **loop**, and what the frame bounds need not come back with it:
+  `holonomy` reports the induced action on `V^⊥/V`, `curvature` is
+  `H(γ) − I`, and `holonomy_search` *finds* the non-flat loops by
+  enumeration rather than construction — on a free qubit it recovers
+  the whole of `SL(2,𝔽₂) ≅ S₃`, orders 2 and 3, from motion alone. An
+  open path's holonomy is refused, not approximated.
+  **Frame-in-frame** (`nest`): a qudit whose ambient *is* another
+  qudit's level space, with the inner frame priced in `O(h)` rather
+  than `O(n)` because the outer geometry already paid. **Promotion**
+  exposes only the interface, and two structurally different frames
+  with equal signatures promote to the same atom.
+  **And the interior**: split the ambient into slots and the face map
+  `d_i` asks the *coset* — is there any representative missing slot
+  `i`? — so the answer does not depend on how the basis was spelled.
+  Independent qudits side by side have interior rank **0** (the
+  control: every logical class sits on one slot). The GHZ frame keeps
+  exactly **1** dimension no face can see. A toric patch split in
+  halves keeps **2**. All of it is 𝔽₂ mask algebra: a 2^36-level qudit
+  on 40 qubits is 320 bits and 69 µs, and nothing anywhere materializes
+  `2^n`.
+
 ## Quick start
 
 ```rust
@@ -1146,7 +1191,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 975 tests (88 unit + 879 across eighty-two
+`cargo test` runs 989 tests (88 unit + 893 across eighty-three
 integration suites + 8 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1644,6 +1689,20 @@ entirely trivial accessors and defensive guards:
   property of the circuit; and the election, with each single signal
   asserted to lose to the other somewhere and the composed one
   asserted to beat both everywhere.
+- **volqudit** — the geometric-qudit suite: `h` and the level count
+  derived off the centraliser and asserted against every code's known
+  logical count, with `V ⊆ V^⊥`, boundary rank `2n − r`, and each
+  conjugate pair asserted to anticommute with its partner and commute
+  with the whole frame; a non-isotropic frame refused by name; the
+  admissible algebra's bits asserted against `End`'s parameters;
+  transport asserted to move the frame and preserve the signature;
+  holonomy recovering orders 2 and 3 on a free qubit, a non-flat loop
+  found on a constrained one, flat loops at curvature 0, and an open
+  path refused; nesting with the inner frame priced in the outer's
+  logical coordinates; promotion collapsing two different frames to one
+  atom; and the interior — **0** for independent qudits (the control),
+  **1** for GHZ, **2** for a split toric patch — with the whole thing
+  asserted to run at 40 qubits in under half a second.
 - **stitch** — the symplectic sharding suite: the normal form
   recovering `(r, h)` off the generators of four codes (toric L ∈ {2,3},
   surface d ∈ {3,5}) with the radical asserted isotropic *and* central
@@ -2160,6 +2219,12 @@ src/
                  across (reach per unit cost of the native cross-scale
                  operators; the coset class they cannot leave)
   causal.rs      backward cones, causal diamonds, dual-time resolution
+  volqudit.rs    geometric qudits: an isotropic flat as the qudit's
+                 position, the boundary it bounds, levels 2^h read off
+                 the geometry, transport and holonomy (a logical
+                 operation from motion), frame-in-frame nesting,
+                 promotion to an interface, and the compound interior
+                 no face can see
   stitch.rs      sharding a register by its own symplectic form:
                  volumes as F2 subspaces (meet, join, centraliser =
                  normalizer, isotropic = stabilizer), the symplectic
@@ -2234,7 +2299,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           eighty-two integration suites (see Testing)
+tests/           eighty-three integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -2284,7 +2349,9 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  amplitudes, and where the exponential went),
                  magic_mosaic (what collapses in the path-sum residual,
                  what does not, and why the branching election has to
-                 be measured)
+                 be measured),
+                 geometric_qudits (the obstruction and its boundary,
+                 motion, holonomy, frame-in-frame, and the interior)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at
