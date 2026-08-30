@@ -978,8 +978,47 @@ measure rather than hide.
   dark and fine alone leaves 4, the two crossed close all 24
   byte-exactly in 2 rounds — and the layer that finishes it is the code
   that was already protecting the qubits. Honest scope: the vocabulary
-  is Clifford, the loss and delays are injected rather than measured
-  off a socket, and it buys fault tolerance and bandwidth — not speed.
+  is Clifford, and the loss and delays are injected rather than
+  measured off a socket. This module distributes the **control plane**;
+  sharding the register itself is [`stitch`](src/stitch.rs), below.
+
+- **Sharding a register by its own symplectic form**
+  ([`stitch`](src/stitch.rs)) — the phase-free Pauli group is an 𝔽₂
+  space under an *alternating* form, so it has a symplectic normal
+  form: `radical ⊥ H₁ ⊥ … ⊥ H_h`. The radical is isotropic — an
+  abelian subgroup, which is to say a **stabilizer** — and each `Hᵢ` is
+  a hyperbolic pair `(eᵢ, fᵢ)` that anticommutes. Two consequences,
+  and together they are a sharding rule. **The radical carves**: `r`
+  commuting directions cut the `2ⁿ` module to `2^{n−r}`. **The pairs
+  cannot**, and that is exactly why they *partition*: `eᵢ` and `fᵢ`
+  anticommute, so no abelian subgroup — and therefore no node — holds
+  both, each pair forces a binary choice, and the `2^h` resulting
+  maximal isotropic extensions have regions meeting in zero. Their sum
+  is direct: `2^h · 2^{n−r−h} = 2^{n−r}`, exact.
+  `orthogonalize` reads `r` and `h` **off the code's own generators**
+  in `O(rank²·n)` with no `2ⁿ` anywhere — toric L=2 → `(r, h) = (6, 2)`,
+  L=3 → `(16, 2)`, surface d=3 → `(8, 1)`, d=5 → `(24, 1)`: the radical
+  *is* the stabilizer group and the pairs *are* the logical qubits,
+  found rather than told. And the direct sum is checked on
+  **amplitudes**, not on dimensions: the four toric slices are prepared
+  as actual states, shown to lie in the code space, shown to be a frame
+  rather than an orthogonal basis (Gram 1, 1/√2, 1/2 — the tensor of
+  `|0⟩/|+⟩` per axis), and a random code state projected out of a random
+  vector reassembles from them to < 1e-9.
+  **Where the exponential goes** is the point. Per node: one tableau,
+  polynomial in `n`, *not mentioning the node count* — 1024 nodes and
+  32 nodes on the same register differ by 40 bytes each. Network total:
+  `2^h · O(n²)`, exponential in the **logical** count, not the register
+  width, because the code already pulled the exponent from `n` down to
+  `k = n − r`. At `n = 30, r = 20, h = 10`: 1024 nodes × 256 B = 262 kB
+  against 17.2 GB monolithic. The price, stated: each node carries a
+  whole tableau to hold one coefficient, `O(n²)` bytes where a bare
+  `2^k` amplitude vector holds 16 — bought in exchange for a per-node
+  object that is polynomial, closed under Clifford evolution with no
+  communication, and independent of every other node. And `h` is
+  **hidden in the dimension**: two stitches of region dimension 1024
+  can be 8 slices or 128, so the object's size says nothing about how
+  many pieces it is in.
 
 ## Quick start
 
@@ -1071,7 +1110,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 958 tests (88 unit + 862 across eighty
+`cargo test` runs 966 tests (88 unit + 870 across eighty-one
 integration suites + 8 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1558,6 +1597,23 @@ entirely trivial accessors and defensive guards:
   closed form `Σ(√2)^j`; everything certified against the exact D[ω]
   ring and Ball containment, and the whole family swept through the
   benchmark harness over ten backends.
+- **stitch** — the symplectic sharding suite: the normal form
+  recovering `(r, h)` off the generators of four codes (toric L ∈ {2,3},
+  surface d ∈ {3,5}) with the radical asserted isotropic *and* central
+  in the span and every hyperbolic pair asserted anticommuting; every
+  selection maximal isotropic of rank `n` carving dimension exactly 1,
+  every pair of selections joined asserted *non*-isotropic (nothing is
+  fixed by two slices) and their meet always containing the radical
+  and never everything; the centraliser returning the normalizer at
+  rank `n + k` with every stabilizer and logical in it; the four toric
+  slices prepared as states with each one's basis read *off the volume*
+  rather than assumed, asserted in the code space, shown to be a frame
+  rather than an orthogonal basis, shown linearly independent, and a
+  random vector projected through the full `2^r`-element stabilizer sum
+  reassembling from them to < 1e-9; and the accounting — per-node cost
+  independent of node count, network total tracking `2^h` rather than
+  `2^n`, with the tableau-per-coefficient overhead asserted `O(n²)`
+  rather than a new exponential.
 - **lateral** — the cross-lateral distributed suite: the
   coordinatewise link rule against gate-by-gate conjugation on 80,000
   random strings across four window layouts (signs included) and the
@@ -2057,6 +2113,13 @@ src/
                  across (reach per unit cost of the native cross-scale
                  operators; the coset class they cannot leave)
   causal.rs      backward cones, causal diamonds, dual-time resolution
+  stitch.rs      sharding a register by its own symplectic form:
+                 volumes as F2 subspaces (meet, join, centraliser =
+                 normalizer, isotropic = stabilizer), the symplectic
+                 normal form radical + hyperbolic pairs read off a
+                 code's generators, the 2^h maximal isotropic
+                 extensions and their exact direct sum, and where the
+                 exponential goes when you spend it as machines
   lateral.rs     cross-lateral distributed registers: the transversal
                  link as a coordinatewise F2 frame map, the F2-linear
                  syndrome, erasure decoding at d-1 (measured, with the
@@ -2124,7 +2187,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           eighty integration suites (see Testing)
+tests/           eighty-one integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -2168,7 +2231,10 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  rediscovered, and the sqrt(2) identified),
                  lateral_network (the coordinatewise link, the frame as
                  the wire, erasures vs errors, the horizon budget, and
-                 the two layers crossed)
+                 the two layers crossed),
+                 stitch_shards (the normal form read off a code, the
+                 pairs that cannot be held in one place, the slices on
+                 amplitudes, and where the exponential went)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

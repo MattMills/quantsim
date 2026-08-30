@@ -123,9 +123,16 @@
 //!   What is real is the algebra — the coordinatewise link rule, the
 //!   syndrome's linearity, the erasure capacity measured off the
 //!   code, and the arithmetic of the repair.
-//! * It buys **fault tolerance and bandwidth**, not speed. Splitting
-//!   a register across nodes does not shrink `2ⁿ`; it shrinks what has
-//!   to cross the wire, from amplitudes to 16 bytes a tick.
+//! * This module distributes the **control plane** and leaves each
+//!   node holding its own patch. That is the narrow reading of a
+//!   distributed register. The wide one — sharding the register itself,
+//!   so that no node holds anything exponential — is
+//!   [`stitch`](crate::stitch), and it comes out of the same symplectic
+//!   form: the radical carves the module to `2^{n−r}` and the
+//!   hyperbolic pairs, being unholdable in one abelian subgroup,
+//!   partition it into `2^h` disjoint slices that reassemble by exact
+//!   direct sum. What this module supplies to that one is the wire
+//!   between the slices.
 
 use std::collections::BTreeMap;
 

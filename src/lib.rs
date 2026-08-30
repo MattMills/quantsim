@@ -123,6 +123,7 @@ pub mod scalar;
 pub mod schedule;
 pub mod selfhost;
 pub mod sim;
+pub mod stitch;
 pub mod support;
 pub mod surface;
 pub mod sweep;

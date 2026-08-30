@@ -632,9 +632,10 @@ it by name. This is a *simulation* of a distributed run: the loss, the
 delays and the clocks are injected, not measured off a socket. What is
 real is the algebra — the coordinatewise link rule, the syndrome's
 linearity, the erasure capacity measured off the code, the exact
-GF(256) repair. And it buys **fault tolerance and bandwidth, not
-speed**: splitting a register across nodes does not shrink `2^n`, it
-shrinks what has to cross the wire, from amplitudes to 27 bytes a tick.
+GF(256) repair. And the scope of *this* module is the **control
+plane**: it distributes the frame and leaves each node holding its own
+patch. Sharding the register itself is the next section, and it comes
+out of the same symplectic form.
 
 Remaining rungs, in the order they matter:
 
@@ -667,6 +668,113 @@ Remaining rungs, in the order they matter:
   code absorbs. Choosing the code distance *from* the measured delay
   tail (rather than picking both independently) is the design question
   this module makes askable and does not yet answer.
+
+## Sharding by the symplectic form (the stitch) — SHIPPED (core)
+
+`lateral` distributes the control plane. `stitch` distributes the
+register, and the mechanism was already in the algebra: the phase-free
+Pauli group is an 𝔽₂ space under an **alternating** form, and every
+alternating form has a symplectic normal form
+`radical ⊥ H₁ ⊥ … ⊥ H_h`. `orthogonalize` computes it by symplectic
+Gram–Schmidt in `O(rank²·n)`, with no `2ⁿ` anywhere.
+
+**The radical carves; the pairs cannot; so the pairs partition.** `r`
+mutually commuting directions cut the `2ⁿ` module to `2^{n−r}` — that
+is stabilizer encoding, stated as linear algebra. A hyperbolic pair
+names no region at all, because `eᵢ` and `fᵢ` anticommute and **no
+abelian subgroup, hence no node, can hold both**. Each pair therefore
+forces a binary choice, giving `2^h` maximal isotropic extensions of
+rank `r + h`; two distinct ones contain both `eᵢ` and `fᵢ` for some
+`i`, and nothing is fixed by both, so their regions meet in zero. The
+sum is direct and the arithmetic is exact:
+
+```
+2^h · 2^{n−r−h} = 2^{n−r}
+```
+
+**Read off the generators, not told.** Nothing hands `orthogonalize`
+the code's parameters; it recovers them. Measured on the span of
+generators ∪ logicals: toric L=2 → `(r, h) = (6, 2)`, L=3 → `(16, 2)`,
+surface d=3 → `(8, 1)`, d=5 → `(24, 1)`. The radical **is** the
+stabilizer group (isotropic, and central in the whole span — both
+asserted), the hyperbolic pairs **are** the logical `(X̄, Z̄)` conjugate
+pairs (anticommutation asserted per pair), and `Volume::centraliser`
+returns the normalizer at rank `n + k`, computed as an 𝔽₂ kernel with
+no enumeration.
+
+**Checked on amplitudes, not on dimensions.** The four toric L=2
+slices are prepared as actual states (each selection's basis choice
+read *off the volume* by `contains`, not assumed from the pair order),
+shown to sit in the code space to 1e-9, shown to be a **frame rather
+than an orthogonal basis** — Gram `1, 1/√2, 1/2`, exactly the tensor
+of `|0⟩/|+⟩` per axis, determinant 1/4 — and a random vector projected
+into the code space by the full `2^r`-element stabilizer sum
+reassembles from the four slices to `< 1e-9`. Every pair of slices,
+joined, stops commuting; every selection is maximal isotropic of rank
+`n` and carves dimension exactly 1.
+
+**Where the exponential goes.**
+
+```
+   n    r    h |     nodes | per node |     network |    monolithic
+  18   16    2 |         4 |    106 B |       424 B |       4.19 MB
+  30   20    5 |        32 |    216 B |     6.91 kB |      17.18 GB
+  30   20   10 |      1024 |    256 B |    262.1 kB |      17.18 GB
+  40   20   20 |   1048576 |    416 B |    436.2 MB |      17.59 TB
+```
+
+Per node the cost is polynomial in `n` and **does not mention the node
+count** — 1024 nodes and 32 nodes on the same register differ by 40
+bytes each. The network total is `2^h · O(n²)`: exponential in the
+*logical* count, not the register width, because the code has already
+pulled the exponent from `n` down to `k = n − r` and the shard plan
+spends it as machines instead of as memory. The price, stated rather
+than hidden: each node carries a whole tableau to hold one
+coefficient, `O(n²)` bytes where a bare `2^k` amplitude vector holds
+16 — bought in exchange for a per-node object that is polynomial,
+closed (a Clifford acts on a slice's tableau locally, no
+communication), and independent of every other node.
+
+And `h` is **hidden in the dimension**: two stitches of region
+dimension 1024 can be 8 slices or 128. Measuring the object's size
+says nothing about how many pieces it is in — which is what makes `h`
+usable as structure rather than as an accounting quantity.
+`selections()` refuses above 16 pairs by name, because `h` is an
+exponent and expanding it is a decision.
+
+(The construction is `cliff-core`'s `stitch` and `volume`, whose
+documentation states the correspondence outright — the twist form is
+the Pauli group's commutator phase, an isotropic volume *is* a
+stabilizer, a centraliser *is* a normalizer, `2^h` regions reassemble
+to `D/2^r`. What is added here is the decomposition over
+`PauliString`, where the slices can be instantiated as states and the
+direct sum checked on amplitudes.)
+
+Remaining rungs:
+
+- **The Clifford action on the frame.** A Clifford permutes the
+  symplectic space, so it carries one selection to another and the
+  coefficient update is a permutation-plus-phase across nodes. Making
+  that explicit — which node's coefficient lands where, and what the
+  communication pattern of a given gate is — turns the static
+  decomposition into an evolution, and is the single most valuable
+  thing missing.
+- **Non-maximal slices.** When `r + h < n` a slice is a region of
+  dimension `2^{n−r−h}` rather than a single state, so a node holds a
+  small register instead of a tableau. That is the knob between "many
+  tiny nodes" and "few larger ones", and nothing currently exercises
+  it.
+- **Signs.** `Volume` is phase-free by construction, which is right for
+  the 𝔽₂ layer and means a selection names a *basis*, not a state,
+  until signs are chosen. The `2^{r+h}` sign choices per selection are
+  the rest of the decomposition, and `lateral`'s frame is exactly the
+  object that carries them.
+- **The dual polarity pass.** `cliff`'s `stitch` carries the other half
+  of the construction — slice in the fine polarity where the residue
+  is carvable, re-integrate in the coarse one where only the
+  reassembled region has a name, with the seam being the 2-adic
+  valuation. There is no analogue here yet, and `quantsim`'s `padic`
+  module is the natural place for one.
 
 ## Further non-Cayley–Dickson explorations
 
