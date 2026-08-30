@@ -123,6 +123,13 @@ pub const MAX_ENUMERATED_PAIRS: usize = 16;
 /// A region of the Pauli group as an 𝔽₂ subspace: the span of a set of
 /// strings, phases discarded, kept in echelon form.
 ///
+/// Named properly, this is a **flat of `PG(2n−1, 2)`**, and an
+/// [`is_isotropic`](Self::is_isotropic) one is a flat of the polar
+/// space `W(2n−1, 2)` — see [`polar`](crate::polar), which carries the
+/// counts and the incidence structure. At `n = 2` that polar space is
+/// the doily `GQ(2,2)`, and a maximal isotropic volume there is one of
+/// its 15 lines.
+///
 /// Everything worth asking is linear algebra over one bit, and **none
 /// of the costs mention `2ⁿ`** — a volume of rank 40 inside a 60-qubit
 /// register contains `2⁴⁰` strings and is a 40-row bit matrix.

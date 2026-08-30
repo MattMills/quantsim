@@ -109,6 +109,7 @@ pub mod opflow;
 pub mod padic;
 pub mod pathsum;
 pub mod phase;
+pub mod polar;
 pub mod polarity;
 pub mod qudit;
 pub mod query;

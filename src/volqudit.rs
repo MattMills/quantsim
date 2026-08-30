@@ -9,6 +9,14 @@
 //! symplectic form, whose meet, join and centraliser cost `O(rank · n)`
 //! and never mention `2ⁿ`.
 //!
+//! The ambient has a name, and [`polar`](crate::polar) carries it:
+//! `𝔽₂^{2n}` minus the origin is the point set of the projective space
+//! `PG(2n−1, 2)`, and the commutation form makes it the polar space
+//! `W(2n−1, 2)`. A frame is a flat of that polar space. At two qubits
+//! it is the doily `GQ(2,2)` — 15 points, 15 lines, no triangles — and
+//! a wider register is a combinatorial space of doilies rather than a
+//! new kind of object.
+//!
 //! ## The qudit is the obstruction
 //!
 //! Put an isotropic flat `V` into that space — an abelian subgroup,

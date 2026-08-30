@@ -1014,15 +1014,170 @@ Remaining rungs:
   vol, and it is not built. A logical operation that acts at full
   arity and is invisible on every face is the object the braid
   material points at, and this module now has the faces to define it.
-- **Effective geometry.** The third class of the formalism —
-  `Φ(P, U) = PU(I − P)`, the dynamic-sufficiency obstruction, and the
-  throat rank `min_k C_k` — has no representative here. `causal` and
-  `cut` carry pieces of it; a `VolQudit`-shaped closure operator with
-  `Im Γ` as the effective geometry would complete the trio.
+- **Effective geometry — SHIPPED**, in the section below: `polar`
+  carries the closure `Im Γ = (⋁Vᵢ)^⊥`, the deficit, the throat as a
+  bound, and `Φ(P, U)` as a rank. What remains on this axis is a
+  closure over *heterogeneous* representations rather than over
+  frames alone — the mosaic's axis, not the polar space's.
 - **The operative tower.** `V_{k+1} = ΠΓ(V_k ⊠ V_k^∨)` and the fixed
   point `σ(op_atom(V)) ≅ σ(V)`. `nest` gives one direction of this;
   the self-compound with the dual, and whether any frame is a fixed
   point of it, is the recursion the theory is actually named for.
+
+## The embedding, and effective geometry — SHIPPED (core)
+
+`stitch` works with 𝔽₂ subspaces under a symplectic form and
+`volqudit` puts qudits into them, and neither said what the ambient
+**is**. It is a projective space, and naming it brings the counts and
+the incidence structure with it.
+
+**The embedding.** The phase-free Pauli group on `n` qubits is
+`𝔽₂^{2n}` minus the origin — scalars already quotiented out — so its
+points are the points of `PG(2n−1, 2)`, and the commutation form makes
+it the polar space `W(2n−1, 2)` whose totally isotropic flats are
+exactly the abelian subgroups: the stabilizers, and therefore the
+frames. A `Volume` is a flat; an isotropic one is a flat of the polar
+space; a maximal one is a **generator**. The closed forms are
+
+```
+points                  2^{2n} − 1
+lines through a point   2^{2n−2} − 1
+totally isotropic lines (2^{2n} − 1)(2^{2n−2} − 1) / 3
+generators              ∏_{i=1}^{n} (2^i + 1)
+```
+
+and each is **checked against enumeration** up to `n = 4` rather than
+quoted. (The generator count matching `∏(2^i + 1)` is the same
+identity `cliff-core`'s `volume` module states for maximal commuting
+sets — two independent statements of one fact.)
+
+**`n = 2` is the doily, and that is the unit.** `W(3,2)` has 15
+points, 15 totally isotropic lines, 3 points on every line, 3 lines
+through every point, **zero triangles**, and the
+generalized-quadrangle axiom holds — so it is `GQ(2,2)`, on four
+homogeneous coordinates, and the module prints its 15 points and its
+lines as maximal commuting sets. The two properties that *earn* the
+name are the ones asserted: a polar space that merely had the right
+counts would not be a quadrangle.
+
+**A wider register is a combinatorial space of doilies.** The
+non-degenerate 4-dimensional subspaces of `W(2n−1,2)` are copies of
+`W(3,2)` sitting inside it:
+
+```
+n = 2      1 doily
+n = 3    336
+n = 4  91392        2^{4(n−2)}(2^{2n−2} − 1)(2^{2n} − 1) / 45
+```
+
+enumerated at `n ≤ 3` and matched against the closed form, which
+answers at any width and **saturates** past `u128` rather than
+wrapping — an honest "too large to name" instead of a wrong number.
+And the claim stops where it was checked: `W(5,2)` has triangles and
+is *not* a generalized quadrangle, which the suite asserts so the
+doily's specialness cannot spread by association.
+
+**Effective geometry closes over the representation.** For an
+`Assembly` of frames in one ambient, an operation is admissible for
+member `i` exactly when it commutes with `Vᵢ`, so the systemic closure
+is the constraint intersection `Im Γ = ⋂ Vᵢ^⊥ = (⋁ Vᵢ)^⊥` —
+idempotence checked, not assumed, and the closure contains every frame
+it was built from. The finding is that **effective dimension is not
+the sum of the parts**: three single-constraint frames on four qubits,
+each leaving `h = 3` alone, close onto `d_eff = 1` — a deficit of 8.
+That gap is precisely why effective geometry is a separate class from
+assembled object geometry.
+
+**The throat is a bound, not a slogan.** `d_eff ≤ min_i hᵢ` holds in
+general and is an **equality exactly on a nested chain** `V₁ ⊆ V₂ ⊆ …`,
+where each stage's constraint already contains the last. Measured:
+nested `local [3,2,1]`, throat 1, effective 1 — tight; crossed
+`local [2,2]`, throat 2, effective 0 — slack. Reported as an
+inequality with both cases measured.
+
+**Local versus globally effective, concretely.** An invariant is
+globally effective when `I = Ī ∘ Γ`. Two assemblies with the *same*
+closure agree on `d_eff` — it factors — and disagree on `Σ hᵢ`, 4
+against 1. So the sum of local logical ranks is a perfectly meaningful
+local quantity that the closure erases, which is §6 of the formalism
+instantiated rather than restated. Assemblies with *different*
+closures are reported as incomparable rather than answered.
+
+**Dynamic sufficiency.** `Φ(P, U) = PU(I − P)` becomes
+`dynamic_obstruction`: the rank by which a transport pushes a frame
+out of itself, zero exactly when the transport is a loop — the same
+predicate `VolQudit::closes` already answered, now with the
+frame-geometry name and a number instead of a bool. Measured on the
+GHZ frame: identity and a CX conjugation give `Φ = 0`, a single `H`
+gives 1, transversal `H` gives 2.
+
+**Checked against a sibling projective-geometry library.** `twistorDB`
+builds `PG(n,q)` generically (`pg.rs`: `ProjectiveSpace`, `Flat` with
+span/meet/`flat_count` by Gaussian binomial) and lays the Pauli
+symplectic form on it per code (`extras/qec.rs`: `sympl_vector`,
+`anticommutes`, the perp as a meet of half-swapped hyperplanes). **No
+number disagrees.** Where the two overlap they agree — 15 points of
+`W(3,2)`, the `[[5,1,3]]` and `[[7,1,3]]` parameters — and the 35-vs-15
+line counts are the ambient-vs-isotropic distinction, not a conflict.
+Two things are worth stating precisely because they are small: that
+library *computes* the doily's 15 isotropic lines and the `GQ(2,2)`
+axiom in an example and **prints** them without asserting either, and
+it has no triangle count; the generator counts `∏(2^i+1)`, the
+isotropic line counts 15/315/5355, and the doily counts 1/336/91392
+do not appear in it at all. So the pinning here is new even though the
+geometry is not.
+
+Remaining rungs, with what the comparison sharpened:
+
+- **Closure over heterogeneous representations.** The assembly closes
+  over *frames*. The harder and more useful question is closure over
+  representation *choices* — the mosaic's axis — where the invariant
+  sought is what every admissible representation agrees on.
+  `conformance` verifies agreement pairwise; the quotient by
+  representation choice is the object that does not exist yet. Neither
+  library has anything on this axis.
+- **Hashable canonical flats.** `Volume` is a deliberate 𝔽₂/u64-mask
+  specialization of what `twistorDB`'s `Flat` does field-generically,
+  and the one thing the specialization gave up is `Flat`'s canonical
+  RREF with `Hash + Eq`. That is exactly what the next two rungs need
+  — flats as map keys — so it is the prerequisite rather than a
+  nicety.
+- **Doilies as a decomposition, not a count.** Knowing there are 336
+  doilies in `W(5,2)` is not yet knowing which ones a given frame
+  meets. A frame's *doily profile* — which four-coordinate
+  subgeometries it touches and how — would make the combinatorial
+  space usable rather than only countable.
+- **The generators as a spread.** `∏(2^i + 1)` maximal commuting sets,
+  of which `2^n + 1` are pairwise disjoint and cover every point
+  exactly once — a symplectic spread, the natural home for a
+  mutually-unbiased-bases construction. Confirmed unbuilt in both
+  libraries: `twistorDB`'s only spread is the char-0 Penrose fibration
+  of `CP³` into skew lines, which is rank-2 and has no 𝔽₂ or
+  maximal-isotropic content.
+- **The Klein correspondence.** A rank-2 frame is a *line*, and
+  Plücker coordinates turn a line into a single **point** on a
+  quadric — so "are these two frames compatible" becomes point
+  incidence rather than subspace algebra. `twistorDB`'s `plucker.rs`
+  has the whole apparatus over ℤ[i]; the 𝔽₂ version is small and
+  would change the cost of every pairwise frame question.
+- **Line complexes as frame constraints.** One linear equation on
+  Plücker coordinates carves out an entire family of admissible
+  frames — a constraint on *frames* rather than on operators, which is
+  a level the current `Assembly` cannot express. `linecomplex.rs`
+  notes that the non-special case is exactly the null system giving
+  `W(3,q)`, which is the object this section is about.
+- **A general Gram perp.** `centraliser` is hard-wired to the
+  symplectic form. `twistorDB`'s `QuadricForm::polar` takes an
+  arbitrary Gram matrix, which is what makes the orthogonal and
+  Hermitian polar spaces free rather than a rewrite — and
+  `is_maximal_isotropic` is then the *self-polarity* fixed point
+  `polar(V) = V`, a framing that generalizes where the current
+  predicate does not. `exceptional-galois` already builds `GF(q)`
+  exactly, which is what a `q > 2` version needs.
+- **Transport as one matrix product.** `dynamic_obstruction` and
+  `VolQudit::transport` conjugate the frame basis element by element.
+  The exterior-power (compound) action moves a whole flat in one
+  product, which is the right shape once frames get wide.
 
 ## Further non-Cayley–Dickson explorations
 
