@@ -135,13 +135,65 @@
 //! [`BulkState`](crate::backend::BulkState) — pays the second column; one whose
 //! cost is the sum over a chain's cuts pays the first.
 //!
-//! **So the curve was never the wrong idea; flattening it was.** What
-//! is *not* shown here, and is worth separating from what is: nothing
-//! below tests whether a specific **overlay of several** rotor
+//! **So the curve was never the wrong idea; flattening it was.**
+//!
+//! ## Where the rotor earns its place, and the reconciliation
+//!
+//! There is a tension in the two halves above: the bisection tree's
+//! separators do not depend on the rotor at all — cutting a grid into
+//! quadrants gives the same numbers whichever symmetry you enter each
+//! quadrant under. So if the tree is what is useful, what is the rotor
+//! *for*?
+//!
+//! [`GridOrder::block_boundary`] answers it. A balanced binary tree
+//! over a chain has exactly the **contiguous `2^k` blocks** as its
+//! subtrees, and a hierarchical register's cost at a subtree is that
+//! block's *boundary*. Measured at side 32:
+//!
+//! ```text
+//! block size    RowMajor max/mean    Hilbert max/mean
+//!         32          64 / 62.0           24 / 20.0
+//!         64          64 / 60.0           32 / 24.0
+//!        128          64 / 56.0           40 / 32.0
+//!        256          64 / 48.0           32 / 32.0
+//! ```
+//!
+//! Hilbert is better at **every** block size, by up to 3.1× on the
+//! mean, and never worse — the opposite verdict from the chain
+//! measurements, on the same three orderings. The reason is the whole
+//! point: row-major's contiguous blocks are elongated strips (a
+//! `side`-sized block is one entire row, boundary `2·side`), while the
+//! rotor makes Hilbert's blocks **compact regions**.
+//!
+//! So the rotor is exactly what makes a *linear* index's contiguous
+//! blocks coincide with the *tree's* spatial regions. That is why both
+//! results hold at once, and why neither is the whole story:
+//!
+//! * as a **chain layout** — prefix cuts, dilation, routing — the
+//!   curve is worse than reading the rows, by exact laws;
+//! * as the **leaf ordering of a hierarchy** — where the cost is per
+//!   subtree — it is better at every scale.
+//!
+//! ## What is not shown
+//!
+//! Two things, kept separate from what is.
+//!
+//! First, the **backend** claim. The block-boundary result is
+//! combinatorial, and it is the cost model
+//! [`MeraState`](crate::backend::MeraState) documents rather than a
+//! measurement of that backend. Running the three orderings through
+//! `MeraState` at a capped bond on a 4×4 grid did **not** reproduce
+//! the advantage — the discarded weights came out row-major-first —
+//! and the comparison is confounded: relabelling the qubits also
+//! reorders the gate stream, so the truncation schedules differ and
+//! the layout is not isolated. Sixteen qubits is four tree levels,
+//! where boundary effects dominate. Recorded as an attempted
+//! measurement that did not separate them, not as a result either way.
+//!
+//! Second, nothing here tests whether an **overlay of several** rotor
 //! assignments — distinct curves used together as independent
 //! addressing bits rather than one at a time — improves on plain
-//! recursive bisection. That is a stronger claim than the one measured
-//! and it stays open.
+//! recursive bisection. That stays open.
 //!
 //! ## Provenance
 //!
@@ -430,6 +482,78 @@ impl GridOrder {
     /// an ordering can actually move.
     pub fn total_crossings(&self) -> usize {
         self.cut_profile().into_iter().sum()
+    }
+}
+
+/// The boundary census of a chain ordering's contiguous blocks — what a
+/// **hierarchical** register pays, as against what a chain pays.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockBoundary {
+    /// Block size, `2^k`.
+    pub size: usize,
+    /// Largest boundary over the blocks of this size.
+    pub max: usize,
+    /// Summed boundary.
+    pub total: usize,
+    /// Blocks counted.
+    pub blocks: usize,
+}
+
+impl BlockBoundary {
+    /// Mean boundary at this block size.
+    pub fn mean(&self) -> f64 {
+        if self.blocks == 0 {
+            0.0
+        } else {
+            self.total as f64 / self.blocks as f64
+        }
+    }
+}
+
+impl GridOrder {
+    /// For each contiguous block of `2^k` chain positions, how many
+    /// lattice edges leave it.
+    ///
+    /// This is the question a **tree** asks, where
+    /// [`cut_profile`](Self::cut_profile) is the question a chain asks.
+    /// A balanced binary tree over the chain has exactly the contiguous
+    /// `2^k` blocks as its subtrees, and a hierarchical register's cost
+    /// at a subtree is its boundary — so this is the ordering's cost to
+    /// a hierarchy, block size by block size, and it is where the rotor
+    /// earns its place.
+    pub fn block_boundary(&self, k: u32) -> BlockBoundary {
+        let size = 1usize << k;
+        let n = self.sites();
+        let edges = self.edges();
+        let mut inside = vec![false; n];
+        let (mut max, mut total, mut blocks) = (0usize, 0usize, 0usize);
+        let mut start = 0usize;
+        while start + size <= n {
+            inside[start..start + size].fill(true);
+            let b = edges
+                .iter()
+                .filter(|&&(a, c)| inside[a] != inside[c])
+                .count();
+            max = max.max(b);
+            total += b;
+            blocks += 1;
+            inside[start..start + size].fill(false);
+            start += size;
+        }
+        BlockBoundary {
+            size,
+            max,
+            total,
+            blocks,
+        }
+    }
+
+    /// [`block_boundary`](Self::block_boundary) at every block size a
+    /// balanced tree over this chain uses, from 4 up to half the
+    /// register.
+    pub fn block_boundaries(&self) -> Vec<BlockBoundary> {
+        let levels = self.sites().ilog2();
+        (2..levels).map(|k| self.block_boundary(k)).collect()
     }
 }
 

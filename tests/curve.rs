@@ -290,3 +290,93 @@ fn the_symplectic_order_has_an_exactly_square_dyadic_part() {
     assert_eq!(PolarSpace::new(2).unwrap().symplectic_order(), 720);
     assert_eq!(PolarSpace::new(3).unwrap().symplectic_order(), 1_451_520);
 }
+
+// ──────── where the rotor earns its place: the tree's own blocks ────────
+
+#[test]
+fn the_curve_wins_where_the_chain_lost_it() {
+    // A balanced tree over a chain has the contiguous 2^k blocks as its
+    // subtrees, and a hierarchy's cost at a subtree is that block's
+    // boundary. On exactly the measure a chain does not care about,
+    // the ordering that lost every chain metric wins every block size.
+    for side in [8usize, 16, 32] {
+        let row = GridOrder::new(side, Order::RowMajor).unwrap();
+        let hil = GridOrder::new(side, Order::Hilbert).unwrap();
+        let rb = row.block_boundaries();
+        let hb = hil.block_boundaries();
+        assert_eq!(rb.len(), hb.len());
+        assert!(!rb.is_empty());
+        for (r, h) in rb.iter().zip(hb.iter()) {
+            assert_eq!(r.size, h.size);
+            assert!(
+                h.max <= r.max,
+                "side {side} block {}: hilbert max {} vs row {}",
+                r.size,
+                h.max,
+                r.max
+            );
+            assert!(
+                h.mean() <= r.mean(),
+                "side {side} block {}: hilbert mean {} vs row {}",
+                r.size,
+                h.mean(),
+                r.mean()
+            );
+        }
+        // And strictly better somewhere, by a real margin.
+        assert!(
+            hb.iter().zip(rb.iter()).any(|(h, r)| 2 * h.max <= r.max),
+            "side {side}: at least a 2x on some block size"
+        );
+    }
+}
+
+#[test]
+fn the_row_orders_blocks_are_strips_and_that_is_the_whole_reason() {
+    // A row-major block of exactly `side` positions is one entire row,
+    // so its boundary is 2·side — the two long edges. The curve's block
+    // of the same size is a compact region and is bounded well below
+    // that. This is the mechanism, isolated.
+    for side in [8usize, 16, 32] {
+        let k = side.trailing_zeros();
+        let row = GridOrder::new(side, Order::RowMajor)
+            .unwrap()
+            .block_boundary(k);
+        let hil = GridOrder::new(side, Order::Hilbert)
+            .unwrap()
+            .block_boundary(k);
+        assert_eq!(row.size, side);
+        // Interior rows have both long edges; the two outer rows have one.
+        assert_eq!(row.max, 2 * side, "a row-major block IS a row");
+        assert!(
+            hil.max < row.max,
+            "side {side}: compact {} vs strip {}",
+            hil.max,
+            row.max
+        );
+    }
+}
+
+#[test]
+fn the_bisection_separators_do_not_depend_on_the_rotor() {
+    // The tension the block measurement resolves: the quadrant tree's
+    // numbers are a property of the grid, so the rotor contributes
+    // nothing to them. It contributes to which *linear* blocks are
+    // those quadrants, which is the block measurement above.
+    for side in [8usize, 16, 32] {
+        let b = Bisection::quadrants(side).unwrap();
+        assert_eq!(b.max_separator(), side);
+        assert_eq!(b.total_separator(), 2 * side * side - 2 * side);
+    }
+    // Stated as the reason both results can hold at once: the curve
+    // loses the chain metrics and wins the block metric.
+    let side = 32;
+    let row = GridOrder::new(side, Order::RowMajor).unwrap();
+    let hil = GridOrder::new(side, Order::Hilbert).unwrap();
+    assert!(hil.cutwidth() > row.cutwidth(), "loses the chain");
+    let k = side.trailing_zeros();
+    assert!(
+        hil.block_boundary(k).max < row.block_boundary(k).max,
+        "wins the tree"
+    );
+}

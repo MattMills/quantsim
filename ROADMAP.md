@@ -1239,15 +1239,52 @@ by an order. A representation paying per cut over a hierarchy (`mera`,
 `bulk`) pays the second row; one paying over a chain's cuts pays the
 first. **So the curve was never the wrong idea; flattening it was.**
 
-Two clauses, both stated because the first is easy to guess wrong and
-the second is easy to overclaim. The tree's cost is **not** at the
-root: its per-level profile is `side · 2^{⌊ℓ/2⌋}`, doubling every two
-levels, so the total sits at the *deepest* cuts — separators shrink
-per node and the node count grows faster. And nothing here tests
-whether an **overlay** of several distinct rotor assignments, used
-together as independent addressing bits rather than one at a time,
-improves on plain recursive bisection. That is a stronger claim than
-anything measured and it stays **open**.
+The tree's cost is **not** at the root, which is the part one would
+guess wrong: its per-level profile is `side · 2^{⌊ℓ/2⌋}`, doubling
+every two levels, so the total sits at the *deepest* cuts — separators
+shrink per node and the node count grows faster.
+
+**Where the rotor earns its place, and why both verdicts hold.** There
+is a tension in the two halves above: the bisection tree's separators
+do not depend on the rotor at all — quadrants are quadrants whichever
+symmetry you enter them under. So if the tree is the useful object,
+what is the rotor *for*? A balanced binary tree over a chain has
+exactly the contiguous `2^k` blocks as its subtrees, and a
+hierarchical register's cost at a subtree is that block's **boundary**.
+Measured at side 32:
+
+```
+block size    RowMajor max/mean    Hilbert max/mean
+        32          64 / 62.0           24 / 20.0
+        64          64 / 60.0           32 / 24.0
+       128          64 / 56.0           40 / 32.0
+       256          64 / 48.0           32 / 32.0
+```
+
+Hilbert is better at **every** block size and never worse — the
+opposite verdict from the chain measurements, on the same three
+orderings. The mechanism is isolated in the tests: a row-major block
+of `side` positions **is** one entire row, so its boundary is exactly
+`2·side`, while the rotor makes the curve's blocks compact regions.
+So the rotor is precisely what makes a *linear* index's contiguous
+blocks coincide with the *tree's* spatial regions, and that is why
+both results are true at once — worse as a chain layout, better as the
+leaf ordering of a hierarchy.
+
+**Two things stated as not shown.** The block result is
+combinatorial, and it is the cost model `MeraState` documents rather
+than a measurement of that backend. Running the three orderings
+through `MeraState` at a capped bond on a 4×4 grid did **not**
+reproduce the advantage — the discarded weights came out
+row-major-first — and the comparison is confounded: relabelling the
+qubits also reorders the gate stream, so the truncation schedules
+differ and the layout is not isolated; sixteen qubits is also four
+tree levels, where boundary effects dominate. Recorded as an attempted
+measurement that did not separate them, not as a result either way.
+And nothing here tests whether an **overlay** of several distinct
+rotor assignments, used together as independent addressing bits rather
+than one at a time, improves on plain recursive bisection. That is a
+stronger claim than anything measured and it stays **open**.
 
 **The census, from the geometry.** `PolarSpace::generators() × 2^n`
 gives the stabilizer-state counts 6, 60, 1080, 36,720, 2,423,520 —
@@ -1318,6 +1355,14 @@ Remaining rungs, sharpened by the comparison:
   with `rank(E)` as the dial. `pathsum`'s residual is exactly where
   that would apply, and it currently has no criterion at all, only a
   measured stall.
+- **The backend measurement, done properly.** The block-boundary
+  advantage is combinatorial and the `MeraState` run at 4×4 did not
+  reproduce it, confounded by the gate stream reordering with the
+  relabelling. Isolating the layout means fixing the gate *sequence*
+  and permuting only the wire map — which the circuit IR can express —
+  and going wide enough that the tree has depth to work with. That is
+  the measurement that would turn this from a cost-model statement into
+  a backend result, and it is the first thing to do here.
 - **The rotor overlay.** The single-rotor-assignment recursion is
   measured; a *set* of assignments used together — several curves as
   independent addressing bits rather than one as an index — is not.

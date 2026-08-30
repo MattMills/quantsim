@@ -138,7 +138,61 @@ fn main() -> quantsim::Result<()> {
         println!("{line}");
     }
 
-    rule("5. the snake gets both halves");
+    rule("5. where the rotor earns its place");
+    println!("  The bisection tree's separators do not depend on the rotor at all --");
+    println!("  quadrants are quadrants whichever symmetry you enter them under. So if");
+    println!("  the tree is what is useful, what is the rotor FOR?\n");
+    println!("  A balanced tree over a chain has the contiguous 2^k blocks as its");
+    println!("  subtrees, and a hierarchy's cost at a subtree is that block's BOUNDARY:\n");
+    for side in [16usize, 32] {
+        println!("  side {side}");
+        println!("    block   RowMajor max/mean    Snake max/mean    Hilbert max/mean");
+        let r = GridOrder::new(side, Order::RowMajor)?;
+        let sn = GridOrder::new(side, Order::Snake)?;
+        let h = GridOrder::new(side, Order::Hilbert)?;
+        for ((rb, sb), hb) in r
+            .block_boundaries()
+            .iter()
+            .zip(sn.block_boundaries().iter())
+            .zip(h.block_boundaries().iter())
+        {
+            println!(
+                "    {:>5}   {:>5} /{:>7.1}      {:>5} /{:>7.1}     {:>5} /{:>7.1}",
+                rb.size,
+                rb.max,
+                rb.mean(),
+                sb.max,
+                sb.mean(),
+                hb.max,
+                hb.mean()
+            );
+        }
+        println!();
+    }
+    for line in [
+        "  Hilbert is better at EVERY block size and never worse -- the opposite",
+        "  verdict from section 3, on the same three orderings. The reason is the",
+        "  mechanism: a row-major block of `side` positions IS one entire row, so its",
+        "  boundary is 2*side; the rotor makes the curve's blocks compact regions.",
+        "",
+        "  So the rotor is exactly what makes a LINEAR index's contiguous blocks",
+        "  coincide with the TREE's spatial regions. Both results hold at once:",
+        "    - as a chain layout (prefix cuts, dilation, routing): worse, by exact laws",
+        "    - as the leaf ordering of a hierarchy (cost per subtree): better at every",
+        "      scale",
+        "",
+        "  Not shown: this is combinatorial, and it is the cost model MeraState",
+        "  documents rather than a measurement of that backend. Running the three",
+        "  orderings through MeraState at a capped bond on a 4x4 grid did NOT",
+        "  reproduce the advantage, and the comparison is confounded -- relabelling",
+        "  the qubits also reorders the gate stream, so the truncation schedules",
+        "  differ and the layout is not isolated. Recorded as an attempted",
+        "  measurement that did not separate them, not as a result either way.",
+    ] {
+        println!("{line}");
+    }
+
+    rule("6. the snake gets both halves");
     for side in [16usize, 32, 64] {
         let r = GridOrder::new(side, Order::RowMajor)?;
         let s = GridOrder::new(side, Order::Snake)?;
@@ -155,7 +209,7 @@ fn main() -> quantsim::Result<()> {
          the Hilbert curve was wanted for comes free from reversing alternate rows."
     );
 
-    rule("6. the census, reached from the geometry");
+    rule("7. the census, reached from the geometry");
     println!("   n   generators   stabilizer states   |Sp(2n,2)|              v2   n^2");
     for n in 1..=6usize {
         let w = PolarSpace::new(n)?;

@@ -1146,13 +1146,37 @@ measure rather than hide.
   representation paying per cut over a hierarchy
   ([`MeraState`](src/backend/mera.rs), [`BulkState`](src/backend/bulk.rs))
   pays the second row; one paying over a chain's cuts pays the first.
-  **So the curve was never the wrong idea — flattening it was.** Two
-  clauses stated because the first is easy to guess wrong: the tree's
-  cost is **not** at the root, its per-level profile being
-  `side · 2^{⌊ℓ/2⌋}` so the total sits at the deepest cuts; and nothing
-  here tests whether an **overlay** of several rotor assignments, used
-  together as independent addressing bits, improves on plain bisection
-  — that stays open.
+  **So the curve was never the wrong idea — flattening it was.**
+  **And there is a tension the module resolves**: the bisection tree's
+  separators don't depend on the rotor at all, so what *is* the rotor
+  for? A balanced tree over a chain has the contiguous `2^k` blocks as
+  its subtrees, and a hierarchy's cost at a subtree is that block's
+  **boundary** (`block_boundary`). At side 32:
+
+  | block | RowMajor max/mean | Hilbert max/mean |
+  |---|---|---|
+  | 32 | 64 / 62.0 | **24 / 20.0** |
+  | 64 | 64 / 60.0 | **32 / 24.0** |
+  | 256 | 64 / 48.0 | **32 / 32.0** |
+
+  Hilbert is better at **every** block size and never worse — the
+  opposite verdict, on the same three orderings. The mechanism: a
+  row-major block of `side` positions *is* one entire row, boundary
+  `2·side`, while the rotor makes the curve's blocks compact regions.
+  **So the rotor is exactly what makes a linear index's contiguous
+  blocks coincide with the tree's spatial regions**, and both results
+  hold at once — worse as a chain layout, better as the leaf ordering
+  of a hierarchy.
+  Two things stated as *not* shown. The block result is combinatorial
+  and is the cost model [`MeraState`](src/backend/mera.rs) documents,
+  not a measurement of it: running the three orderings through
+  `MeraState` at a capped bond on a 4×4 grid did **not** reproduce the
+  advantage, and the comparison is confounded — relabelling the qubits
+  also reorders the gate stream, so the layout isn't isolated.
+  Recorded as an attempted measurement that didn't separate them. And
+  nothing tests whether an **overlay** of several rotor assignments,
+  used together as independent addressing bits, improves on plain
+  bisection — that stays open.
   The module also carries the census bridge:
   `PolarSpace::generators() × 2^n` gives the **stabilizer-state counts**
   6, 60, 1080, 36,720 — reached here by counting maximal isotropic
