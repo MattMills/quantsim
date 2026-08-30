@@ -1173,10 +1173,19 @@ measure rather than hide.
   `MeraState` at a capped bond on a 4×4 grid did **not** reproduce the
   advantage, and the comparison is confounded — relabelling the qubits
   also reorders the gate stream, so the layout isn't isolated.
-  Recorded as an attempted measurement that didn't separate them. And
-  nothing tests whether an **overlay** of several rotor assignments,
-  used together as independent addressing bits, improves on plain
-  bisection — that stays open.
+  Recorded as an attempted measurement that didn't separate them.
+  **The overlay is measured** ([`Overlay`](src/curve.rs)): several
+  rotor assignments used together, counting lattice edges that *no*
+  member keeps inside a block. At side 32 the gain alternates —
+  **exactly 0%** at block sizes that are powers of four, **36–50%** at
+  the sizes between, and **100%** at the top. The zero half is a
+  theorem, not an observation: those blocks are quadrants and a global
+  rotor maps quadrants to quadrants, so every member induces the same
+  partition. The gain lives exactly where the rotor leaves a choice —
+  a quadrant split in two, and *which way* it splits. Two curves at
+  right angles keep **every** edge together at the top level, and the
+  second member buys more than the other six put together (2 → 4 adds
+  nothing at any level).
   The module also carries the census bridge:
   `PolarSpace::generators() × 2^n` gives the **stabilizer-state counts**
   6, 60, 1080, 36,720 — reached here by counting maximal isotropic

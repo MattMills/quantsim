@@ -380,3 +380,102 @@ fn the_bisection_separators_do_not_depend_on_the_rotor() {
         "wins the tree"
     );
 }
+
+// ───────────── the overlay: several rotor assignments at once ─────────────
+
+#[test]
+fn the_overlay_gains_exactly_nothing_at_the_quadrant_sizes() {
+    // Provable, not incidental: a block of size 4^j IS a quadrant, and
+    // a global rotor maps quadrants to quadrants, so every member
+    // induces the same partition and cuts the same edges. The measured
+    // gain must therefore be exactly zero at even k.
+    for side in [16usize, 32] {
+        let o = Overlay::family(side, Order::Hilbert).unwrap();
+        assert_eq!(o.distinct(), 8, "the D₄ family of the curve is faithful");
+        let levels = (side * side).ilog2();
+        for k in (2..levels).step_by(2) {
+            let one = o.edges_cut_by_first(1, k).unwrap();
+            let all = o.edges_cut_by_all(k);
+            assert_eq!(all, one, "side {side} k {k}: quadrants, so no gain");
+        }
+    }
+}
+
+#[test]
+fn the_overlay_pays_where_the_rotor_leaves_a_choice() {
+    // At the sizes between quadrants — a quadrant split in two, where
+    // the rotor decides which way — different members cut different
+    // edges and the overlay covers what one misses.
+    for side in [16usize, 32] {
+        let o = Overlay::family(side, Order::Hilbert).unwrap();
+        let levels = (side * side).ilog2();
+        let mut gains = Vec::new();
+        for k in (3..levels).step_by(2) {
+            let one = o.edges_cut_by_first(1, k).unwrap();
+            let all = o.edges_cut_by_all(k);
+            assert!(all < one, "side {side} k {k}: {all} vs {one}");
+            gains.push(1.0 - all as f64 / one as f64);
+        }
+        assert!(
+            gains.iter().all(|&g| g > 0.3),
+            "side {side}: every odd level gains a third or more: {gains:?}"
+        );
+    }
+}
+
+#[test]
+fn two_curves_at_right_angles_keep_every_edge_at_the_top() {
+    // One curve cuts the register in half along one axis. A second at
+    // right angles cuts along the other, so between them no edge
+    // straddles both — the count goes to exactly zero, and two members
+    // suffice.
+    for side in [16usize, 32] {
+        let o = Overlay::family(side, Order::Hilbert).unwrap();
+        let top = (side * side).ilog2() - 1;
+        assert!(o.edges_cut_by_first(1, top).unwrap() > 0, "one curve cuts");
+        assert_eq!(o.edges_cut_by_first(2, top).unwrap(), 0, "two do not");
+        assert_eq!(o.edges_cut_by_all(top), 0);
+    }
+}
+
+#[test]
+fn most_of_the_overlay_is_bought_by_the_second_member() {
+    // Eight members are not eight times better than one. Two capture
+    // most of the reduction; the rest add at the odd levels only.
+    let side = 32;
+    let o = Overlay::family(side, Order::Hilbert).unwrap();
+    let levels = (side * side).ilog2();
+    let (mut from_one, mut from_two, mut from_all) = (0usize, 0usize, 0usize);
+    for k in 2..levels {
+        from_one += o.edges_cut_by_first(1, k).unwrap();
+        from_two += o.edges_cut_by_first(2, k).unwrap();
+        from_all += o.edges_cut_by_all(k);
+    }
+    assert!(from_two < from_one && from_all < from_two);
+    let second = (from_one - from_two) as f64;
+    let rest = (from_two - from_all) as f64;
+    assert!(
+        second > rest,
+        "the second member buys more than the other six: {second} vs {rest}"
+    );
+    // Going 2 → 4 buys nothing at all at any level.
+    for k in 2..levels {
+        assert_eq!(
+            o.edges_cut_by_first(2, k).unwrap(),
+            o.edges_cut_by_first(4, k).unwrap(),
+            "k {k}: members 3 and 4 add nothing"
+        );
+    }
+}
+
+#[test]
+fn an_overlay_needs_members_that_share_a_lattice() {
+    assert!(Overlay::new(vec![]).is_err());
+    let a = GridOrder::new(8, Order::Hilbert).unwrap();
+    let b = GridOrder::new(16, Order::Hilbert).unwrap();
+    assert!(Overlay::new(vec![a.clone(), b]).is_err());
+    assert!(Overlay::new(vec![a]).is_ok());
+    let o = Overlay::family(8, Order::Hilbert).unwrap();
+    assert!(o.edges_cut_by_first(0, 2).is_err());
+    assert!(o.edges_cut_by_first(9, 2).is_err());
+}

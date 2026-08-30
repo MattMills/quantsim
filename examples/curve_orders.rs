@@ -192,7 +192,50 @@ fn main() -> quantsim::Result<()> {
         println!("{line}");
     }
 
-    rule("6. the snake gets both halves");
+    rule("6. the overlay: several rotor assignments at once");
+    println!("  A single ordering gives ONE family of contiguous blocks, so an edge");
+    println!("  straddling every one of its boundaries is expensive at every scale.");
+    println!("  Does a SET of rotor assignments cover what one misses?\n");
+    for side in [16usize, 32] {
+        let o = Overlay::family(side, Order::Hilbert)?;
+        println!(
+            "  side {side}  ({} rotors -> {} distinct orderings)",
+            8,
+            o.distinct()
+        );
+        println!("     k   size |  1 curve   2 curves   4 curves   all 8   gain");
+        for k in 2..(side * side).ilog2() {
+            let one = o.edges_cut_by_first(1, k)?;
+            let two = o.edges_cut_by_first(2, k)?;
+            let four = o.edges_cut_by_first(4, k)?;
+            let all = o.edges_cut_by_all(k);
+            println!(
+                "    {k:>2}   {:>4} |  {one:>7}   {two:>8}   {four:>8}   {all:>5}   {:>4.0}%",
+                1usize << k,
+                100.0 * (1.0 - all as f64 / one as f64)
+            );
+        }
+        println!();
+    }
+    for line in [
+        "  The gain has a sharp shape, and half of it is provable rather than",
+        "  measured. At block sizes that are powers of FOUR the overlay gains EXACTLY",
+        "  nothing -- those blocks are quadrants, and a global rotor maps quadrants to",
+        "  quadrants, so every member induces the same partition and cuts the same",
+        "  edges. At the sizes in between -- a quadrant split in two, where the rotor",
+        "  decides WHICH WAY it splits -- the overlay removes 36-50% of the cut edges.",
+        "  And at the top level, where one curve halves the register along one axis,",
+        "  two curves at right angles keep EVERY edge together: the count is zero.",
+        "",
+        "  So the overlay is worth something; it is worth it at exactly the levels",
+        "  where a single assignment leaves a choice open; and the SECOND member buys",
+        "  more than the other six put together -- going 2 -> 4 adds nothing at any",
+        "  level at all.",
+    ] {
+        println!("{line}");
+    }
+
+    rule("7. the snake gets both halves");
     for side in [16usize, 32, 64] {
         let r = GridOrder::new(side, Order::RowMajor)?;
         let s = GridOrder::new(side, Order::Snake)?;
@@ -209,7 +252,7 @@ fn main() -> quantsim::Result<()> {
          the Hilbert curve was wanted for comes free from reversing alternate rows."
     );
 
-    rule("7. the census, reached from the geometry");
+    rule("8. the census, reached from the geometry");
     println!("   n   generators   stabilizer states   |Sp(2n,2)|              v2   n^2");
     for n in 1..=6usize {
         let w = PolarSpace::new(n)?;

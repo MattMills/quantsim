@@ -1281,10 +1281,39 @@ qubits also reorders the gate stream, so the truncation schedules
 differ and the layout is not isolated; sixteen qubits is also four
 tree levels, where boundary effects dominate. Recorded as an attempted
 measurement that did not separate them, not as a result either way.
-And nothing here tests whether an **overlay** of several distinct
-rotor assignments, used together as independent addressing bits rather
-than one at a time, improves on plain recursive bisection. That is a
-stronger claim than anything measured and it stays **open**.
+**The overlay, now measured rather than deferred.** A single ordering
+gives one family of contiguous blocks, so an edge straddling every one
+of its boundaries is expensive at every scale. `Overlay` counts the
+edges that **no** member of a set of rotor assignments keeps inside a
+block. At side 32:
+
+```
+  k   size |  1 curve   2 curves   4 curves   all 8   gain
+  2      4 |      960        960        960     960      0%
+  3      8 |      704        544        544     448     36%
+  4     16 |      448        448        448     448      0%
+  5     32 |      320        224        224     192     40%
+  6     64 |      192        192        192     192      0%
+  7    128 |      128         96         96      64     50%
+  8    256 |       64         64         64      64      0%
+  9    512 |       32          0          0       0    100%
+```
+
+The gain alternates, and half of it is a **theorem rather than a
+measurement**: at block sizes that are powers of four the overlay
+gains exactly nothing, because those blocks are quadrants and a global
+rotor maps quadrants to quadrants, so every member induces the same
+partition and cuts the same edges. The gain lives at the sizes in
+between — a quadrant split in two, where the rotor decides *which way*
+— and reaches 100% at the top, where two curves at right angles keep
+every edge together. The **second** member buys more than the other
+six put together; going from two members to four adds nothing at any
+level.
+
+So the owner's claim holds, with a shape: an overlay of rotor
+assignments is more useful than one, at exactly the levels where a
+single assignment leaves a choice open, and two of them capture most
+of it.
 
 **The census, from the geometry.** `PolarSpace::generators() × 2^n`
 gives the stabilizer-state counts 6, 60, 1080, 36,720, 2,423,520 —
@@ -1363,13 +1392,18 @@ Remaining rungs, sharpened by the comparison:
   and going wide enough that the tree has depth to work with. That is
   the measurement that would turn this from a cost-model statement into
   a backend result, and it is the first thing to do here.
-- **The rotor overlay.** The single-rotor-assignment recursion is
-  measured; a *set* of assignments used together — several curves as
-  independent addressing bits rather than one as an index — is not.
-  The natural measurement is whether the union of several bisection
-  trees' cut families beats one tree's, which is a question about
-  branch decompositions rather than about curves, and the machinery to
-  ask it is now present.
+- **The overlay as a representation, not only a count.** The overlay
+  is measured as a *coverage* number — which edges some member keeps
+  together. What it is not yet is a **representation**: a register that
+  actually holds several rotor assignments and routes each operation to
+  the member that keeps its support intact. That is the mosaic's
+  election on the layout axis, and the coverage numbers say it has
+  something to elect between at exactly the odd levels.
+- **The global rotor is the weak family.** The eight members here are
+  the `D₄` images of one rule. The full family is a *per-cell* rotor
+  assignment, which is vastly larger and is where a member that breaks
+  the quadrant alignment — and so gains at the even levels too — would
+  have to come from, if one exists.
 - **Higher-dimensional orderings.** `curve` is two-dimensional. The
   sibling searches the general family — a base order on the `2ⁿ`
   sub-cells plus a twist per slot from `F₂ⁿ ⋊ Sₙ` — and its first

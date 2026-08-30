@@ -190,10 +190,43 @@
 //! where boundary effects dominate. Recorded as an attempted
 //! measurement that did not separate them, not as a result either way.
 //!
-//! Second, nothing here tests whether an **overlay of several** rotor
-//! assignments — distinct curves used together as independent
-//! addressing bits rather than one at a time — improves on plain
-//! recursive bisection. That stays open.
+//! ## The overlay, measured
+//!
+//! A single ordering gives **one** family of contiguous blocks, so an
+//! edge straddling every one of its boundaries is expensive at every
+//! scale. [`Overlay`] asks whether a *set* of rotor assignments, used
+//! together, covers what one misses — and the answer has a sharp
+//! shape, half of it provable rather than measured. Lattice edges that
+//! **no** member keeps inside a block, at side 32:
+//!
+//! ```text
+//!   k   size |  1 curve   2 curves   4 curves   all 8   gain
+//!   2      4 |      960        960        960     960      0%
+//!   3      8 |      704        544        544     448     36%
+//!   4     16 |      448        448        448     448      0%
+//!   5     32 |      320        224        224     192     40%
+//!   6     64 |      192        192        192     192      0%
+//!   7    128 |      128         96         96      64     50%
+//!   8    256 |       64         64         64      64      0%
+//!   9    512 |       32          0          0       0    100%
+//! ```
+//!
+//! * At block sizes that are powers of **four** the overlay gains
+//!   **exactly nothing**, and that is a theorem rather than an
+//!   observation: those blocks are quadrants, a global rotor maps
+//!   quadrants to quadrants, so every member induces the *same
+//!   partition* and cuts the same edges.
+//! * At the sizes in between — a quadrant split in two, where the
+//!   rotor decides *which way* it splits — the overlay removes 36–50%
+//!   of the cut edges.
+//! * At the top level, where one curve halves the register along one
+//!   axis, two curves at right angles keep **every** edge together and
+//!   the count is zero.
+//!
+//! So the overlay is worth something, it is worth it at exactly the
+//! levels where a single assignment leaves a choice open, and the
+//! **second** member buys more than the other six put together —
+//! going from two members to four adds nothing at any level.
 //!
 //! ## Provenance
 //!
@@ -418,6 +451,25 @@ impl GridOrder {
         })
     }
 
+    /// Every lattice edge, as a pair of **site** indices
+    /// `y · side + x` — the lattice's own labelling, independent of
+    /// any ordering, which is what comparing orderings needs.
+    pub fn edges_by_site(&self) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for y in 0..self.side {
+            for x in 0..self.side {
+                let a = y * self.side + x;
+                if x + 1 < self.side {
+                    out.push((a, a + 1));
+                }
+                if y + 1 < self.side {
+                    out.push((a, a + self.side));
+                }
+            }
+        }
+        out
+    }
+
     /// Every lattice edge, as a pair of chain positions.
     pub fn edges(&self) -> Vec<(usize, usize)> {
         let mut out = Vec::new();
@@ -482,6 +534,136 @@ impl GridOrder {
     /// an ordering can actually move.
     pub fn total_crossings(&self) -> usize {
         self.cut_profile().into_iter().sum()
+    }
+}
+
+impl GridOrder {
+    /// The same rule with a global [`Rotor`] applied to the lattice
+    /// first — one member of the ordering's symmetry family, and
+    /// therefore one *rotor assignment* in the sense the recursion
+    /// uses the word.
+    pub fn rotated(side: usize, order: Order, rotor: Rotor) -> Result<Self> {
+        let base = GridOrder::new(side, order)?;
+        let n = side * side;
+        let mut to_chain = vec![0usize; n];
+        let mut to_point = vec![(0usize, 0usize); n];
+        for y in 0..side {
+            for x in 0..side {
+                let (rx, ry) = rotor.apply(side, x, y);
+                let i = base.chain_index(rx, ry)?;
+                to_chain[y * side + x] = i;
+                to_point[i] = (x, y);
+            }
+        }
+        Ok(GridOrder {
+            side,
+            order,
+            to_chain,
+            to_point,
+        })
+    }
+}
+
+/// Several orderings of one lattice, used together.
+///
+/// The question this answers: a single ordering gives **one** family of
+/// contiguous blocks, so an edge straddling every one of its block
+/// boundaries is expensive at every scale. Does a *set* of rotor
+/// assignments, used as independent addressings rather than one at a
+/// time, cover what one misses?
+///
+/// Measured, and the answer has a sharp shape. At block sizes that are
+/// powers of **four** the overlay gains **exactly nothing**, and that
+/// is provable rather than incidental: those blocks are quadrants, and
+/// a global rotor maps quadrants to quadrants, so every member induces
+/// the *same partition* and cuts the same edges. At the block sizes in
+/// between — a quadrant split in two, where the rotor decides *which
+/// way* it splits — the overlay removes 36–50% of the cut edges. And
+/// at the top level, where one curve cuts the register in half along
+/// one axis, two curves at right angles keep **every** edge together:
+/// the count goes to zero.
+///
+/// So the overlay is worth something, it is worth it at exactly the
+/// levels where a single assignment leaves a choice open, and two
+/// members capture most of what eight do.
+#[derive(Clone, Debug)]
+pub struct Overlay {
+    members: Vec<GridOrder>,
+}
+
+impl Overlay {
+    /// An overlay from explicit members, which must share a lattice.
+    pub fn new(members: Vec<GridOrder>) -> Result<Self> {
+        let first = members.first().ok_or_else(|| {
+            Error::InvalidState("overlay: no members — an overlay of nothing covers nothing".into())
+        })?;
+        let side = first.side();
+        if members.iter().any(|m| m.side() != side) {
+            return Err(Error::InvalidState(
+                "overlay: members must share a lattice side".into(),
+            ));
+        }
+        Ok(Overlay { members })
+    }
+
+    /// The `D₄` family of an ordering: the same rule under each of the
+    /// eight global rotors. For the Hilbert curve all eight are
+    /// distinct.
+    pub fn family(side: usize, order: Order) -> Result<Self> {
+        Overlay::new(
+            Rotor::all()
+                .into_iter()
+                .map(|r| GridOrder::rotated(side, order, r))
+                .collect::<Result<Vec<_>>>()?,
+        )
+    }
+
+    /// The members.
+    pub fn members(&self) -> &[GridOrder] {
+        &self.members
+    }
+
+    /// How many members are distinct orderings.
+    pub fn distinct(&self) -> usize {
+        let mut seen: Vec<&Vec<usize>> = Vec::new();
+        for m in &self.members {
+            if !seen.contains(&&m.to_chain) {
+                seen.push(&m.to_chain);
+            }
+        }
+        seen.len()
+    }
+
+    /// Lattice edges that **no** member keeps inside one block of size
+    /// `2^k` — what the overlay still cannot cover.
+    ///
+    /// Against [`GridOrder::block_boundary`], which asks what one
+    /// ordering pays, this asks what a whole set of them leaves over.
+    pub fn edges_cut_by_all(&self, k: u32) -> usize {
+        let size = 1usize << k;
+        let first = &self.members[0];
+        first
+            .edges_by_site()
+            .into_iter()
+            .filter(|&(a, b)| {
+                self.members
+                    .iter()
+                    .all(|m| m.to_chain[a] / size != m.to_chain[b] / size)
+            })
+            .count()
+    }
+
+    /// [`edges_cut_by_all`](Self::edges_cut_by_all) using only the
+    /// first `take` members — for measuring how fast the overlay
+    /// saturates.
+    pub fn edges_cut_by_first(&self, take: usize, k: u32) -> Result<usize> {
+        if take == 0 || take > self.members.len() {
+            return Err(Error::InvalidState(format!(
+                "overlay: {take} members requested of {}",
+                self.members.len()
+            )));
+        }
+        Ok(Overlay::new(self.members[..take].to_vec())?.edges_cut_by_all(k))
     }
 }
 
