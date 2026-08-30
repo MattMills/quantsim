@@ -513,6 +513,161 @@ bundle holding the LINK GRAPH rather than its Schmidt expansion), and
 the non-Clifford boundary (transport through magic via the
 up-embedding's ancilla frame rather than refusal).
 
+## Cross-lateral distributed registers — SHIPPED (core)
+
+`lateral` takes the logical network apart and puts the nodes on
+different machines. It rests on one observation with three parts, each
+measured rather than asserted:
+
+**1. The inter-node map is coordinatewise.** Couple nodes only
+transversally — physical qubit `i` of node A to qubit `i` of node B,
+which for a CSS code is the logical CX — and the Pauli frame
+conjugates by `x_B ^= x_A`, `z_A ^= z_B`, and a sign popcount
+`σ ^= |x_A & z_B & !(x_B ^ z_A)|`. Two XORs of *aligned* bit-vectors
+with no term coupling qubit `i` of one node to qubit `j ≠ i` of the
+other. `LateralLink::push_frame` is that rule and
+`push_frame_by_gates` is the oracle it is pinned against: **zero
+disagreements over 200,000 random strings**, signs included, across
+four window layouts. A `Y` at site 3 lands on `[3, 11]` and nowhere
+else — "lateral" is the claim that a link is a bundle of independent
+wires at one level, not a mixing matrix.
+
+**2. The syndrome is 𝔽₂-linear in the frame.** `SyndromeMap::bits`
+satisfies `bits(p ⊕ q) = bits(p) ⊕ bits(q)` exactly, for every pair,
+commuting or not — the symplectic form is bilinear and the syndrome
+cannot see the phase that non-commutation would produce (50,000 random
+pairs on an L = 3 torus). So a node holding the total syndrome — an
+ancilla-free deterministic read, `retro::syndromes`' whole point — and
+the deltas that arrived can name the syndrome of the delta that did
+**not**, by one XOR.
+
+**3. So the wire carries nothing but 𝔽₂.** 27 bytes per node per tick
+(two masks, a sign, a node and a tick), independent of `2^n`. Measured
+end to end on two L = 2 toric nodes: the coordinatewise frame after a
+`Y`-flavoured fault on A, a `Z` on B and one transversal CX **equals**
+the gate-by-gate frame, and its signature equals the syndromes a dense
+16-qubit register actually shows, on both nodes, bit for bit — 54 B
+across the wire against 1,048,576 B of amplitude, and the ratio grows
+as `2^n`.
+
+**What that makes a dropped packet.** A Pauli fault and a lost datagram
+become the same object: an unknown vector in 𝔽₂^{2n} recovered from
+`H·e = s`. The difference is that the network *knows where its loss
+happened* — the schedule names the tick's support — and the physics
+does not. Known locations turn error decoding into erasure decoding,
+worth exactly a factor of two, and `ErasureDecoder` measures it off the
+code's own generators rather than reading it off a distance:
+
+| code | `d` | errors `⌊(d−1)/2⌋` | erasures (measured) | witness |
+|---|---|---|---|---|
+| toric L=2 | 2 | 0 | **1** | `[0, 2]` |
+| toric L=3 | 3 | 1 | **2** | `[0, 2, 4]` |
+| surface d=3 | 3 | 1 | **2** | `[0, 1, 2]` |
+| surface d=5 | 5 | 2 | **4** | `[0, 1, 2, 3, 4]` |
+
+`certified_capacity` enumerates erasure sets until one carries a
+logical and `first_uncorrectable` produces that logical as a witness —
+in every case a weight-`d` operator, which is why the capacity is
+`d − 1`. L = 2 is the sharp case: `retro::Decoder` refuses a weight-1
+`X` by name (distance 2 detects and never corrects) and
+`ErasureDecoder` recovers it exactly from the same syndrome. And the
+refusals stay distinguishable — a set carrying a logical and a syndrome
+outside the set's image are different errors, never a guess either way.
+
+**Two honest clauses came out of the build.** *Correctable* and
+*unique* are different questions: on the rotated surface code the
+boundary pair `{0, 5}` carries a weight-2 stabilizer, so `Z₀` and `Z₅`
+share a syndrome — correctable (they act identically on every logical
+observable) and not unique (they are different bytes). A
+stabilizer-equivalent representative is as good as the truth for the
+code space and *poison* for a downstream linear code doing algebra on
+the bytes, so the fine layer fills only where the recovery is unique on
+the nose and counts the rest as declined. The second clause is
+`retro`'s, one level up: a syndrome is **sign-blind**. That costs
+nothing here because every sign in the system is generated *locally* by
+the link rule from windows both endpoints already hold — what crosses
+the wire is a node's own physical fault, a Hermitian Pauli with no
+sign.
+
+**The horizon, and the two layers.** `DelayGeometry` measures what the
+network actually is: nodes laid out in delay, not space, with a
+"distance" that routinely violates the triangle inequality (6 ordered
+pairs out of 12 on the example's four-node fabric, direct `d(0,3) = 11`
+against a best relay of 8). `tighten` makes it a metric and its
+temporal diameter is the horizon floor no protocol beats. `Barrier`
+then seals on **actual arrivals** rather than on the prediction that
+produced `H` — clean, repaired (parity landed inside the barrier, the
+loss was invisible), or degraded *naming the peers*; and
+`fits_in_horizon` is the inequality that decides which.
+
+`DualLayer` crosses a **fine** layer that is local to a node and spans
+ticks — the stabilizer code itself, one 𝔽₂ equation per node, read off
+its own state at **zero bandwidth** — against a **coarse** layer local
+to a tick and spanning nodes: a systematic Cauchy/GF(256) MDS code,
+`m` repairs per tick for `m/nodes` bandwidth. Each has a pattern the
+other finds trivial. Measured on 4 toric nodes × 6 ticks with node0
+and node1 losing ticks {2,3} and node2 losing tick 2:
+
+```
+coarse alone (2 parity):  2 repaired, 3 left  [(0,2), (1,2), (2,2)]
+fine   alone (no parity): 1 repaired, 4 left  [(0,2), (0,3), (1,2), (1,3)]
+crossed:                  2 coarse + 3 fine over 2 rounds, 0 left,
+                          24/24 slots byte-exact
+```
+
+Tick 2 loses three nodes against two parity shards, so the coarse layer
+is blocked; nodes 0 and 1 each hold two unknowns against one equation,
+so the fine layer is blocked. The coarse repair at tick 3 leaves them
+holding one unknown each, at which point their own code constraint
+names it — and the layer that closes the pattern is the one that cost
+no bandwidth at all, because it is the code that was already protecting
+the qubits. (The construction is `holochron`'s dual tower with the
+quantum code standing in for the fine field-scale layer; the barrier,
+the delay geometry and `fits_in_horizon` are `cliff`'s.)
+
+**Honest scope, stated.** The distributed vocabulary is Clifford —
+physical Paulis at any weight and transversal CX; a `t` does not
+transport through a Pauli frame and `compile_clifford` already refuses
+it by name. This is a *simulation* of a distributed run: the loss, the
+delays and the clocks are injected, not measured off a socket. What is
+real is the algebra — the coordinatewise link rule, the syndrome's
+linearity, the erasure capacity measured off the code, the exact
+GF(256) repair. And it buys **fault tolerance and bandwidth, not
+speed**: splitting a register across nodes does not shrink `2^n`, it
+shrinks what has to cross the wire, from amplitudes to 27 bytes a tick.
+
+Remaining rungs, in the order they matter:
+
+- **A real socket under it.** `DelayGeometry` takes injected delays and
+  `Barrier` takes injected arrivals. Driving both from a live
+  transport — measuring the delay tails rather than declaring them, and
+  letting `HorizonPolicy`-style estimation set `H` — is what turns the
+  measured algebra into a measured system. The interface is already the
+  right shape: everything above consumes arrivals, not sockets.
+- **Speculation, and rollback.** The barrier gives a sealed history;
+  the other half of running in real time without being in real time is
+  a speculative present rebuilt forward from the seal each tick, rolled
+  back when the real inputs land. For a Pauli frame that rollback is
+  free — re-XOR the deltas in the new order — which is a strong hint
+  that the frame is the right thing to speculate on.
+- **Measurement outcomes on the wire.** Today the payload is the frame.
+  A measurement-conditioned distributed run also has to replicate
+  outcomes, and those are *not* 𝔽₂-linear in the frame; the natural
+  move is the schedule's `FeedbackOp` tree as the shared program with
+  outcomes as extra shards, which the coarse layer already codes over
+  unchanged.
+- **Erasure decoding past the union bound.** The fine layer resolves a
+  node when its unknowns narrow to one. A node with several unknowns
+  whose supports are *disjoint* is still determined by the single
+  residual equation when the combined support is correctable; taking
+  that would strictly widen the fine layer at no bandwidth cost.
+- **Distance from the geometry.** `min_horizon` and
+  `ErasureDecoder::certified_capacity` are two numbers about the same
+  network — how long a loss can take to repair, and how much loss the
+  code absorbs. Choosing the code distance *from* the measured delay
+  tail (rather than picking both independently) is the design question
+  this module makes askable and does not yet answer.
+
 ## Further non-Cayley–Dickson explorations
 
 `SplitComplex` establishes the pattern (indefinite Born form surfaced through

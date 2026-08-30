@@ -940,6 +940,47 @@ measure rather than hide.
   irrational geometry enters only as a measured approximation with a
   reported error.
 
+- **Cross-lateral distributed registers**
+  ([`lateral`](src/lateral.rs)) — the logical network with the nodes on
+  different machines. Couple nodes only **transversally** (qubit `i` to
+  qubit `i`, the logical CX for a CSS code) and the Pauli frame
+  conjugates by `x_B ^= x_A`, `z_A ^= z_B` and a sign popcount: two
+  XORs of *aligned* bit-vectors, no term reaching a differently-indexed
+  qubit — pinned against gate-by-gate conjugation at **0 disagreements
+  in 200,000 random strings**, signs included. The syndrome is
+  𝔽₂-**linear** in the frame (`bits(p ⊕ q) = bits(p) ⊕ bits(q)`, every
+  pair, commuting or not), so a node that reads its own syndrome — an
+  ancilla-free deterministic read — can name the syndrome of the delta
+  that did *not* arrive. So the wire carries nothing but 𝔽₂: **27
+  bytes** per node per tick, independent of `2^n`. Measured on two toric
+  nodes, the distributed frame equals the gate-by-gate one and its
+  signature equals the syndromes a dense register actually shows, bit
+  for bit — 54 B across the wire against 1 MiB of amplitude.
+  **And that makes a dropped packet a Pauli fault**: both are an
+  unknown vector in 𝔽₂ recovered from `H·e = s`, except the network
+  knows *where* its loss happened and the physics does not. Known
+  locations turn error decoding into **erasure** decoding, worth
+  exactly a factor of two — measured off the code's own generators, not
+  read off a distance: erasure capacity `d − 1` against
+  `⌊(d−1)/2⌋` (toric L=2 **1** vs 0, L=3 **2** vs 1, surface d=3 **2**
+  vs 1, d=5 **4** vs 2), with the weight-`d` logical that ends it
+  produced as a witness. At L = 2 the same weight-1 fault that
+  [`retro::Decoder`](src/retro.rs) refuses by name is recovered
+  exactly as an erasure. `DelayGeometry` measures the network's real
+  metric (6 of 12 ordered pairs violate the triangle inequality on the
+  example fabric; tightening drops the diameter 11 → 8) and its
+  temporal diameter is the horizon floor; `Barrier` seals on **actual
+  arrivals** — clean, repaired, or degraded naming the peers — never on
+  the prediction that set `H`. And `DualLayer` crosses the **fine**
+  layer (the stabilizer code, per node, across ticks, at *zero
+  bandwidth*) against the **coarse** one (a Cauchy/GF(256) MDS code per
+  tick, across nodes): on a pattern where coarse alone leaves 3 slots
+  dark and fine alone leaves 4, the two crossed close all 24
+  byte-exactly in 2 rounds — and the layer that finishes it is the code
+  that was already protecting the qubits. Honest scope: the vocabulary
+  is Clifford, the loss and delays are injected rather than measured
+  off a socket, and it buys fault tolerance and bandwidth — not speed.
+
 ## Quick start
 
 ```rust
@@ -1030,8 +1071,8 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 845 tests (88 unit + 750 across seventy
-integration suites + 7 doctests; one more — the 17 s measurement that
+`cargo test` runs 958 tests (88 unit + 862 across eighty
+integration suites + 8 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
@@ -1517,6 +1558,30 @@ entirely trivial accessors and defensive guards:
   closed form `Σ(√2)^j`; everything certified against the exact D[ω]
   ring and Ball containment, and the whole family swept through the
   benchmark harness over ten backends.
+- **lateral** — the cross-lateral distributed suite: the
+  coordinatewise link rule against gate-by-gate conjugation on 80,000
+  random strings across four window layouts (signs included) and the
+  no-third-site property per input site; the syndrome's 𝔽₂ linearity
+  over 50,000 random pairs on an L = 3 torus, and agreement with
+  `retro::signature`; erasure capacity enumerated off the code's own
+  generators at `d − 1` for toric L ∈ {2,3} and surface d ∈ {3,5}, with
+  a weight-`d` logical produced as the witness that ends it, and the
+  factor of two against the error decoder pinned at L = 2 (the weight-1
+  `X` that `Decoder` refuses by name, recovered exactly as an erasure);
+  the decoder's two distinguishable refusals (a set carrying a logical,
+  a syndrome outside the set's image) and every reachable syndrome
+  decoding to the fault that produced it; *correctable* versus *unique*
+  separated on the surface code's weight-2 boundary check; the
+  distributed frame equal to the gate-by-gate one **and** its signature
+  equal to the syndromes a dense 16-qubit register shows, on both
+  nodes; a straddling "local" Pauli refused; the wire form round-tripped
+  1,000 times; triangle violations found and tightened away with the
+  horizon floor read off the diameter; the barrier sealing clean,
+  waiting, repaired and degraded in sequence with the peers named; the
+  MDS parity exact on every 2-of-4 erasure pattern and refusing 3 by
+  name; and the dual tower's cross-scale synergy — a pattern that
+  leaves 3 slots dark under the coarse layer alone and 4 under the fine
+  layer alone, closed byte-exactly by the two crossed.
 - **device_geometries** — real machines reproduced structurally
   (Falcon-27 heavy-hex: 27 sites, 28 couplers, degree ≤ 3, the known
   adjacencies; Sycamore-class 54-site diagonal lattice; ion-trap
@@ -1992,6 +2057,13 @@ src/
                  across (reach per unit cost of the native cross-scale
                  operators; the coset class they cannot leave)
   causal.rs      backward cones, causal diamonds, dual-time resolution
+  lateral.rs     cross-lateral distributed registers: the transversal
+                 link as a coordinatewise F2 frame map, the F2-linear
+                 syndrome, erasure decoding at d-1 (measured, with the
+                 logical that ends it as a witness), the delay geometry
+                 and arrival-tracked barrier, and the dual tower —
+                 the quantum code as the free fine layer of the
+                 network's erasure code
   clock.rs       the time system inside the register: a selector qudit
                  over representation-heterogeneous branches (shared
                  states, lazy interference, polynomial Gram machinery),
@@ -2052,7 +2124,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           seventy integration suites (see Testing)
+tests/           eighty integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -2093,7 +2165,10 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  gate_memoization (entry reuse, the fusion dial, and
                  branch re-exploration over a shared prefix),
                  phase_degree (the degree law, the Clifford hierarchy
-                 rediscovered, and the sqrt(2) identified)
+                 rediscovered, and the sqrt(2) identified),
+                 lateral_network (the coordinatewise link, the frame as
+                 the wire, erasures vs errors, the horizon budget, and
+                 the two layers crossed)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

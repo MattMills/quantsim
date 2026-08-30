@@ -96,6 +96,7 @@ pub mod guard;
 pub mod harness;
 pub mod heisenberg;
 pub mod horizon;
+pub mod lateral;
 pub mod library;
 pub mod lift;
 pub mod logical;
