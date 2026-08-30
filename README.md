@@ -1020,6 +1020,42 @@ measure rather than hide.
   can be 8 slices or 128, so the object's size says nothing about how
   many pieces it is in.
 
+- **The residual as a mosaic** ([`pathsum`](src/pathsum.rs)) —
+  [`PathSum`](src/pathsum.rs) holds a circuit's closed form and reduces
+  it to `h*`, its irreducible path content, which is **zero for every
+  Clifford circuit at any width** and grows with the T-count rather
+  than the register. Readout then paid `2^{h*}` by enumeration.
+  `amplitude_merged` declines that too, treating the residual the way
+  [`MosaicState`](src/backend/mosaic.rs) treats a register — as a
+  partition with a lens per part: **factor** (a disconnected
+  interaction graph makes the sum a product), **merge** (two
+  components that are the same polynomial up to renaming have the same
+  sum, so the second costs a lookup — `distinct_forms` is what the
+  route pays in place of `2^{h*}`), and **branch-and-reduce** (pin one
+  variable and run the rewrite rules again; a residual that stalls
+  frequently *unstalls* once one variable is fixed). Same number as
+  `amplitude` — asserted, not approximated, at 1e-16 over 200 random
+  circuits × every amplitude × every policy.
+  What that measures: **thin magic is logarithmic**, `(HT)^k H` has
+  `h* = k` and costs 19/29/39/51/**63** nodes at k = 8/16/32/64/**128**
+  — `2^128` by enumeration. **Width alone is free**: at the same qubit
+  count, T-count and depth, the 1D twin stays linear to 36 qubits and
+  t = 72 while the 2D grid pulls away, ratio 1.0 → 19.0 as the side
+  grows — the obstruction is *separator growth in the coupling graph*,
+  not register size. And the surviving exponential is in **√t, not t**:
+  on the square family (n qubits, n layers, `t = n²`), `log2(nodes)/n`
+  settles at ~1.5 across n = 3..10, so 31,513 nodes stand against
+  `2^90 ≈ 1.2e27`. A strict reduction of the growth law, and still a
+  growth law — stated as such.
+  The branching choice is an **election, measured**: connectivity is
+  the whole game on a chain and *flat* on a shallow grid (removing any
+  one variable disconnects nothing), degree is the reverse, and each
+  single signal is 2–45× worse than the other somewhere. Composing
+  them wins in every regime — the mosaic register's finding on a
+  different axis, that the right lens is a property of the part rather
+  than of the solver. Every policy returns the same amplitude; the
+  budget refuses **by name** rather than quietly enumerating.
+
 ## Quick start
 
 ```rust
@@ -1110,7 +1146,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 966 tests (88 unit + 870 across eighty-one
+`cargo test` runs 975 tests (88 unit + 879 across eighty-two
 integration suites + 8 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1597,6 +1633,17 @@ entirely trivial accessors and defensive guards:
   closed form `Σ(√2)^j`; everything certified against the exact D[ω]
   ring and Ball containment, and the whole family swept through the
   benchmark harness over ten backends.
+- **pathsum_merge** — the residual-mosaic suite: the merged route
+  asserted equal to enumeration at 1e-16 over 200 random circuits ×
+  every amplitude × every branching policy; a Clifford circuit
+  reaching the solver as one leaf with nothing branched; the budget
+  refusing by name; thin magic logarithmic (`h* = 64` in under 100
+  nodes, where enumeration is 1.8e19); width asserted innocent and the
+  2D/1D gap asserted *widening*; the square family's `log2(nodes)/n`
+  asserted to settle rather than grow — the `√t` law, pinned as a
+  property of the circuit; and the election, with each single signal
+  asserted to lose to the other somewhere and the composed one
+  asserted to beat both everywhere.
 - **stitch** — the symplectic sharding suite: the normal form
   recovering `(r, h)` off the generators of four codes (toric L ∈ {2,3},
   surface d ∈ {3,5}) with the radical asserted isotropic *and* central
@@ -2187,7 +2234,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           eighty-one integration suites (see Testing)
+tests/           eighty-two integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -2234,7 +2281,10 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  the two layers crossed),
                  stitch_shards (the normal form read off a code, the
                  pairs that cannot be held in one place, the slices on
-                 amplitudes, and where the exponential went)
+                 amplitudes, and where the exponential went),
+                 magic_mosaic (what collapses in the path-sum residual,
+                 what does not, and why the branching election has to
+                 be measured)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

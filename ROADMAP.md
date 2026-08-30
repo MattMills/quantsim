@@ -776,6 +776,140 @@ Remaining rungs:
   valuation. There is no analogue here yet, and `quantsim`'s `padic`
   module is the natural place for one.
 
+## The residual as a mosaic (path-sum merges) — SHIPPED (core)
+
+`pathsum` reduces a circuit to `h*`, its irreducible path content —
+zero for every Clifford circuit at any width, growing with the T-count
+rather than the register. Readout then enumerated `2^{h*}`, whatever
+the residual looked like. `amplitude_merged` declines that the way
+`MosaicState` declines a single representation: the residual is a
+**partition**, and each part gets the lens it deserves.
+
+Three lenses, and the third is the one enumeration cannot reach:
+
+* **factor** — a disconnected interaction graph makes the sum a
+  *product*, so each component is a separate, separately-priced
+  problem. The same move `FactoredState` makes on the register.
+* **merge** — two components that are the same polynomial *up to
+  variable renaming* have the same sum, so the second costs a lookup.
+  These are the merges; `MergeStats::distinct_forms` is what the route
+  pays in place of `2^{h*}`. Canonicalization is a deterministic
+  relabelling refined by an invariant, which makes the memo **sound by
+  construction** (equal keys are equal polynomials up to renaming) and
+  incomplete by degree (a weak refinement misses merges, never returns
+  a wrong one).
+* **branch and reduce** — pin one variable and run [E]/[G]/[V] again on
+  each child. A residual that stalls under the rules frequently
+  *unstalls* once one variable is fixed, and the child collapses to a
+  closed form instead of to two more branches.
+
+The answer is identical to `amplitude` — asserted at 1e-16 over 200
+random circuits × every amplitude × every branching policy, not
+approximated — and the budget is a **named refusal**, never a silent
+fallback to enumeration.
+
+**What it measures.** Three regimes, and the third is the one that
+matters:
+
+```
+(HT)^k H          h* = k        enumerate 2^k       nodes 19/29/39/51/63
+                                                    at k = 8/16/32/64/128
+
+same qubits/t/depth, 1D vs 2D:
+  side  qubits    t   h*    1D nodes   2D nodes   ratio
+     3       9   18    9          17         25     1.5x
+     4      16   32   16          29         59     2.0x
+     5      25   50   25          37        259     7.0x
+     6      36   72   36          45        853    19.0x
+
+square family (n qubits, n layers, t = n²):
+    n     t    h*   enumerate      nodes   log2(nodes)/n
+    5    25    20   2^20              97            1.32
+    7    49    42   2^42            1773            1.54
+    8    64    56   2^56            4361            1.51
+   10   100    90   2^90           31513            1.49
+```
+
+**Thin magic is logarithmic** — `2^128` by enumeration is 63 nodes.
+**Width alone is free** — the 1D twin stays linear to 36 qubits and
+t = 72 while its 2D twin, with identical qubit count, T-count and
+depth, pulls away by 19×; the obstruction is *separator growth in the
+coupling graph*, not register size. And the surviving exponential is
+in **√t, not t**: `log2(nodes)/n` settles at ~1.5 across n = 3..10, so
+31,513 nodes stand against `2^90 ≈ 1.2e27`. That is a strict reduction
+of the growth law and **not** a removal of it, and the module says so.
+
+**The election, and why it is the mosaic's finding.** Once a component
+stalls, which variable to pin is a cost decision with an order of
+magnitude in it. Measured head to head:
+
+```
+family                     First    MaxDeg    MinRem   Elected
+(HT)^64 H  (a chain)         255       131        51        51
+grid 6x6 L=2 (shallow)      3263      4469      1813       853
+square n=8 (deep)          21321    197485     11345      4361
+```
+
+Connectivity is the whole game on a chain — cutting the middle turns
+`2^k` into `O(log k)` — and **flat** on a shallow grid, where removing
+any one variable disconnects nothing and degree is the only signal
+left. Each single signal is 2–45× worse than the other somewhere.
+`Pivot::Elected` composes them (connectivity first, degree on the ties)
+and is the best or tied-best in every regime, strictly better than both
+parents where they disagree most. That is `MosaicState`'s result on a
+different axis: *the right lens is a property of the part, not of the
+solver*, so the election belongs per component and has to be measured.
+Every policy returns the same amplitude; the choice is cost only.
+
+**Cross-validation, which is the point.** These laws were first
+measured by a sibling engine over `ℤ[ζ₈]` with an entirely different
+rewrite system (ℤ₈ cofactor cases on variable-monomials, against this
+crate's [E]/[G]/[V] rules on products of parities). Two independent
+implementations, no shared code, same three regimes and the same
+`√t` law — including the same 35-node count for `(HT)^24 H` under a
+connectivity-first pivot. A growth law reproduced across rule sets is
+a property of the circuits.
+
+**Where this sits, honestly.** Everything that collapses here is a
+collapse theory already predicts: thin/1D magic is matrix-product
+simulable, and the surviving wall is the treewidth law
+(Markov–Shi) arrived at from canonical-form memoization rather than
+from tensor contraction. The instrument keeps drawing the boundary
+where independent theory draws it, which validates the instrument and
+means no collapse found so far is a new one. Whether the
+grown-separator regime collapses under *any* representation is open —
+`BQP` vs `BPP` is open, `BQP ⊆ PSPACE` is all that is proved, and no
+artifact here bears on it either way.
+
+Remaining rungs:
+
+- **A stronger canonicalizer.** The refinement is three rounds of
+  colour propagation with the original index breaking ties, so
+  isomorphic residuals presented in different orders are missed. Affine
+  changes of variable and local-complementation moves are the known
+  next family, and the 1D column's residual polynomial growth
+  (`~w²`–`w³` rather than flat) is the visible symptom of exactly this
+  — a solver artifact to attack, not a wall.
+- **Per-component lens election, not just per-component pivot.** The
+  election currently chooses a *variable*; the mosaic's full contract
+  chooses a *representation*, with both predictions ledgered. A
+  component that is a bounded-treewidth graph wants tensor
+  contraction; one that is a low-rank quadratic form wants the Gauss
+  sum in closed form; one that is dense wants neither. Making the lens
+  itself the elected thing is the next structural rung.
+- **Merges across components, not only within.** The memo recognizes a
+  component it has seen before. It does not recognize that two
+  *different* components have proportional sums, which is a strictly
+  larger merge relation and the natural place a stabilizer-rank-style
+  decomposition would enter.
+- **The composition question.** Every fragment here is closed and
+  every collapse is a structured-instance collapse. The open case is
+  not any single fragment but their *composition* — the reason the QFT
+  alone is easy, modular exponentiation alone is easy, and Shor is
+  neither. A tool that priced a composition by its parts' invariants
+  rather than by re-reducing the whole would be the first thing here
+  to speak to that question at all.
+
 ## Further non-Cayley–Dickson explorations
 
 `SplitComplex` establishes the pattern (indefinite Born form surfaced through

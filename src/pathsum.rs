@@ -1509,3 +1509,622 @@ pub fn operator(circuit: &Circuit<C64>) -> Result<PathSum> {
     ps.reduce();
     Ok(ps)
 }
+
+// ── the residual as a mosaic: components, merges, branch-and-reduce ──
+
+/// How the solver picks the variable to branch when a component
+/// stalls — the mosaic's *election*, on the residual's axis.
+///
+/// [`MosaicState`](crate::backend::MosaicState) chooses a merged
+/// region's representation by predicting each candidate's cost and
+/// ledgering both predictions. The same question arises here once a
+/// component refuses to reduce: which variable to pin. The choice does
+/// not affect the answer — every policy sums the same polynomial — and
+/// it affects the work by orders of magnitude, so it is a parameter
+/// with measurements attached rather than a constant buried in the
+/// solver.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pivot {
+    /// The lowest-indexed variable. Cheapest to choose, and on a
+    /// chain-shaped residual it peels one end at a time.
+    First,
+    /// The variable appearing in the most terms.
+    MaxDegree,
+    /// The variable whose removal leaves the smallest largest
+    /// component — the **separator-aware** choice.
+    ///
+    /// This is the one that knows what the growth law is actually made
+    /// of. Cutting a path in the middle leaves two independent halves
+    /// that factor *and* memoize against each other; cutting an end
+    /// leaves one path of length `k − 1` and no factorization at all.
+    /// Scoring costs one component pass per candidate, which is real
+    /// work and is why it is not the only policy on offer.
+    MinRemainder,
+    /// **The election**: minimize the largest remaining component, and
+    /// break the ties on degree.
+    ///
+    /// Measured, neither signal dominates. On a chain-shaped residual
+    /// [`MinRemainder`](Self::MinRemainder) is the whole game — cutting
+    /// the middle turns `2^k` into `O(log k)` nodes — and
+    /// [`MaxDegree`](Self::MaxDegree) is 2.5× worse. On a shallow 2D
+    /// grid the connectivity signal is *flat*, because removing any one
+    /// variable disconnects nothing, and degree is the only signal
+    /// left: there `MaxDegree` is 3× better and `MinRemainder` picks
+    /// almost arbitrarily. Composing them recovers both regimes, which
+    /// is why this is the default — and the reason to compose rather
+    /// than choose is the mosaic's, exactly: the right lens is a
+    /// property of the part, not of the solver.
+    #[default]
+    Elected,
+}
+
+/// What the merged evaluation did — the mosaic's ledger.
+///
+/// [`MosaicState`](crate::backend::MosaicState) elects a representation
+/// per *region* of the register and ledgers every merge and migration.
+/// This is the same contract on the residual: a lens per *component* of
+/// the phase polynomial's interaction graph, with the merges counted
+/// and the refusals named.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MergeStats {
+    /// Sub-sums evaluated — the work, against `2^{h*}` for enumeration.
+    pub nodes: u64,
+    /// Nodes the rewrite rules finished outright, with nothing left to
+    /// sum. The free lens.
+    pub leaves: u64,
+    /// Sub-sums answered from the memo. **These are the merges**: two
+    /// residuals that are the same polynomial up to renaming have the
+    /// same sum, and the second one costs a lookup.
+    pub memo_hits: u64,
+    /// Distinct canonical sub-sums computed — the memo's size, and the
+    /// honest measure of what this route pays instead of `2^{h*}`.
+    pub distinct_forms: u64,
+    /// Components factored out (summed over every split). A
+    /// disconnected interaction graph makes the sum a *product*, which
+    /// is the same move the factored backend makes on the register.
+    pub components: u64,
+    /// Branches after which the rewrite rules consumed more than the
+    /// branched variable — the migration back to the cheap lens, which
+    /// is where branch-and-reduce beats plain enumeration.
+    pub reduced_after_branch: u64,
+    /// Deepest branch nesting reached.
+    pub max_depth: u32,
+}
+
+/// One connected component of the residual: its variables and the terms
+/// that touch them, with every mask restricted to the live variables so
+/// the polynomial is exactly what it evaluates as.
+#[derive(Clone, Debug)]
+struct Component {
+    vars: Vec<usize>,
+    terms: Vec<(Term, Turn)>,
+}
+
+/// A component's canonical form: the polynomial with variables
+/// relabelled by a deterministic order, so that equal keys are equal
+/// polynomials up to renaming — which is all the sum depends on.
+type CanonKey = Vec<(Vec<Vec<u32>>, Turn)>;
+
+/// One variable's local signature in a refinement round: the arity of a
+/// term it sits in, how many variables that term touches, the term's
+/// coefficient, and the sorted colours of its co-occurring variables.
+type VarSignature = (usize, usize, Turn, Vec<u64>);
+
+/// Order a component's variables deterministically, refining by an
+/// invariant first so that the fallback on the original index only ever
+/// breaks ties *within* a refinement class.
+///
+/// Soundness does not depend on the refinement: any deterministic
+/// ordering makes `canonicalize` a function of the labelled component,
+/// so equal keys mean the two polynomials differ by a variable
+/// permutation and therefore have equal sums. What the refinement buys
+/// is **completeness** — how many genuinely isomorphic residuals are
+/// recognized as the same and merged. A weak order misses merges; it
+/// never returns a wrong one.
+fn refine_order(comp: &Component, local: &HashMap<usize, usize>) -> Vec<usize> {
+    let k = comp.vars.len();
+    let per_term: Vec<Vec<usize>> = comp
+        .terms
+        .iter()
+        .map(|(t, _)| {
+            let mut vs: Vec<usize> = Vec::new();
+            for m in t {
+                for v in m.iter() {
+                    if let Some(&i) = local.get(&v) {
+                        vs.push(i);
+                    }
+                }
+            }
+            vs.sort_unstable();
+            vs.dedup();
+            vs
+        })
+        .collect();
+
+    let mut colour: Vec<u64> = vec![0; k];
+    for _ in 0..3 {
+        let mut next: Vec<Vec<VarSignature>> = vec![Vec::new(); k];
+        for (ti, (t, c)) in comp.terms.iter().enumerate() {
+            let mut neigh: Vec<u64> = per_term[ti].iter().map(|&v| colour[v]).collect();
+            neigh.sort_unstable();
+            for &v in &per_term[ti] {
+                next[v].push((t.len(), per_term[ti].len(), *c, neigh.clone()));
+            }
+        }
+        for (v, sig) in next.iter_mut().enumerate() {
+            sig.sort();
+            // A cheap stable digest: collisions cost merges, never
+            // correctness, because the key itself is the polynomial.
+            let mut h: u64 = colour[v].wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            for (a, b, c, ns) in sig.iter() {
+                h = h
+                    .wrapping_mul(31)
+                    .wrapping_add(*a as u64)
+                    .wrapping_mul(31)
+                    .wrapping_add(*b as u64)
+                    .rotate_left(7)
+                    ^ *c;
+                for n in ns {
+                    h = h.wrapping_mul(1_000_003).wrapping_add(*n);
+                }
+            }
+            colour[v] = h;
+        }
+    }
+
+    let mut order: Vec<usize> = (0..k).collect();
+    order.sort_by_key(|&i| (colour[i], i));
+    // `order[rank] = local index`; invert to `rank_of[local] = rank`.
+    let mut rank_of = vec![0usize; k];
+    for (rank, &i) in order.iter().enumerate() {
+        rank_of[i] = rank;
+    }
+    rank_of
+}
+
+/// The component as a canonical polynomial over `0..k`.
+fn canonicalize(comp: &Component) -> CanonKey {
+    let local: HashMap<usize, usize> = comp.vars.iter().enumerate().map(|(i, &v)| (v, i)).collect();
+    let rank_of = refine_order(comp, &local);
+    let mut out: CanonKey = comp
+        .terms
+        .iter()
+        .map(|(t, c)| {
+            let mut masks: Vec<Vec<u32>> = t
+                .iter()
+                .map(|m| {
+                    let mut ids: Vec<u32> = m
+                        .iter()
+                        .filter_map(|v| local.get(&v).map(|&i| rank_of[i] as u32))
+                        .collect();
+                    ids.sort_unstable();
+                    ids
+                })
+                .collect();
+            masks.sort();
+            (masks, *c)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+impl PathSum {
+    /// A bare sum over `comp`'s variables: no output forms, unit scale,
+    /// zero global phase — so its value is exactly `Σ_y ω^{φ(y)}`.
+    fn from_component(comp: &Component) -> PathSum {
+        let mut active = Mask::zero();
+        let mut nvars = 0usize;
+        for &v in &comp.vars {
+            active.set(v);
+            nvars = nvars.max(v + 1);
+        }
+        let mut ps = PathSum {
+            qubits: 0,
+            forms: Vec::new(),
+            poly: HashMap::new(),
+            e_half: 0,
+            phase: 0,
+            nvars,
+            active,
+            zero: false,
+            inputs: 0,
+            splits: 0,
+            cut_short: false,
+        };
+        for (t, c) in &comp.terms {
+            ps.add_term(t.clone(), *c);
+        }
+        ps
+    }
+
+    /// Split a reduced sum into a scalar prefactor and the connected
+    /// components of its interaction graph.
+    ///
+    /// Disjoint components make the sum a **product** — the same
+    /// factorization [`FactoredState`](crate::backend::FactoredState)
+    /// makes on the register, here on the residual — and each factor is
+    /// then a separate, separately-memoizable problem.
+    fn split_residual(&self) -> (C64, Vec<Component>) {
+        let mut turn = self.phase;
+        let mut live: Vec<(Vec<Mask>, Turn, Vec<usize>)> = Vec::new();
+        let mut used = Mask::zero();
+
+        for (t, c) in &self.poly {
+            if t.is_empty() {
+                // The empty product fires on every assignment.
+                turn = turn.wrapping_add(*c);
+                continue;
+            }
+            let mut masks = Vec::with_capacity(t.len());
+            let mut vs: Vec<usize> = Vec::new();
+            let mut dead = false;
+            for m in t.iter() {
+                let mm = m.and(&self.active);
+                if mm.is_zero() {
+                    // A parity with no live variable is even on every
+                    // assignment, so the product never fires at all.
+                    dead = true;
+                    break;
+                }
+                for v in mm.iter() {
+                    vs.push(v);
+                }
+                masks.push(mm);
+            }
+            if dead {
+                continue;
+            }
+            vs.sort_unstable();
+            vs.dedup();
+            for &v in &vs {
+                used.set(v);
+            }
+            live.push((masks, *c, vs));
+        }
+
+        let free = self.active.count() - used.count();
+        let scale = 2f64.powf((self.e_half as f64) / 2.0 + free as f64);
+        let pre = turn_to_c64(turn) * C64::new(scale, 0.0);
+
+        // Union–find over the live variables.
+        let vars: Vec<usize> = used.iter().collect();
+        let index: HashMap<usize, usize> = vars.iter().enumerate().map(|(i, &v)| (v, i)).collect();
+        let mut parent: Vec<usize> = (0..vars.len()).collect();
+        fn find(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            i
+        }
+        for (_, _, vs) in &live {
+            let mut it = vs.iter().map(|v| index[v]);
+            if let Some(first) = it.next() {
+                let a = find(&mut parent, first);
+                for j in it {
+                    let b = find(&mut parent, j);
+                    parent[b] = a;
+                }
+            }
+        }
+
+        let mut groups: HashMap<usize, Component> = HashMap::new();
+        for (masks, c, vs) in live {
+            let root = find(&mut parent, index[&vs[0]]);
+            let e = groups.entry(root).or_insert_with(|| Component {
+                vars: Vec::new(),
+                terms: Vec::new(),
+            });
+            e.terms.push((canonical(masks), c));
+        }
+        for &v in &vars {
+            let root = find(&mut parent, index[&v]);
+            if let Some(g) = groups.get_mut(&root) {
+                g.vars.push(v);
+            }
+        }
+        let mut comps: Vec<Component> = groups.into_values().collect();
+        for c in comps.iter_mut() {
+            c.vars.sort_unstable();
+            // Restriction can make two terms equal; merge their turns so
+            // the canonical key is the polynomial and not its spelling.
+            let mut merged: HashMap<Term, Turn> = HashMap::new();
+            for (t, turn) in c.terms.drain(..) {
+                let e = merged.entry(t).or_insert(0);
+                *e = e.wrapping_add(turn);
+            }
+            c.terms = merged.into_iter().filter(|(_, t)| *t != 0).collect();
+            c.terms.sort();
+        }
+        comps.retain(|c| !c.terms.is_empty());
+        // Variables left with no term after cancellation are free.
+        let mut recovered = 0i32;
+        for c in comps.iter_mut() {
+            let mut touched: Vec<usize> = Vec::new();
+            for (t, _) in &c.terms {
+                for m in t {
+                    for v in m.iter() {
+                        touched.push(v);
+                    }
+                }
+            }
+            touched.sort_unstable();
+            touched.dedup();
+            recovered += (c.vars.len() - touched.len()) as i32;
+            c.vars = touched;
+        }
+        let pre = pre * C64::new(2f64.powi(recovered), 0.0);
+        comps.sort_by(|a, b| a.vars.cmp(&b.vars));
+        (pre, comps)
+    }
+}
+
+/// Depth-first evaluator: factor components, merge canonical forms,
+/// branch one variable and let the rewrite rules run again.
+struct MergeSolver {
+    memo: HashMap<CanonKey, C64>,
+    stats: MergeStats,
+    budget: u64,
+    pivot: Pivot,
+}
+
+/// Connected components of `vars` under co-occurrence in `terms`,
+/// ignoring `skip` — the primitive both the splitter and the
+/// separator-aware pivot are built from.
+fn component_sizes(vars: &[usize], terms: &[(Term, Turn)], skip: usize) -> Vec<usize> {
+    let index: HashMap<usize, usize> = vars
+        .iter()
+        .filter(|&&v| v != skip)
+        .enumerate()
+        .map(|(i, &v)| (v, i))
+        .collect();
+    let mut parent: Vec<usize> = (0..index.len()).collect();
+    fn find(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    for (t, _) in terms {
+        let mut seen: Vec<usize> = Vec::new();
+        for m in t {
+            for v in m.iter() {
+                if let Some(&i) = index.get(&v) {
+                    seen.push(i);
+                }
+            }
+        }
+        seen.sort_unstable();
+        seen.dedup();
+        let mut it = seen.into_iter();
+        if let Some(first) = it.next() {
+            let a = find(&mut parent, first);
+            for j in it {
+                let b = find(&mut parent, j);
+                parent[b] = a;
+            }
+        }
+    }
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+    for i in 0..index.len() {
+        let r = find(&mut parent, i);
+        *counts.entry(r).or_insert(0) += 1;
+    }
+    let mut sizes: Vec<usize> = counts.into_values().collect();
+    sizes.sort_unstable();
+    sizes
+}
+
+impl Pivot {
+    /// The variable this policy would branch. Deterministic: ties break
+    /// on the variable index, so a run is reproducible.
+    fn choose(self, comp: &Component) -> usize {
+        match self {
+            Pivot::First => comp.vars[0],
+            Pivot::MaxDegree => {
+                let mut best = (0usize, comp.vars[0]);
+                for &v in &comp.vars {
+                    let d = comp
+                        .terms
+                        .iter()
+                        .filter(|(t, _)| t.iter().any(|m| m.bit(v)))
+                        .count();
+                    if d > best.0 {
+                        best = (d, v);
+                    }
+                }
+                best.1
+            }
+            Pivot::MinRemainder => {
+                let mut best: Option<(usize, usize, usize)> = None;
+                for &v in &comp.vars {
+                    let sizes = component_sizes(&comp.vars, &comp.terms, v);
+                    let largest = sizes.last().copied().unwrap_or(0);
+                    let score = (largest, usize::MAX - sizes.len(), v);
+                    let better = match best {
+                        None => true,
+                        Some(b) => score < b,
+                    };
+                    if better {
+                        best = Some(score);
+                    }
+                }
+                best.map_or(comp.vars[0], |b| b.2)
+            }
+            Pivot::Elected => {
+                let mut best: Option<(usize, usize, usize, usize)> = None;
+                for &v in &comp.vars {
+                    let sizes = component_sizes(&comp.vars, &comp.terms, v);
+                    let largest = sizes.last().copied().unwrap_or(0);
+                    let degree = comp
+                        .terms
+                        .iter()
+                        .filter(|(t, _)| t.iter().any(|m| m.bit(v)))
+                        .count();
+                    // Connectivity first, then degree, then the index so
+                    // the run is reproducible.
+                    let score = (largest, usize::MAX - sizes.len(), usize::MAX - degree, v);
+                    let better = match best {
+                        None => true,
+                        Some(b) => score < b,
+                    };
+                    if better {
+                        best = Some(score);
+                    }
+                }
+                best.map_or(comp.vars[0], |b| b.3)
+            }
+        }
+    }
+}
+
+impl MergeSolver {
+    /// The value of a **reduced** sum, including its scale and phase.
+    fn eval(&mut self, ps: &PathSum, depth: u32) -> Result<C64> {
+        self.stats.nodes += 1;
+        self.stats.max_depth = self.stats.max_depth.max(depth);
+        if self.stats.nodes > self.budget {
+            return Err(Error::InvalidState(format!(
+                "merged path sum: node budget {} exhausted at depth {depth} with {} \
+                 distinct forms memoized — the residual did not merge, and this refuses \
+                 rather than quietly enumerating it",
+                self.budget, self.stats.distinct_forms
+            )));
+        }
+        if ps.zero {
+            return Ok(C64::new(0.0, 0.0));
+        }
+        let (pre, comps) = ps.split_residual();
+        if comps.is_empty() {
+            self.stats.leaves += 1;
+            return Ok(pre);
+        }
+        if comps.len() > 1 {
+            self.stats.components += comps.len() as u64;
+        }
+        let mut acc = pre;
+        for c in comps {
+            acc *= self.component(&c, depth)?;
+        }
+        Ok(acc)
+    }
+
+    /// The value of one connected component, memoized on its canonical
+    /// form, computed by branching a variable and reducing each child.
+    fn component(&mut self, comp: &Component, depth: u32) -> Result<C64> {
+        let key = canonicalize(comp);
+        if let Some(&v) = self.memo.get(&key) {
+            self.stats.memo_hits += 1;
+            return Ok(v);
+        }
+        let base = PathSum::from_component(comp);
+        let pivot = self.pivot.choose(comp);
+        let before = comp.vars.len();
+        let mut total = C64::new(0.0, 0.0);
+        for b in [false, true] {
+            let mut child = base.clone();
+            child.substitute(pivot, &Mask::zero(), b);
+            child.active.clear(pivot);
+            child.reduce();
+            if child.active.count() + 1 < before {
+                self.stats.reduced_after_branch += 1;
+            }
+            total += self.eval(&child, depth + 1)?;
+        }
+        self.memo.insert(key, total);
+        self.stats.distinct_forms = self.memo.len() as u64;
+        Ok(total)
+    }
+}
+
+impl PathSum {
+    /// `⟨bits|ψ⟩` evaluated by **factoring, merging and
+    /// branch-and-reduce** rather than by enumerating `2^{h*}`.
+    ///
+    /// [`amplitude`](Self::amplitude) sums the residual variables
+    /// exhaustively, so it pays `2^{h*}` whatever the residual looks
+    /// like. This route treats the residual the way
+    /// [`MosaicState`](crate::backend::MosaicState) treats a register —
+    /// as a partition with a lens per part — and applies three:
+    ///
+    /// * **factor** — a disconnected interaction graph makes the sum a
+    ///   product, and each factor is a separate problem;
+    /// * **merge** — two components that are the same polynomial up to
+    ///   renaming have the same sum, so the second one costs a lookup.
+    ///   These are the merges, and [`MergeStats::distinct_forms`] is
+    ///   what the route pays in place of `2^{h*}`;
+    /// * **branch and reduce** — fix one variable and run the rewrite
+    ///   rules again on each child. This is the move enumeration cannot
+    ///   make: a residual that stalls under \[E\]/\[G\]/\[V\] frequently
+    ///   *unstalls* once one variable is pinned, and the child collapses
+    ///   to a closed form rather than to two more branches.
+    ///   [`MergeStats::reduced_after_branch`] counts exactly that.
+    ///
+    /// The answer is identical to [`amplitude`](Self::amplitude) — this
+    /// is a different route to the same number, and the tests assert
+    /// equality rather than closeness where the arithmetic allows.
+    /// `budget` caps nodes; exceeding it is a **named refusal**, never a
+    /// silent fallback to enumeration.
+    ///
+    /// What this does *not* claim: the growth law is a property of the
+    /// circuit, not of the solver. Thin and structured magic collapses
+    /// here; dense two-dimensional coupling does not, and
+    /// `tests/pathsum_merge.rs` measures both rather than advertising
+    /// the first.
+    pub fn amplitude_merged(&self, bits: u64, budget: u64) -> Result<(C64, MergeStats)> {
+        self.amplitude_merged_by(&|q| bits >> q & 1 == 1, budget, Pivot::default())
+    }
+
+    /// [`amplitude_merged`](Self::amplitude_merged) under a named
+    /// branching policy, so the election can be measured rather than
+    /// assumed. Every policy returns the same amplitude.
+    pub fn amplitude_merged_with(
+        &self,
+        bits: u64,
+        budget: u64,
+        pivot: Pivot,
+    ) -> Result<(C64, MergeStats)> {
+        self.amplitude_merged_by(&|q| bits >> q & 1 == 1, budget, pivot)
+    }
+
+    /// [`amplitude_merged`](Self::amplitude_merged) for a register too
+    /// wide to index with a `u64`.
+    pub fn amplitude_merged_mask(&self, bits: &Mask, budget: u64) -> Result<(C64, MergeStats)> {
+        self.amplitude_merged_by(&|q| bits.bit(q), budget, Pivot::default())
+    }
+
+    fn amplitude_merged_by(
+        &self,
+        want_bit: &dyn Fn(usize) -> bool,
+        budget: u64,
+        pivot: Pivot,
+    ) -> Result<(C64, MergeStats)> {
+        let mut ps = self.clone();
+        for q in 0..ps.qubits {
+            let (m, c) = ps.forms[q].clone();
+            let want = want_bit(q);
+            if m.is_zero() {
+                if c != want {
+                    return Ok((C64::new(0.0, 0.0), MergeStats::default()));
+                }
+                continue;
+            }
+            let piv = m.lowest().unwrap();
+            let rest = m.xor(&Mask::single(piv));
+            ps.substitute(piv, &rest, c ^ want);
+            ps.active.clear(piv);
+            ps.forms[q] = (Mask::zero(), want);
+        }
+        ps.reduce();
+        let mut solver = MergeSolver {
+            memo: HashMap::new(),
+            stats: MergeStats::default(),
+            budget,
+            pivot,
+        };
+        let v = solver.eval(&ps, 0)?;
+        Ok((v, solver.stats))
+    }
+}
