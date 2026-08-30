@@ -107,6 +107,7 @@ pub mod memo;
 pub mod mixed;
 pub mod modwidth;
 pub mod opflow;
+pub mod overlay;
 pub mod padic;
 pub mod pathsum;
 pub mod phase;

@@ -618,6 +618,28 @@ impl Overlay {
         )
     }
 
+    /// The `D₄` families of several orderings at once — a
+    /// **heterogeneous** overlay.
+    ///
+    /// This is the one that matters. A family's members are related by
+    /// a symmetry, so they agree wherever the symmetry does: the
+    /// Hilbert family agrees on every quadrant, and the row-major
+    /// family has no quadrants to agree about. Mixing the families
+    /// puts genuinely different block trees in one overlay, and
+    /// [`OverlayRegister`](crate::overlay::OverlayRegister) measures
+    /// that this is strictly the best of both — it places edges as
+    /// cheaply as the row-major family and keeps blocks as small as
+    /// the Hilbert one, where neither family does both.
+    pub fn families(side: usize, orders: &[Order]) -> Result<Self> {
+        let mut members = Vec::new();
+        for &order in orders {
+            for r in Rotor::all() {
+                members.push(GridOrder::rotated(side, order, r)?);
+            }
+        }
+        Overlay::new(members)
+    }
+
     /// The members.
     pub fn members(&self) -> &[GridOrder] {
         &self.members

@@ -1186,6 +1186,59 @@ measure rather than hide.
   right angles keep **every** edge together at the top level, and the
   second member buys more than the other six put together (2 → 4 adds
   nothing at any level).
+  **And then the overlay becomes a register**
+  ([`overlay`](src/overlay.rs)): `OverlayRegister` holds amplitudes,
+  applies gates and agrees with the dense backend amplitude for
+  amplitude, under a single rule — *a region must be a contiguous run
+  of `2^k` chain positions under one of the overlay's members*. A gate
+  straddling two regions cannot take their union, because a set of
+  sites is not something a chain-addressed register can hold; it
+  **migrates** into the smallest member-block containing them, swallows
+  whatever that block cuts into, and pays the difference. So a bad
+  ordering ends a simulation *by name* — `TooManyQubits` carrying the
+  block it needed — rather than by exhausting memory, and the layout
+  stops being advice.
+  Summing the placement width over every lattice edge gives four exact
+  closed forms, verified at every power-of-two side from 4 to 64:
+
+  | overlay | summed placement width |
+  |---|---|
+  | one row-major (or snake) ordering | `s²(s+1)·log₂ s` |
+  | the row-major `D₄` family | `2s²·log₂ s = n·log₂ n` |
+  | one Hilbert ordering | `3s²(s−1)` |
+  | the Hilbert `D₄` family | `2s²(s−1)` |
+
+  The **Hilbert family saves exactly one third**, at every size, and
+  never more — and where several of its rotors tie at the minimal
+  level they name the *same block*, measured, every time: the tie is a
+  labelling, not a choice. The **row-major family saves `(s+1)/2`**,
+  without bound, and **two members are the whole of it** (an ordering
+  and its transpose; members 3–8 add exactly nothing, because a
+  lattice edge is horizontal or vertical). So the ranking **inverts**:
+  as one ordering the curve wins, as an overlay it loses. The
+  overlay's value is the *disagreement* between its members, and a
+  self-similar family agrees with itself.
+  Which is why the register mixes families
+  ([`Overlay::families`](src/curve.rs)). On a graph state that is
+  row-local on half the lattice and patch-local on the other — the
+  case no single family serves — the mixed overlay completes what the
+  row-major family refuses and holds less than either: at side 16,
+  padding **120** against the Hilbert family's 168 and a single
+  Hilbert ordering's 186; peak memory **524 800** amplitudes against
+  528 384 and 788 480. That is the mosaic register's contract on the
+  layout axis — heterogeneous representations in one register, elected
+  per operation against a measured cost, every migration ledgered.
+  Padding is often *borrowed*, not spent: after each gate the register
+  tests every region for a rank-1 factorisation across its block's own
+  bipartition and hands the halves back, so a graph-state layer
+  applied twice returns all 64 sites to singletons and the peak
+  becomes history. What cannot come back is an entangled pair
+  straddling the block's cut — rank two, and the register is stuck
+  holding all of it, which is exactly the case the election exists to
+  avoid.
+  Stated as *not* shown: the election is a per-migration minimum, not
+  per-region freedom, so on a run the overlay does not beat the best
+  single family on peak width — only on padding and total memory.
   The module also carries the census bridge:
   `PolarSpace::generators() × 2^n` gives the **stabilizer-state counts**
   6, 60, 1080, 36,720 — reached here by counting maximal isotropic

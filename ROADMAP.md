@@ -1315,6 +1315,100 @@ assignments is more useful than one, at exactly the levels where a
 single assignment leaves a choice open, and two of them capture most
 of it.
 
+**And then the overlay stops being a census and becomes a register.**
+`overlay::OverlayRegister` holds amplitudes over the lattice, applies
+gates, and agrees with `DenseState` amplitude for amplitude under one
+rule: *a region must be a contiguous run of `2^k` chain positions
+under one of the overlay's members.* A gate straddling two regions
+cannot take their union — a set of sites is not something a
+chain-addressed register can hold — so it **migrates** into the
+smallest member-block containing them, absorbs whatever that block
+cuts into (the closure), and pays the difference as `Merge::padding`.
+Memory is the sum of `2^{sites}` over regions, never `2^n`, and a
+layout that cannot keep a circuit local ends it *by name*
+(`TooManyQubits` carrying the block it needed) rather than by
+exhausting memory.
+
+Summing `Placement::width` over every lattice edge of a fresh register
+— the layout's own number, before anything commits — gives four exact
+closed forms, verified at every power-of-two side from 4 to 64:
+
+```
+overlay                              summed placement width    mean/edge
+one row-major (or snake) ordering    s²(s+1)·log₂s             ≈ s·log₂s / 2
+the row-major D₄ family              2s²·log₂s = n·log₂n       → log₂s
+one Hilbert ordering                 3s²(s−1)                  exactly 1.5·s
+the Hilbert D₄ family                2s²(s−1)                  exactly s
+```
+
+Two consequences, and the second is a reversal of the section above:
+
+* The **Hilbert family saves exactly one third**, at every size, and
+  never more. Where several of its rotors tie at the minimal level
+  they name the **same block** — measured over every site pair at
+  sides 4, 8 and 16 — so the tie is a labelling, not a choice. That is
+  the same theorem as the 0% rows in the table above, seen from the
+  register's side.
+* The **row-major family saves `(s+1)/2`**, which grows without bound,
+  and **two members are the whole of it**: an ordering and its
+  transpose. Members three through eight add exactly nothing, because
+  a lattice edge is horizontal or vertical and those two cover both.
+
+So as a single ordering the curve wins and the rows lose, which is
+what the chain measurements say. As an **overlay** the ranking
+inverts: `n log₂ n` against `2s²(s−1)`, widening at every size. The
+overlay's value is the *disagreement* between its members, and a
+self-similar family agrees with itself too much to have much of it —
+which is the mechanism behind the alternating table above, stated as a
+law rather than a census.
+
+**Which is why the register mixes families.** `Overlay::families` puts
+the `D₄` families of several orderings in one overlay. On a graph
+state that is row-local on half the lattice and 4×4-patch-local on the
+other — the case no single family serves — the mixed overlay ties the
+row-major family on placement (the best there is), beats the Hilbert
+family outright, completes what the row-major family refuses, and
+holds less than either:
+
+```
+side 16, 288 two-site gates, cap 16 sites
+overlay          completed   peak   padding   peak memory
+row-major           97/288      4        32           768   refused
+hilbert            288/288     16       186       788,480
+row-major D₄        97/288      4        32           768   refused
+hilbert D₄         288/288     16       168       528,384
+mixed              288/288     16       120       524,800
+```
+
+That is the mosaic register's contract on the layout axis:
+heterogeneous representations in one register, elected per operation
+against a measured cost, every migration ledgered.
+
+**Padding is often borrowed rather than spent.** After each gate the
+register tests every region for a rank-1 factorisation across its
+block's own bipartition — `FactoredState`'s split moved onto the
+layout's own cut, which is what makes the halves *placeable* and so
+frees them to be elected into a different member next time. A
+graph-state layer applied twice is the identity, and the register
+notices: all 64 sites return to singletons, 128 amplitudes, and the
+peak becomes history in the ledger. What cannot come back is an
+entangled pair straddling the block's cut — rank two, and the register
+holds all of it, which is exactly the case the election exists to
+avoid.
+
+**Stated as not shown.** The election is a per-migration minimum, not
+per-region freedom: once a region commits to a block the next
+migration must contain that whole block, so on a run the overlay does
+not beat the best single family on **peak width** — only on padding
+and total memory, and only because the mix contains a family suited to
+each part of the circuit. Electing among tied contenders by which
+block cuts into fewest regions (`OverlayRegister::contenders`) is
+implemented and is the right rule; it has not yet changed a measured
+outcome. Next rungs: per-cell rather than global rotor assignments, so
+the members can disagree inside a quadrant as well as about it; and
+letting a region *re-place* without merging, which is the move that
+would make the election recoverable rather than spent.
+
 **The census, from the geometry.** `PolarSpace::generators() × 2^n`
 gives the stabilizer-state counts 6, 60, 1080, 36,720, 2,423,520 —
 reached here by counting maximal isotropic flats and multiplying by
