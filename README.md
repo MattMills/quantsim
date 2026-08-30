@@ -1101,6 +1101,67 @@ measure rather than hide.
   on 40 qubits is 320 bits and 69 µs, and nothing anywhere materializes
   `2^n`.
 
+- **Lattice onto chain: the orderings, the rotor, and a refutation**
+  ([`curve`](src/curve.rs)) — an MPS, a variable list and a qubit index
+  are all one-dimensional; a coupling fabric is not. The map between
+  them is an *ordering*, and it costs. Written to test the natural
+  expectation that a **locality-preserving space-filling curve** should
+  beat reading the rows. **It does not**, by exact laws pinned against
+  enumeration at every power-of-two side from 2 to 128:
+
+  | ordering | max dilation | cutwidth |
+  |---|---|---|
+  | RowMajor | `side` | `side + 1` |
+  | Snake | `2·side − 1` | `side + 1` |
+  | Hilbert | `(10·4^{k−1} − 1)/3` | `2·side − 2` |
+
+  Hilbert's cutwidth is **exactly twice** row-major's and its worst
+  dilation is `Θ(N)` against `Θ(√N)` — 126 vs 65 and 3,413 vs 64 at
+  side 64, with 21% more routing swaps. **The reason is a direction
+  error**: a space-filling curve preserves locality from *curve to
+  plane* (nearby indices → nearby points), which is what makes it right
+  for spatial indexing; a chain register needs the *opposite*, and the
+  Hilbert inverse has unbounded dilation. Half the expectation survived
+  — cutwidth is `Θ(side)` under **every** ordering, a property of the
+  grid — and the **snake** gets both halves: continuous like the curve,
+  and cutwidth, crossings and swaps identical to the rows.
+  **But that refutation is narrow, and the narrowness is the point.**
+  The Hilbert construction is not really an ordering: it is a **rotor
+  per cell applied recursively** — each quadrant entered under a
+  dihedral symmetry (`Rotor`, the eight elements of `D₄`; the Hilbert
+  rule is transpose / identity / identity / anti-transpose, two
+  reflections and two rotations). A linear index keeps only the order
+  the recursion visits cells in. Keep the recursion instead
+  (`Bisection`) and it beats **every** linear ordering:
+
+  | | law | growth |
+  |---|---|---|
+  | chain, best ordering | `side³ − side` | `Θ(N^{3/2})` |
+  | recursive bisection | `2·side² − 2·side` | `Θ(N)` |
+  | ratio | `(side + 1)/2` | `Θ(√N)` |
+
+  — 64.5× at side 128, unbounded. The **worst** cut is identical
+  (`side`, the grid's own bound), so the surviving half is confirmed
+  from the other side; the **total** differs by an order. A
+  representation paying per cut over a hierarchy
+  ([`MeraState`](src/backend/mera.rs), [`BulkState`](src/backend/bulk.rs))
+  pays the second row; one paying over a chain's cuts pays the first.
+  **So the curve was never the wrong idea — flattening it was.** Two
+  clauses stated because the first is easy to guess wrong: the tree's
+  cost is **not** at the root, its per-level profile being
+  `side · 2^{⌊ℓ/2⌋}` so the total sits at the deepest cuts; and nothing
+  here tests whether an **overlay** of several rotor assignments, used
+  together as independent addressing bits, improves on plain bisection
+  — that stays open.
+  The module also carries the census bridge:
+  `PolarSpace::generators() × 2^n` gives the **stabilizer-state counts**
+  6, 60, 1080, 36,720 — reached here by counting maximal isotropic
+  flats, and independently by a sibling program's phase-space census —
+  and `v₂|Sp(2n,2)| = n²` exactly, second differences identically 2.
+  (Both sides compute `|Sp|` *from* its closed form rather than by
+  enumerating the group, so that last check is near-tautological, and
+  the test says so.)
+
 ## Quick start
 
 ```rust
@@ -1703,6 +1764,30 @@ entirely trivial accessors and defensive guards:
   atom; and the interior — **0** for independent qudits (the control),
   **1** for GHZ, **2** for a split toric patch — with the whole thing
   asserted to run at 40 qubits in under half a second.
+- **curve** — the ordering suite: each ordering asserted a bijection
+  and the two curves asserted continuous where row-major is not; every
+  dilation and cutwidth law asserted against enumeration from side 2 to
+  128; the Hilbert curve asserted **worse than row-major on all four**
+  measures with the cutwidth ratio asserted to rise toward exactly 2
+  from below; the surviving half asserted separately (`side ≤ cutwidth
+  ≤ 2·side` under every ordering); the snake asserted to match
+  row-major exactly while being continuous; and the census — stabilizer
+  states 6/60/1080/36720/2423520 from `generators × 2^n`, and
+  `v₂|Sp(2n,2)| = n²` asserted both as a closed form and by reading the
+  trailing zeros of the computed order, with second differences
+  asserted identically 2.
+- **polar** — the embedding suite: every closed form asserted against
+  enumeration at `n ≤ 4` (points, totally isotropic lines, degree);
+  the doily pinned by its two defining properties — **zero triangles**
+  and the GQ axiom — and `W(5,2)` asserted to have triangles so the
+  claim cannot spread past where it was checked; doily counts matched
+  between enumeration and closed form at `n = 2, 3` with saturation
+  asserted at `n = 40`; every code in the crate asserted to be a flat
+  of the polar space; and on the effective side, idempotence of `Γ`,
+  the closure as `(⋁Vᵢ)^⊥` containing each frame, the deficit
+  `Σhᵢ − d_eff`, the throat bound asserted **tight on a nested chain
+  and slack off it**, `d_eff` asserted to factor through `Γ` where
+  `Σhᵢ` asserted not to, and `Φ` asserted equal to the loop predicate.
 - **stitch** — the symplectic sharding suite: the normal form
   recovering `(r, h)` off the generators of four codes (toric L ∈ {2,3},
   surface d ∈ {3,5}) with the radical asserted isotropic *and* central

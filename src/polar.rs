@@ -182,6 +182,39 @@ impl PolarSpace {
         (1..=self.n).fold(1u128, |acc, i| acc.saturating_mul(pow2(i) + 1))
     }
 
+    /// **Stabilizer states** on `n` qubits: `generators × 2^n`.
+    ///
+    /// A generator is a maximal commuting set — a basis — and each
+    /// basis carries `2^n` states, one per sign choice. So `6, 60,
+    /// 1080, 36720, 2423520` for `n = 1..5`, which are exactly the
+    /// counts the sibling `fractal_research` program's `qmap` census
+    /// arrives at from the other side. Two independent routes to one
+    /// sequence, and the geometry gets there by counting flats.
+    pub fn stabilizer_states(&self) -> u128 {
+        self.generators().saturating_mul(pow2(self.n))
+    }
+
+    /// `|Sp(2n, 2)| = 2^{n²} ∏_{i=1}^{n} (4^i − 1)` — the order of the
+    /// group of symmetries of this polar space, and therefore of the
+    /// Clifford group modulo Paulis and phases.
+    pub fn symplectic_order(&self) -> u128 {
+        (1..=self.n).fold(pow2(self.n * self.n), |acc, i| {
+            acc.saturating_mul(pow2(2 * i) - 1)
+        })
+    }
+
+    /// `v₂|Sp(2n,2)| = n²`, **exactly** — the dyadic part of the
+    /// symplectic order is a perfect square in `n`, with second
+    /// differences identically 2.
+    ///
+    /// This is one of the quadratic-island laws `qmap` measures by
+    /// exact finite differences; here it is the `2^{n²}` factor of the
+    /// order above, so the two statements are the same fact reached
+    /// from a group count and from a flat count.
+    pub fn symplectic_dyadic_valuation(&self) -> usize {
+        self.n * self.n
+    }
+
     /// Is this the doily — `W(3,2) = GQ(2,2)`, the two-qubit geometry?
     pub fn is_doily(&self) -> bool {
         self.n == 2

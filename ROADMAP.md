@@ -1179,6 +1179,160 @@ Remaining rungs, with what the comparison sharpened:
   The exterior-power (compound) action moves a whole flat in one
   product, which is the right shape once frames get wide.
 
+## Lattice onto chain, and the census — SHIPPED (core)
+
+An MPS, a path-sum variable list and a qubit index are all *one
+dimensional*; a coupling fabric is not. The map between them is an
+**ordering**, `curve` makes it a measured object, and the module exists
+because the obvious expectation about it is wrong.
+
+**The refutation.** The expectation — a locality-preserving
+space-filling curve should lay a lattice onto a chain better than
+reading rows — fails by an exact law, at every power-of-two side from
+2 to 128:
+
+```
+ordering    max dilation          cutwidth
+RowMajor    side                  side + 1
+Snake       2·side − 1            side + 1
+Hilbert     (10·4^{k−1} − 1)/3    2·side − 2       (side = 2^k)
+```
+
+Hilbert's cutwidth is **exactly twice** row-major's, and its worst
+dilation is `Θ(N)` against `Θ(√N)`: at side 64, 126 against 65 and
+3,413 against 64, with 21% more routing swaps. It is worse on every
+measure a chain register cares about.
+
+**The reason is a direction error**, and the intuition is natural
+enough to be worth naming. A space-filling curve preserves locality
+from *curve to plane* — nearby indices are nearby points — which is
+what makes it right for spatial indexing and cache layout. A chain
+register needs the *opposite*, nearby points getting nearby indices,
+and the Hilbert curve's inverse has unbounded dilation. Reading the
+rows is bad at the first direction and optimal at the second. Half of
+the pre-stated expectation did survive: cutwidth is `Θ(side)` under
+**every** ordering, a property of the grid rather than of the curve.
+The **snake** turns out to get both halves — continuous like the
+curve, and cutwidth, crossings and swaps identical to the rows.
+
+**And the refutation is narrow, which is where the interest is.** It
+refutes the curve *as a linear ordering*, and that is precisely the
+use that throws the construction away. The Hilbert curve is a **rotor
+per cell applied recursively** — each quadrant entered under a
+dihedral symmetry, `Rotor` being the eight elements of `D₄` and the
+Hilbert rule being transpose / identity / identity / anti-transpose,
+two reflections and two rotations. A linear index keeps only the order
+the recursion visits cells in. Keep the recursion instead
+(`Bisection`) and it beats **every** linear ordering, by exact closed
+forms:
+
+```
+chain, best ordering    side³ − side       Θ(N^{3/2})
+recursive bisection     2·side² − 2·side   Θ(N)
+ratio                   (side + 1) / 2     Θ(√N)
+```
+
+64.5× at side 128, and unbounded in the side. The **worst** cut is
+identical — `side`, the grid's own bound, which nothing beats — so the
+surviving half is confirmed from the other side; the **total** differs
+by an order. A representation paying per cut over a hierarchy (`mera`,
+`bulk`) pays the second row; one paying over a chain's cuts pays the
+first. **So the curve was never the wrong idea; flattening it was.**
+
+Two clauses, both stated because the first is easy to guess wrong and
+the second is easy to overclaim. The tree's cost is **not** at the
+root: its per-level profile is `side · 2^{⌊ℓ/2⌋}`, doubling every two
+levels, so the total sits at the *deepest* cuts — separators shrink
+per node and the node count grows faster. And nothing here tests
+whether an **overlay** of several distinct rotor assignments, used
+together as independent addressing bits rather than one at a time,
+improves on plain recursive bisection. That is a stronger claim than
+anything measured and it stays **open**.
+
+**The census, from the geometry.** `PolarSpace::generators() × 2^n`
+gives the stabilizer-state counts 6, 60, 1080, 36,720, 2,423,520 —
+reached here by counting maximal isotropic flats and multiplying by
+the `2^n` sign choices, and independently by a sibling program's
+phase-space census, which computes `2^n · ∏(2^k+1)` directly. The
+ratio is exactly `2^n` at every `n`, so the two are the same quantity
+counted from opposite ends: states there, flats here. Also shipped:
+`symplectic_order` and `symplectic_dyadic_valuation`, with
+`v₂|Sp(2n,2)| = n²` and second differences identically 2.
+
+**One honesty note on that last one, adopted from the sibling's own
+caveat.** Both implementations compute `|Sp(2n,2)|` *from* the closed
+form `2^{n²} ∏(4^i − 1)` rather than by enumerating the group, so what
+the test verifies is that `∏(4^i − 1)` contributes no further factors
+of two. That is true and it is nearly tautological, and the test says
+so rather than presenting it as a discovery.
+
+**A free cross-check that came out of the comparison.** The same
+sibling computes the Freudenthal–Tits dimension as
+`2 + Σ Der + 4·e₁ + 2·e₂ + ∏ dim(Aᵢ)` where `magic` uses
+`3 + Σ Der + 5·e₁ + 3·e₂ + Σ_{k≥3} e_k`. The two look different and
+are algebraically identical, because `∏(tᵢ+1) = Σ_k e_k` absorbs
+exactly the `1`, one `e₁` and one `e₂` that separate them. Now pinned
+in `tests/magic_position.rs` over arities 1–5 with an independently
+written `e_k`, so either implementation drifting is caught.
+
+**And one non-defect, checked rather than assumed.** That sibling
+refutes a vendored `e8.rs`'s invariant form — `tr_W(XY) + 2β(s,t)` is
+not invariant, `−4` is forced, violations ≈0.2% dense with a pinned
+witness. This crate's `e8` is the **root system** (240 roots, the
+112 + 128 split, the Weyl group) and builds no invariant bilinear form
+on the 248-dimensional algebra at all, so the defect has nothing here
+to land on. Recorded because "we don't have that bug" is only worth
+saying once it has been looked for.
+
+**What the comparison says NOT to import.** The sibling's headline
+"the same degree-two boundary, found five times" is flagged by its own
+library review as **prose rather than checks** — nine prose claims,
+one realised as a computation — and one candidate fifth instance is
+separately *refuted* as a coincidence. It is a real pattern and it is
+not five measurements, and nothing here cites it as one.
+
+Remaining rungs, sharpened by the comparison:
+
+- **How far is the election from optimal?** `pathsum`'s
+  `Pivot::Elected` is a greedy, measured choice, and the sibling
+  answers exactly this question for its own greedy elimination order
+  against exact search: **optimal through n = 5, and strictly weaker
+  from n = 6** (612/1200 = 612/1200 at n = 5; 1023 against 1143 at
+  n = 6; 594 against 649 at n = 7). The same experiment against
+  `Elected` is cheap, and it would turn "no single signal wins" into
+  "and here is what the best possible signal would have won".
+- **The order-free width invariant.** The sibling computes the
+  *minimum achievable maximum width* exactly — a bottleneck shortest
+  path up the subset lattice, one DP over `2ⁿ` subsets — and measures
+  the natural order overshooting it by 3–5×. That is the yardstick
+  `pathsum`'s pivot election currently lacks: the solver reports what
+  it paid, not what it could have paid. Its companion result is the
+  one to aim at — width-bounded search whose cost is governed by *the
+  answer rather than by n*, a chain at n = 60 resolving in 62 nodes
+  against `2⁶⁰`, with the width decomposing over connected components
+  exactly as `split_residual` already does.
+- **The cubic dissolution criterion.** At degree 3 the sibling has an
+  exact criterion for when a lone cubic phase fails to resolve — the
+  coupling columns lying in the column space of the free–free coupling
+  — verified exhaustively over 67,712 phases with zero disagreements,
+  with `rank(E)` as the dial. `pathsum`'s residual is exactly where
+  that would apply, and it currently has no criterion at all, only a
+  measured stall.
+- **The rotor overlay.** The single-rotor-assignment recursion is
+  measured; a *set* of assignments used together — several curves as
+  independent addressing bits rather than one as an index — is not.
+  The natural measurement is whether the union of several bisection
+  trees' cut families beats one tree's, which is a question about
+  branch decompositions rather than about curves, and the machinery to
+  ask it is now present.
+- **Higher-dimensional orderings.** `curve` is two-dimensional. The
+  sibling searches the general family — a base order on the `2ⁿ`
+  sub-cells plus a twist per slot from `F₂ⁿ ⋊ Sₙ` — and its first
+  result is a refutation worth carrying: the presentation is faithful,
+  so unlike a gate set there is **no semantic quotient** to collapse
+  the search onto. A 3-D ordering module would want its exact
+  continuity criterion rather than expansion-testing.
+
 ## Further non-Cayley–Dickson explorations
 
 `SplitComplex` establishes the pattern (indefinite Born form surfaced through

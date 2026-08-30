@@ -82,6 +82,7 @@ pub mod closure;
 pub mod conformance;
 pub mod coupling;
 pub mod crossview;
+pub mod curve;
 pub mod cut;
 pub mod cutsim;
 pub mod dcs;
