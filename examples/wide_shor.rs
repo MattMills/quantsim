@@ -185,7 +185,10 @@ fn main() -> Result<()> {
 
     println!();
     println!("== the same problem on both registers ==");
-    println!("  {:>12} {:>4} {:>9} {:>12} {:>12} {:>7}", "N", "a", "r", "sparse", "wide", "ratio");
+    println!(
+        "  {:>12} {:>4} {:>9} {:>12} {:>12} {:>7}",
+        "N", "a", "r", "sparse", "wide", "ratio"
+    );
     for (n, a) in [(4087u64, 7u64), (126727, 2), (268140589, 37)] {
         let f = OrderFinder::new(n, a)?;
         let t = Instant::now();
@@ -198,8 +201,13 @@ fn main() -> Result<()> {
         let wide_ns = t.elapsed().as_nanos() as f64;
         assert_eq!(e.value, we.value);
         assert_eq!(e.peak_support, we.peak_support);
-        println!("  {n:>12} {a:>4} {:>9} {:>11.1}ms {:>11.1}ms {:>6.2}x",
-            e.peak_support, sparse_ns / 1e6, wide_ns / 1e6, wide_ns / sparse_ns);
+        println!(
+            "  {n:>12} {a:>4} {:>9} {:>11.1}ms {:>11.1}ms {:>6.2}x",
+            e.peak_support,
+            sparse_ns / 1e6,
+            wide_ns / 1e6,
+            wide_ns / sparse_ns
+        );
     }
     println!("  identical outcome in every row; the wide register is the slower one.");
 
@@ -207,7 +215,10 @@ fn main() -> Result<()> {
     println!("== and what a u64-indexed register does at those widths ==");
     for w in [62usize, 63, 64, 4124] {
         match sim.backends().create("sparse", w) {
-            Ok(st) => println!("  sparse at {w:>5} qubits: created, {} bytes", st.memory_bytes()),
+            Ok(st) => println!(
+                "  sparse at {w:>5} qubits: created, {} bytes",
+                st.memory_bytes()
+            ),
             Err(e) => println!("  sparse at {w:>5} qubits: {e}"),
         }
     }
