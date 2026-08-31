@@ -1265,6 +1265,60 @@ measure rather than hide.
   enumerating the group, so that last check is near-tautological, and
   the test says so.)
 
+### The address algebra: canonical forms that compose
+
+[`address`](src/address.rs) closes the path sum's memo under
+composition. The merge solver already memoizes on a canonical residual
+form, but its memo has the type `CanonKey → C64`: an address maps to a
+**value**, so nothing can be done with one except decode it, and it is
+rebuilt from empty on every query. Three constructors —
+
+```text
+Zero
+Product { scale, parts: [Addr] }     ω^turn · √2^half · ∏ parts
+Branch  { zero: Addr, one: Addr }    the sum of the two children
+```
+
+— are the solver's own three moves (rules closing a residual, the
+interaction graph factoring, branching a variable) written as algebra
+instead of as control flow. Addresses reference addresses; a value is a
+fold done once, or never.
+
+* **The scale stays a symbol.** A residual's prefactor always *was*
+  `ω^turn · √2^half` with an exact dyadic turn; the memo evaluated it to
+  a float immediately. Keeping it means nodes merge when they are the
+  same symbol, and `value_exact` evaluates the whole DAG in the
+  Clifford+T ring `D[ω]` with **no floating point anywhere** — so exact
+  zero is *decided*, not thresholded. Measured against the dense
+  backend, the merged route and `ExactState`: worst deviation 5.7e-16.
+* **A Clifford amplitude is one symbol at every width.** GHZ at n = 4,
+  8, 12, 16 all reach the **same address** — `Product { scale: √2^-1,
+  parts: [] }`, a closed leaf, because `h* = 0` means there is nothing
+  to sum. The whole space holds one node. Equal addresses are equal
+  amplitudes, decided by identity with no arithmetic on either side.
+* **The space outlives the query**, which is the move the memo cannot
+  make. One space answering 64 basis amplitudes against a fresh space
+  per query:
+
+  | circuit | shared | isolated | reuse | 1st query | last |
+  |---|---|---|---|---|---|
+  | grid 3×3 L=1 | 260 | 1672 | 6.43× | 25 | 3 |
+  | grid 3×3 L=2 | 1392 | 15104 | **10.85×** | 215 | 7 |
+  | grid 4×4 L=1 | 824 | 5072 | 6.16× | 59 | 3 |
+
+  The last column is the point: the 64th amplitude costs single-digit
+  composition calls because nearly every form it needs is already
+  addressed. That is Gosper's hashlife move — step at the level of
+  canonical node ids rather than of cells — carried onto the phase
+  polynomial.
+
+Stated as *not* claimed: the growth law is unchanged, still a property
+of the circuit's coupling graph, and dense 2D coupling still does not
+merge. And the zero identities (`x·0`, `0+x`) are implemented and have
+**never fired** — 0 of 4000 random Clifford+T circuits — because the
+reduction consumes the vanishing pattern before a branch can hand it
+back; reported rather than advertised.
+
 ## Quick start
 
 ```rust

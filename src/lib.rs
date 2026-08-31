@@ -69,6 +69,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod address;
 pub mod backend;
 pub mod blocks;
 pub mod bounds;
