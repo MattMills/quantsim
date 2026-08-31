@@ -120,6 +120,18 @@ crate, not the ten in the standard registry; eight reach `w = 20`
 (sparse, adaptive, mosaic, phase-field, clifford-frame, braided, logical,
 framed-sparse), MPS/MERA/bulk stop at `w = 10` — a cyclic orbit is not a
 low-bond object — and the graph-state bundle refuses outright.
+**Past the `u64` basis index.** Every `Backend` in the crate addresses
+basis states by `u64`, so the claim above — cost is `O(support)` at any
+width, support is the orbit — was untestable past 63 qubits, because the
+register could not address the modulus. `wide` supplies the index type
+instead (`Wide`, `Montgomery`, `WideRegister`; not a `Backend`, for the
+same reason `pathsum` is not), and `shor::WideOrderFinder` runs the same
+loop over it. Measured: identical outcome to the `u64` path, bit for bit,
+over 16 seeds on six moduli; order finding at **4124 qubits** in 13 ms and
+145 KB; and the arithmetic alone — one basis state, no interference — at
+**8277 qubits** in **1126 bytes**, 96 µs per modular multiplication. The
+width really is free, and that is now a measurement rather than an
+argument.
 **Still open:** the ℤ_N-native qudit register (`mixed::CompoundRegister`)
 would drop the `y ≥ N` identity branch the padded binary register carries;
 `modwidth` already prices that form exactly, and `shor::ladder_widths`

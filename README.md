@@ -2632,7 +2632,11 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  regev (the three exponentiation schedules, the lattice
                  step, and where the qubit counts cross),
                  factoring_scale (wall clock and bytes for both, across
-                 every representation in the crate)
+                 every representation in the crate),
+                 bulk_scaling (width cost separated from support cost,
+                 and what the confounded marginal fits hide),
+                 wide_shor (order finding past the u64 basis index —
+                 four figures of qubits in kilobytes)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

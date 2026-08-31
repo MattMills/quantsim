@@ -89,6 +89,7 @@ use crate::padic::gcd;
 use crate::rng::Prng;
 use crate::scalar::{Scalar, C64};
 use crate::sim::Simulator;
+use crate::wide::{Montgomery, Wide, WideRegister};
 
 /// Largest modulus this module will accept, and the bound is structural
 /// rather than chosen: products are taken in `u128`, so the arithmetic is
@@ -855,6 +856,174 @@ pub fn distinct_values<S: Scalar>(state: &dyn Backend<S>, qubits: &[usize]) -> u
         seen.insert(gather(i, qubits));
     });
     seen.len()
+}
+
+// ── order finding past the u64 basis index ───────────────────────────
+
+/// Semiclassical order finding at a width no `u64` basis index can
+/// address, over [`WideRegister`].
+///
+/// This is the same algorithm as [`OrderFinder`] with the index type
+/// swapped, and it exists to make the module's central claim checkable
+/// rather than merely stated: modular exponentiation is a permutation, so
+/// it costs `O(support)` at *any* width, and the support is the orbit
+/// `r`. Neither quantity mentions `log N`. On a `u64`-indexed register
+/// that is untestable past 63 qubits, because the register cannot address
+/// the modulus; here it is testable at any width at all.
+///
+/// Residues are held in Montgomery form (see
+/// [`Montgomery`]), which is a relabelling of
+/// `(ℤ/N)*` by `y ↦ yR mod N` — a bijection, so the orbit and its size
+/// are unchanged and only the readout converts back.
+#[derive(Debug, Clone)]
+pub struct WideOrderFinder {
+    /// The modulus, of any width.
+    pub modulus: Wide,
+    /// The base, coprime to the modulus.
+    pub base: Wide,
+    /// Phase bits, capped at [`MAX_PHASE_BITS`].
+    pub phase_bits: usize,
+}
+
+impl WideOrderFinder {
+    /// Order finder for `base` mod `modulus`. The modulus must be odd —
+    /// an even one is split by inspection — and greater than one.
+    pub fn new(modulus: Wide, base: Wide) -> Result<Self> {
+        let w = modulus.bits();
+        if w < 2 {
+            return Err(Error::InvalidState("modulus must exceed 1".into()));
+        }
+        Ok(WideOrderFinder {
+            modulus,
+            base,
+            phase_bits: (2 * w + 1).min(MAX_PHASE_BITS),
+        })
+    }
+
+    /// Override the phase-bit count.
+    pub fn with_phase_bits(mut self, bits: usize) -> Self {
+        self.phase_bits = bits;
+        self
+    }
+
+    /// Work-register width: the modulus's bit length.
+    pub fn work_bits(&self) -> usize {
+        self.modulus.bits()
+    }
+
+    /// Total width — the work register plus the one recycled ancilla.
+    pub fn width(&self) -> usize {
+        self.work_bits() + 1
+    }
+
+    /// Run one semiclassical phase estimation.
+    pub fn estimate<S: Scalar>(&self, rng: &mut Prng) -> Result<PhaseEstimate> {
+        let _scope = crate::guard::enter();
+        let w = self.work_bits();
+        let t = self.phase_bits;
+        if t == 0 || t > MAX_PHASE_BITS {
+            return Err(Error::InvalidState(format!(
+                "phase_bits {t} outside [1, {MAX_PHASE_BITS}]"
+            )));
+        }
+        let mont = Montgomery::new(self.modulus.clone())?;
+        let anc = w;
+
+        // The multiplier ladder `a^{2^k}`, in Montgomery form, by
+        // repeated squaring — `t` squarings rather than `t` exponentiations.
+        let mut ladder: Vec<Wide> = Vec::with_capacity(t);
+        let mut cur = mont.to_montgomery(&self.base);
+        for _ in 0..t {
+            ladder.push(cur.clone());
+            cur = mont.mul(&cur, &cur);
+        }
+
+        let mut state: WideRegister<S> = WideRegister::new(w + 1);
+        state.load(vec![(mont.one(), S::one())])?;
+
+        let h = hadamard::<S>()?;
+        let hx = hadamard_after_flip::<S>()?;
+        let mut pending_reset = false;
+        let mut omega = 0.0f64;
+        let mut measured: Vec<bool> = Vec::with_capacity(t);
+        let mut peak = state.nonzero_count();
+        let mut bytes = state.memory_bytes();
+        let mut orbit = 1usize;
+        let mut trajectory = vec![1usize];
+        let mut muls = 0usize;
+        let mut rotations = 0usize;
+
+        for j in (1..=t).rev() {
+            state.apply_1q(if pending_reset { &hx } else { &h }, anc)?;
+            let multiplier = ladder[j - 1].clone();
+            let modulus = self.modulus.clone();
+            let support =
+                state.apply_permutation("controlled modular multiplication", &|index: &Wide| {
+                    if !index.bit(anc) {
+                        return index.clone();
+                    }
+                    let y = index.low_bits(w);
+                    if y >= modulus {
+                        return index.clone();
+                    }
+                    index.with_low_bits(w, &mont.mul(&y, &multiplier))
+                })?;
+            muls += 1;
+            peak = peak.max(support);
+            state.apply_1q(&hadamard_after_phase::<S>(-PI * omega)?, anc)?;
+            if omega > 0.0 {
+                rotations += 1;
+            }
+            let bit = state.measure(anc, rng)?;
+            pending_reset = bit;
+            measured.push(bit);
+            omega = (if bit { 1.0 } else { 0.0 } + omega) * 0.5;
+            let support = state.nonzero_count();
+            peak = peak.max(support);
+            bytes = bytes.max(state.memory_bytes());
+            orbit = orbit.max(support);
+            trajectory.push(support);
+        }
+        measured.reverse();
+        let mut value = 0u64;
+        for (k, &b) in measured.iter().enumerate() {
+            if b && t - 1 - k < 64 {
+                value |= 1u64 << (t - 1 - k);
+            }
+        }
+        Ok(PhaseEstimate {
+            phase: omega,
+            value,
+            bits: measured,
+            phase_bits: t,
+            qubits: w + 1,
+            modular_multiplications: muls,
+            phase_gates: rotations,
+            peak_support: peak,
+            peak_bytes: bytes,
+            peak_orbit: orbit,
+            orbit_trajectory: trajectory,
+        })
+    }
+
+    /// Recover the order from a phase estimate, verifying `base^r ≡ 1`
+    /// with wide arithmetic.
+    pub fn order_from_phase(&self, phase: f64, max_order: u64) -> Option<u64> {
+        if phase <= 0.0 || phase.is_nan() {
+            return None;
+        }
+        let mont = Montgomery::new(self.modulus.clone()).ok()?;
+        for (_, den) in crate::padic::convergents(phase, max_order) {
+            let mut r = den;
+            while r <= max_order {
+                if mont.pow(&self.base, &Wide::from_u64(r)) == Wide::one() {
+                    return Some(r);
+                }
+                r += den;
+            }
+        }
+        None
+    }
 }
 
 // ── continued-fraction recovery ──────────────────────────────────────
