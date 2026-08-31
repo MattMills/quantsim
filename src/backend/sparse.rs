@@ -352,6 +352,35 @@ impl<S: Scalar> Backend<S> for SparseState<S> {
         self.map.insert(0, S::one());
     }
 
+    /// One pass, one table: the map is drained into a fresh one, so a
+    /// permutation costs a single rehash of the support rather than the
+    /// default's collect-check-reload.
+    fn apply_permutation(&mut self, label: &str, map: &dyn Fn(u64) -> u64) -> Result<()> {
+        let n = self.num_qubits;
+        let limit = if n == 64 { u64::MAX } else { 1u64 << n };
+        let old = std::mem::take(&mut self.map);
+        let mut next: FxHashMap<u64, S> = FxHashMap::default();
+        next.reserve(old.len());
+        for (step, (i, a)) in old.into_iter().enumerate() {
+            if step % 4096 == 0 {
+                crate::guard::checkpoint()?;
+            }
+            let j = map(i);
+            if j >= limit {
+                return Err(Error::InvalidState(format!(
+                    "{label} sent index {i} to {j}, outside the {n}-qubit register"
+                )));
+            }
+            if next.insert(j, a).is_some() {
+                return Err(Error::InvalidState(format!(
+                    "{label} is not injective: two indices both map to {j}"
+                )));
+            }
+        }
+        self.map = next;
+        Ok(())
+    }
+
     fn load(&mut self, entries: &[(u64, S)]) -> Result<()> {
         let limit = if self.num_qubits == 64 {
             u64::MAX
