@@ -10,6 +10,16 @@
 //! qubits because the register cannot address the modulus.
 //! [`quantsim::wide`] supplies the index type instead, and this runs the
 //! same algorithm at four figures of qubits.
+//!
+//! **What that does and does not show.** The wide register buys
+//! *addressability*, not speed. On the same problem it is measured
+//! slower than `sparse` — the keys are multi-limb and so is the
+//! arithmetic. The four-figure runs below are fast because their order
+//! `r` is small *by construction*, not because the width was overcome:
+//! cost is `t · r · limbs²`, and holding `r` at 256 while `w` grows is
+//! precisely the experiment "is the width free?". It is not a claim that
+//! a 4123-bit modulus can be factored — that needs `r ≈ 2^2000`, and `r`
+//! is the support, which is held in memory.
 
 use std::time::Instant;
 
@@ -171,6 +181,35 @@ fn main() -> Result<()> {
         );
         assert_eq!(est.peak_orbit as u64, r);
         assert_eq!(target.to_u64(), Some(r));
+    }
+
+    println!();
+    println!("== the same problem on both registers ==");
+    println!("  {:>12} {:>4} {:>9} {:>12} {:>12} {:>7}", "N", "a", "r", "sparse", "wide", "ratio");
+    for (n, a) in [(4087u64, 7u64), (126727, 2), (268140589, 37)] {
+        let f = OrderFinder::new(n, a)?;
+        let t = Instant::now();
+        let e = f.estimate(&sim, PhaseForm::Semiclassical, &mut Prng::new(7))?;
+        let sparse_ns = t.elapsed().as_nanos() as f64;
+        let wf = WideOrderFinder::new(Wide::from_u64(n), Wide::from_u64(a))?
+            .with_phase_bits(f.phase_bits);
+        let t = Instant::now();
+        let we = wf.estimate::<C64>(&mut Prng::new(7))?;
+        let wide_ns = t.elapsed().as_nanos() as f64;
+        assert_eq!(e.value, we.value);
+        assert_eq!(e.peak_support, we.peak_support);
+        println!("  {n:>12} {a:>4} {:>9} {:>11.1}ms {:>11.1}ms {:>6.2}x",
+            e.peak_support, sparse_ns / 1e6, wide_ns / 1e6, wide_ns / sparse_ns);
+    }
+    println!("  identical outcome in every row; the wide register is the slower one.");
+
+    println!();
+    println!("== and what a u64-indexed register does at those widths ==");
+    for w in [62usize, 63, 64, 4124] {
+        match sim.backends().create("sparse", w) {
+            Ok(st) => println!("  sparse at {w:>5} qubits: created, {} bytes", st.memory_bytes()),
+            Err(e) => println!("  sparse at {w:>5} qubits: {e}"),
+        }
     }
 
     println!();

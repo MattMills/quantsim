@@ -129,9 +129,18 @@ same reason `pathsum` is not), and `shor::WideOrderFinder` runs the same
 loop over it. Measured: identical outcome to the `u64` path, bit for bit,
 over 16 seeds on six moduli; order finding at **4124 qubits** in 13 ms and
 145 KB; and the arithmetic alone — one basis state, no interference — at
-**8277 qubits** in **1126 bytes**, 96 µs per modular multiplication. The
-width really is free, and that is now a measurement rather than an
-argument.
+**8277 qubits** in **1126 bytes**, 96 µs per modular multiplication.
+**What that shows, stated narrowly.** The wide register buys
+addressability, not speed: on the *same* problem (`N = 268140589`,
+`r = 212784`) it returns the identical measured value and is **3.25×
+slower** than `sparse`, because the keys and the arithmetic are
+multi-limb. The four-figure runs are fast because `r = 256` there *by
+construction* — cost is `t·r·limbs²`, and holding `r` fixed while `w`
+grows is exactly the experiment "is the width free?". It is not a claim
+that a 4123-bit modulus can be factored: that needs `r ≈ 2^2000`, and `r`
+is the support. What is genuinely new is only that `sparse` cannot be
+*constructed* past 63 qubits at all, so the question could not previously
+be asked.
 **Still open:** the ℤ_N-native qudit register (`mixed::CompoundRegister`)
 would drop the `y ≥ N` identity branch the padded binary register carries;
 `modwidth` already prices that form exactly, and `shor::ladder_widths`
