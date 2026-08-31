@@ -467,6 +467,61 @@ fn factoring_takes_the_classical_shortcuts_and_names_them() {
 }
 
 #[test]
+fn the_raised_modulus_cap_is_usable_and_still_bounded() {
+    // MAX_MODULUS went from 2^31 to its structural bound 2^62, and the
+    // default phase-bit rule changed from *erroring* above w = 30 to
+    // clamping at MAX_PHASE_BITS. Both halves of that need to hold.
+    let sim: Simulator = Simulator::new();
+    assert_eq!(shor::MAX_MODULUS, 1 << 62);
+
+    // Below w = 31 the default 2w+1 is under MAX_PHASE_BITS and stands.
+    // a = N-1 has order 2 for every N, so the support is 2 at any width.
+    let n = 1_040_399u64; // 20 bits
+    let finder = OrderFinder::new(n, n - 1).unwrap();
+    assert_eq!(finder.work_bits(), 20);
+    assert_eq!(finder.phase_bits, 41, "clamp fired too early");
+    let mut rng = Prng::new(1);
+    let est = finder
+        .estimate(&sim, PhaseForm::Semiclassical, &mut rng)
+        .unwrap();
+    assert_eq!(est.qubits, 21);
+    assert_eq!(est.peak_orbit, 2);
+
+    // A 40-bit modulus: past the old 2^31 cap, and it runs.
+    let n = 1_099_511_627_689u64; // 40 bits, odd
+    let finder = OrderFinder::new(n, n - 1).unwrap();
+    assert_eq!(finder.work_bits(), 40);
+    assert_eq!(
+        finder.phase_bits,
+        shor::MAX_PHASE_BITS,
+        "clamp did not fire"
+    );
+    let mut rng = Prng::new(1);
+    let est = finder
+        .estimate(&sim, PhaseForm::Semiclassical, &mut rng)
+        .unwrap();
+    assert_eq!(est.qubits, 41);
+    assert_eq!(est.peak_orbit, 2);
+
+    // Past w = 31 the default 2w+1 exceeds MAX_PHASE_BITS and is clamped
+    // rather than refused.
+    let wide_n = (1u64 << 45) - 1;
+    let finder = OrderFinder::new(wide_n, wide_n - 1).unwrap();
+    assert_eq!(finder.work_bits(), 45);
+    assert_eq!(finder.phase_bits, shor::MAX_PHASE_BITS);
+    let mut rng = Prng::new(1);
+    let est = finder
+        .estimate(&sim, PhaseForm::Semiclassical, &mut rng)
+        .unwrap();
+    assert_eq!(est.qubits, 46);
+    assert_eq!(est.peak_orbit, 2);
+
+    // And the register ceiling is still enforced: a modulus needing more
+    // than 62 work qubits leaves no room for the ancilla.
+    assert!(OrderFinder::new(u64::MAX, u64::MAX - 2).is_err());
+}
+
+#[test]
 fn factoring_end_to_end() {
     let sim: Simulator = Simulator::new();
     for n in [15u64, 21, 33, 35, 39, 51, 55] {

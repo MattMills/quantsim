@@ -283,6 +283,28 @@ fn the_banded_transform_costs_fewer_gates_per_register() {
 }
 
 #[test]
+fn a_modulus_too_wide_for_the_layout_is_refused_by_name() {
+    // `Regev::new` validates against `shor::MAX_MODULUS`, which was
+    // raised to 2^62. The binding constraint is then the layout, not the
+    // constant, and it must still refuse rather than allocate.
+    let big = (1u64 << 40) - 87; // 40 bits, odd, not divisible by 2/3/5
+    let cfg = Regev::new(big, 2).unwrap();
+    assert!(cfg.layout().qubits > regev::MAX_WIDTH);
+    let mut rng = Prng::new(1);
+    let err = cfg
+        .sample::<quantsim::C64>(&sim_for_test(), &mut rng)
+        .unwrap_err();
+    assert!(
+        matches!(err, quantsim::Error::TooManyQubits { .. }),
+        "expected a width refusal, got {err}"
+    );
+}
+
+fn sim_for_test() -> Simulator {
+    Simulator::new()
+}
+
+#[test]
 fn a_modulus_too_small_for_its_dimension_is_refused_by_name() {
     let err = Regev::new(9, 8).unwrap_err().to_string();
     assert!(err.contains("coprime prime bases"), "unexpected: {err}");
