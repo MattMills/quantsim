@@ -1317,19 +1317,40 @@ fold done once, or never.
   canonical node ids rather than of cells — carried onto the phase
   polynomial.
 
-Measured versus merely not-yet-observed, kept apart. On cost the
-checkable claim is that for **one** query the address route performs
-exactly as many compositions as the merge solver performs nodes — the
-same recursion under the same pivot — so the per-query cost *is* the
-merge solver's and everything here is reuse between queries; whether
-the growth law across a circuit family changes is **not measured**.
-`0 + x = x` **fires** (a branch child can vanish; the shortest witness
-found is eleven gates and is a test), which refutes a mechanism this
-module previously asserted after a smaller search found none — it is
-rare, 10 of 60,000 random Clifford+T circuits, and nothing bounds that
-rate. `x · 0 = 0` has **not been observed** firing in those 60,000,
-which is an observation with a sample attached and not a claim that it
-cannot.
+**The rewrites, and what bounds them.** Four act on addresses before
+anything is evaluated: `0 + x = x`; `a + a = 2a`; `s·P + t·P = 0` when
+the scales cancel — destructive interference decided *without knowing
+what `P` is*; and the common factor `s·CP + t·CQ = C·(s·P + t·Q)`. Plus
+product absorption, since scales form a group. Measured, they are worth
+little, and the useful part is the instrument that says why:
+
+| circuit | absorb only | +factor | sums | same | common | disjoint |
+|---|---|---|---|---|---|---|
+| grid 3×3 L=1 | 273 addr / 273 eval | 337 / 237 | 97 | 14 | 2 | 81 |
+| grid 3×3 L=2 | 1818 / 1818 | 2930 / 1772 | 660 | 2 | 0 | 658 |
+| grid 4×4 L=1 | 1084 / 1084 | 1592 / 905 | 380 | 2 | 60 | 318 |
+
+Common-factor extraction is a **trade, not a win** — it replaces one
+`Sum` with four — so it is off by default. Absorption alone changes
+nothing, because a `Product`'s parts are component sums and there is no
+nested product until another rewrite makes one. `sum_census` is the
+ceiling: 82–99% of sums have **disjoint** factor sets that no factoring
+rewrite can reach.
+
+`a + a = 2a` and the scale cancellation have **not been observed
+firing** — not on 40,000 random circuits, which is close to the wrong
+instrument (cancellation is a structural coincidence and random
+sampling destroys structure), nor on the structured families where it
+should live: mirror circuits, symmetric graph states, repeated blocks.
+Those show where it went instead — a mirror circuit reduces to `h* = 0`
+and **two** addresses, so `reduce` took all the interference before this
+level existed. Evidence for where to look, not a proof it cannot fire.
+
+On cost, the checkable claim: for **one** query the address route
+performs exactly one composition per merge-solver node — the same
+recursion under the same pivot — so the per-query cost *is* the merge
+solver's and everything here is reuse between queries. Whether the
+growth law across a circuit family changes is **not measured**.
 
 ## Quick start
 

@@ -344,3 +344,163 @@ fn one_query_costs_exactly_what_the_merge_solver_costs() {
         }
     }
 }
+
+// ─────────────── the rewrites, and what bounds them ───────────────
+
+fn mirror(n: usize, seed: u64, len: usize) -> Circuit<C64> {
+    let mut rng = quantsim::Prng::new(seed);
+    let mut ops: Vec<(u8, usize, usize)> = Vec::new();
+    for _ in 0..len {
+        let q = (rng.next_u64() % n as u64) as usize;
+        let r = (q + 1) % n;
+        ops.push(match rng.next_u64() % 4 {
+            0 => (0, q, q),
+            1 => (1, q, q),
+            2 => (2, q, q),
+            _ => (3, q, r),
+        });
+    }
+    let mut c = Circuit::new(n);
+    for &(k, q, r) in &ops {
+        match k {
+            0 => c.h(q),
+            1 => c.t(q),
+            2 => c.s(q),
+            _ => c.cz(q, r),
+        };
+    }
+    for &(k, q, r) in ops.iter().rev() {
+        match k {
+            0 => c.h(q),
+            1 => c.tdg(q),
+            2 => c.sdg(q),
+            _ => c.cz(q, r),
+        };
+    }
+    c
+}
+
+#[test]
+fn the_rewrites_never_change_a_value() {
+    // The only property they must have. Every configuration, every
+    // basis state, exactly equal.
+    for c in [grid(2, 2), grid(3, 1), grid(3, 2), ghz(4), mirror(4, 1, 10)] {
+        let ps = PathSum::from_circuit(&c).unwrap();
+        let n = c.num_qubits();
+        let mut base: Vec<C64> = Vec::new();
+        for (rw, fac) in [(false, false), (true, false), (true, true)] {
+            let mut sp = AddressSpace::new();
+            sp.set_rewrites(rw);
+            sp.set_factoring(fac);
+            let vals: Vec<C64> = (0..(1u64 << n))
+                .map(|b| {
+                    let a = sp.address(&ps, b, 1_000_000).unwrap();
+                    sp.value(a).unwrap()
+                })
+                .collect();
+            if base.is_empty() {
+                base = vals;
+            } else {
+                for (i, (x, y)) in base.iter().zip(&vals).enumerate() {
+                    assert!((*x - *y).abs_sqr() < 1e-24, "rewrites moved index {i}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn common_factor_extraction_is_a_trade_and_is_off_by_default() {
+    let c = grid(3, 2);
+    let ps = PathSum::from_circuit(&c).unwrap();
+    let run = |fac: bool| {
+        let mut sp = AddressSpace::new();
+        sp.set_factoring(fac);
+        for b in 0..64u64 {
+            let a = sp.address(&ps, b, 5_000_000).unwrap();
+            sp.value(a).unwrap();
+        }
+        (sp.len(), sp.stats().evaluations)
+    };
+    let (addr_off, eval_off) = run(false);
+    let (addr_on, eval_on) = run(true);
+    assert!(
+        addr_on > addr_off,
+        "it costs addresses: {addr_on} vs {addr_off}"
+    );
+    assert!(
+        eval_on < eval_off,
+        "and buys evaluations: {eval_on} vs {eval_off}"
+    );
+    // Off by default, so the default configuration is the cheap one.
+    let mut fresh = AddressSpace::new();
+    for b in 0..64u64 {
+        fresh.address(&ps, b, 5_000_000).unwrap();
+    }
+    assert_eq!(fresh.len(), addr_off);
+}
+
+#[test]
+fn absorption_alone_changes_nothing_because_it_has_nothing_to_absorb() {
+    // A Product's parts are component sums, so a nested product only
+    // appears once another rewrite has made one.
+    for c in [grid(2, 2), grid(3, 1), grid(4, 1)] {
+        let ps = PathSum::from_circuit(&c).unwrap();
+        let run = |rw: bool| {
+            let mut sp = AddressSpace::new();
+            sp.set_rewrites(rw);
+            sp.set_factoring(false);
+            for b in 0..16u64 {
+                sp.address(&ps, b, 5_000_000).unwrap();
+            }
+            (sp.len(), sp.stats().flattened)
+        };
+        assert_eq!(run(false).0, run(true).0);
+        assert_eq!(run(true).1, 0, "nothing to absorb");
+    }
+}
+
+#[test]
+fn the_census_bounds_what_any_sum_rewrite_could_reach() {
+    // Most sums have disjoint factor sets, which no factoring rewrite
+    // can touch. This is the ceiling, measured, not a claim about the
+    // rewrites that happen to be implemented.
+    for (c, queries) in [(grid(3, 2), 64u64), (grid(4, 1), 64)] {
+        let ps = PathSum::from_circuit(&c).unwrap();
+        let mut sp = AddressSpace::new();
+        sp.set_rewrites(false);
+        for b in 0..queries {
+            sp.address(&ps, b, 5_000_000).unwrap();
+        }
+        let cen = sp.sum_census();
+        assert_eq!(
+            cen.same_parts + cen.some_common + cen.disjoint + cen.other,
+            cen.sums
+        );
+        assert_eq!(cen.other, 0, "a sum's operands are always products");
+        assert!(
+            cen.disjoint * 4 > cen.sums * 3,
+            "over three quarters are out of reach: {cen:?}"
+        );
+    }
+}
+
+#[test]
+fn a_mirror_circuit_is_cancelled_before_the_address_level_exists() {
+    // Where the interference went. `C` then `C†` is the identity, so
+    // the cancellation is total — and the reduction takes all of it:
+    // h* = 0, and the whole space is two addresses.
+    for seed in 0..4u64 {
+        let c = mirror(4, seed, 10);
+        let ps = PathSum::from_circuit(&c).unwrap();
+        assert_eq!(ps.internal_vars(), 0, "seed {seed}: nothing left to sum");
+        let mut sp = AddressSpace::new();
+        for b in 0..16u64 {
+            sp.address(&ps, b, 100_000).unwrap();
+        }
+        assert_eq!(sp.len(), 2, "one leaf and one zero");
+        assert_eq!(sp.stats().cancelled, 0, "the address level saw none of it");
+        let a = sp.address(&ps, 0, 100_000).unwrap();
+        assert!((sp.value(a).unwrap() - C64::new(1.0, 0.0)).abs_sqr() < 1e-24);
+    }
+}

@@ -66,36 +66,75 @@
 //! otherwise rather than rounding.
 //! [`value`](AddressSpace::value) always works and is float.
 //!
-//! ## Measured, versus merely not yet observed
+//! ## The rewrites, and what they were measured to be worth
 //!
-//! These are different and this module previously ran them together.
+//! Four rewrites act on addresses, before anything is evaluated:
+//! `0 + x = x`; `a + a = 2a`; `s·P + t·P = 0` when the scales
+//! [cancel](Scale::cancels), which is destructive interference decided
+//! **without knowing what `P` is**; and `s·CP + t·CQ = C·(s·P + t·Q)`,
+//! the common factor. Plus product absorption, since scales form a
+//! group under [`Scale::times`].
 //!
-//! * `0 + x = x` **fires**. A branch child can reduce to the zero
-//!   polynomial, and `tests/address.rs` carries an eleven-gate witness.
-//!   It is rare — 10 of 60,000 random Clifford+T circuits at 2–4
-//!   qubits. An earlier, smaller search found none and this module
-//!   asserted a *mechanism* for why it could not happen; the wider
-//!   search refutes that, and the rate above is a measurement over one
-//!   sample with no argument bounding it.
-//! * `x · 0 = 0` has **not been observed firing** in any of those
-//!   60,000 circuits. That is an observation with a sample attached and
-//!   not a claim that it cannot: the constructor is reachable and
-//!   `tests/address.rs` exercises it directly.
-//! * On cost, the checkable statement is this. For a **single** query
-//!   the address route performs exactly as many compositions as
-//!   [`amplitude_merged`](crate::pathsum::PathSum::amplitude_merged)
-//!   performs nodes — measured equal on every basis state of every
-//!   circuit in `tests/address.rs`, which is what one expects since it
-//!   is the same recursion under the same pivot. So the per-query cost
-//!   *is* the merge solver's, and everything this module adds is reuse
-//!   between queries. Whether the growth law across a circuit family
-//!   changes is **not measured here**, and is not claimed either way.
+//! Measured, they are worth little here, and the useful part of this
+//! module is the instrument that says why.
+//!
+//! * **Common-factor extraction is a trade, not a win**, so it is
+//!   **off by default** ([`set_factoring`](AddressSpace::set_factoring)).
+//!   It replaces one `Sum` node with four, and on a 3×3 grid over 64
+//!   queries it costs 1.6× the addresses to save 3% of the
+//!   evaluations; on a 4×4 grid, 1.5× for 17%.
+//! * **Product absorption never fires on its own.** A `Product`'s parts
+//!   are component sums, so a nested product only appears once another
+//!   rewrite has made one. With factoring off, the address count is
+//!   identical to rewriting off entirely.
+//! * **`a + a = 2a` and the scale cancellation have not been observed
+//!   firing.** Not on 40,000 random Clifford+T circuits — and random
+//!   circuits are close to the wrong instrument for this, since
+//!   cancellation is a structural coincidence and random sampling
+//!   destroys structure — nor on the structured families where it
+//!   should live: mirror circuits (`C` then `C†`), symmetric graph
+//!   states on cycles and complete graphs, and repeated identical
+//!   blocks. What those show instead is *where the cancellation went*:
+//!   a mirror circuit reduces to `h* = 0` and **two** addresses, so
+//!   [`reduce`](crate::pathsum) has already taken all of it before the
+//!   address level exists. That is evidence for where to look, not a
+//!   proof that the rewrites cannot fire.
+//!
+//! Which suggests what the cancellation rewrite is actually for. `h*`
+//! is what survives the reducer, and the reducer's job *is* to consume
+//! interference — so a cancellation at the address level would be
+//! interference the rewrite rules **missed**. Read that way
+//! [`AddressStats::cancelled`] is not an optimization counter but an
+//! **incompleteness detector for the reducer**, and it reads zero on
+//! everything tried, structured and random alike. That is evidence the
+//! rules are complete on what has been run, and it is the cheapest
+//! standing check for the opposite.
+//!
+//! [`sum_census`](AddressSpace::sum_census) is the instrument, and it
+//! bounds what *any* sum-rewrite could reach on a given circuit by
+//! classifying every sum's operands. On the grids above, 74–99% of sums
+//! have **disjoint** factor sets — no factoring rewrite can touch them
+//! — and the `same_parts` row, which is the ceiling for a rewrite that
+//! combines coefficients over a shared factor set, is 0.6–16%.
+//!
+//! ## What is measured about cost
+//!
+//! For a **single** query the address route performs exactly as many
+//! compositions as
+//! [`amplitude_merged`](crate::pathsum::PathSum::amplitude_merged)
+//! performs nodes — measured equal on every basis state of every
+//! circuit in `tests/address.rs`, which is what one expects since it is
+//! the same recursion under the same pivot. So the per-query cost *is*
+//! the merge solver's, and what this module adds is reuse between
+//! queries. Whether the growth law across a circuit family changes is
+//! **not measured here** and is not claimed either way.
+//!
 
 use std::collections::HashMap;
 
 use crate::error::{Error, Result};
 use crate::exact::DOmega;
-use crate::pathsum::{canonicalize, CanonKey, Component, PathSum, Pivot, Turn, EIGHTH};
+use crate::pathsum::{canonicalize, CanonKey, Component, PathSum, Pivot, Turn, EIGHTH, HALF};
 use crate::scalar::C64;
 
 /// A content address: the identity of a node in an [`AddressSpace`].
@@ -158,6 +197,26 @@ impl Scale {
     }
 }
 
+impl Scale {
+    /// The scale of a product of two scales: turns add, exponents add.
+    /// Exact, and the reason a `Product` can absorb a nested one.
+    pub fn times(self, rhs: Scale) -> Scale {
+        Scale {
+            turn: self.turn.wrapping_add(rhs.turn),
+            half: self.half + rhs.half,
+        }
+    }
+
+    /// Whether `self + rhs` is exactly zero: the same magnitude at
+    /// opposite angles. Decided on the symbols, with no arithmetic.
+    pub fn cancels(self, rhs: Scale) -> bool {
+        self.half == rhs.half && rhs.turn == self.turn.wrapping_add(HALF)
+    }
+
+    /// Doubling, as a scale: `2 = √2²`.
+    pub const TWO: Scale = Scale { turn: 0, half: 2 };
+}
+
 /// `√2^half`, exactly. Even exponents are integers; odd ones carry one
 /// factor of `√2 = ω − ω³`.
 fn sqrt2_pow(half: i64) -> Result<DOmega> {
@@ -196,12 +255,14 @@ pub enum Node {
         /// Independent factors, sorted so that commutation merges.
         parts: Vec<Addr>,
     },
-    /// The sum of the two children of a branched variable.
-    Branch {
-        /// The child with the pivot set to `false`.
-        zero: Addr,
-        /// The child with the pivot set to `true`.
-        one: Addr,
+    /// A sum of two addresses. It arises from branching a variable,
+    /// but addition commutes, so the operands are held sorted and
+    /// `a + b` and `b + a` are one node.
+    Sum {
+        /// The smaller operand.
+        left: Addr,
+        /// The larger.
+        right: Addr,
     },
 }
 
@@ -221,10 +282,38 @@ pub struct AddressStats {
     /// `0 + x = x` fired: a branch had a vanishing child, so the node
     /// is the surviving child rather than a new one.
     pub zero_sums: u64,
+    /// `a + a = 2a` fired.
+    pub doubled: u64,
+    /// `s·P + t·P = 0` fired: the two scales cancel, so the sum is
+    /// exactly zero whatever `P` is — decided without knowing it.
+    pub cancelled: u64,
+    /// A common factor was pulled out of a sum:
+    /// `s·CP + t·CQ = C·(s·P + t·Q)`.
+    pub factored: u64,
+    /// A nested product was absorbed into its parent's scale.
+    pub flattened: u64,
     /// Deepest build nesting.
     pub max_depth: u32,
     /// Nodes whose value was actually computed.
     pub evaluations: u64,
+}
+
+/// How the operands of the space's sums relate — the ceiling on any
+/// sum-rewrite. See [`AddressSpace::sum_census`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SumCensus {
+    /// Sum nodes classified.
+    pub sums: usize,
+    /// Both operands are products over the **same** factor set: a
+    /// coefficient rewrite could combine them into one node.
+    pub same_parts: usize,
+    /// The factor sets overlap without being equal: a common factor
+    /// can be pulled out.
+    pub some_common: usize,
+    /// The factor sets are disjoint — out of reach of either rewrite.
+    pub disjoint: usize,
+    /// An operand was not a product (a nested sum).
+    pub other: usize,
 }
 
 /// A space of composable addresses, and the DAG they name.
@@ -239,13 +328,37 @@ pub struct AddressSpace {
     forms: HashMap<CanonKey, Addr>,
     values: Vec<Option<C64>>,
     exact: Vec<Option<DOmega>>,
+    rewrite: bool,
+    factor: bool,
     stats: AddressStats,
 }
 
 impl AddressSpace {
-    /// An empty space.
+    /// An empty space, with rewriting on.
     pub fn new() -> Self {
-        AddressSpace::default()
+        AddressSpace {
+            rewrite: true,
+            factor: false,
+            ..AddressSpace::default()
+        }
+    }
+
+    /// Turn the cheap structural rewrites off (product absorption,
+    /// `a + a = 2a`, scale cancellation), leaving only interning and
+    /// the zero folds. Exists so the rung can be measured rather than
+    /// assumed: the same circuit built both ways must give the same
+    /// values.
+    pub fn set_rewrites(&mut self, on: bool) {
+        self.rewrite = on;
+    }
+
+    /// Turn common-factor extraction on. **Off by default**, because it
+    /// is the one rewrite here that is a trade rather than a win: it
+    /// names the shared sub-DAG once instead of twice, but replaces one
+    /// `Sum` node with four, so it costs addresses and buys
+    /// evaluations. Measured both ways in `examples/address_algebra.rs`.
+    pub fn set_factoring(&mut self, on: bool) {
+        self.factor = on;
     }
 
     /// Distinct addresses in the space.
@@ -271,6 +384,43 @@ impl AddressSpace {
     /// What an address is built from.
     pub fn node(&self, a: Addr) -> &Node {
         &self.nodes[a.index()]
+    }
+
+    /// The node at an index, for walking the whole space.
+    pub fn node_at(&self, i: usize) -> &Node {
+        &self.nodes[i]
+    }
+
+    /// Classify every [`Node::Sum`] by how its two operands' factor
+    /// sets relate — a **bound on what any sum-rewrite can reach**,
+    /// measured rather than assumed.
+    ///
+    /// A rewrite that pulls out a common factor can only touch the
+    /// `some_common` and `same_parts` rows; one that combines
+    /// coefficients over a shared factor set can only touch
+    /// `same_parts`. Whatever is `disjoint` is out of reach of both.
+    pub fn sum_census(&self) -> SumCensus {
+        let mut c = SumCensus::default();
+        for n in &self.nodes {
+            let Node::Sum { left, right } = n else {
+                continue;
+            };
+            c.sums += 1;
+            match (&self.nodes[left.index()], &self.nodes[right.index()]) {
+                (Node::Product { parts: a, .. }, Node::Product { parts: b, .. }) => {
+                    let (common, ra, rb) = AddressSpace::split_common(a, b);
+                    if common.is_empty() {
+                        c.disjoint += 1;
+                    } else if ra.is_empty() && rb.is_empty() {
+                        c.same_parts += 1;
+                    } else {
+                        c.some_common += 1;
+                    }
+                }
+                _ => c.other += 1,
+            }
+        }
+        c
     }
 
     /// Whether two addresses denote the same amplitude — decided by
@@ -308,37 +458,132 @@ impl AddressSpace {
         })
     }
 
-    /// `scale · ∏ parts`. Parts are sorted (the product commutes) and a
-    /// zero factor collapses the whole product — rewrites performed on
-    /// addresses, before anything is evaluated.
-    pub fn product(&mut self, scale: Scale, mut parts: Vec<Addr>) -> Addr {
+    /// `scale · ∏ parts`, normalized.
+    ///
+    /// Parts are sorted, since the product commutes; a zero factor
+    /// collapses the whole product; and a part that is itself a
+    /// `Product` is **absorbed** — its scale multiplied into this one
+    /// and its parts spliced in — because scales form a group under
+    /// [`Scale::times`]. All three are rewrites on addresses, done
+    /// before anything is evaluated.
+    pub fn product(&mut self, scale: Scale, parts: Vec<Addr>) -> Addr {
         if parts.iter().any(|&p| self.nodes[p.index()] == Node::Zero) {
             self.stats.zero_products += 1;
             return self.zero();
         }
-        parts.sort_unstable();
-        if parts.is_empty() {
+        let (mut scale, mut flat, mut absorbed) = (scale, Vec::with_capacity(parts.len()), false);
+        for p in parts {
+            match &self.nodes[p.index()] {
+                Node::Product {
+                    scale: inner,
+                    parts: qs,
+                } if self.rewrite => {
+                    absorbed = true;
+                    scale = scale.times(*inner);
+                    flat.extend(qs.iter().copied());
+                }
+                _ => flat.push(p),
+            }
+        }
+        if absorbed {
+            self.stats.flattened += 1;
+        }
+        flat.sort_unstable();
+        if flat.is_empty() {
             return self.scalar(scale);
         }
-        self.intern(Node::Product { scale, parts })
+        self.intern(Node::Product { scale, parts: flat })
     }
 
-    /// `zero + one`, with `0 + x = x` folded on the addresses.
-    pub fn sum(&mut self, zero: Addr, one: Addr) -> Addr {
-        let z0 = self.nodes[zero.index()] == Node::Zero;
-        let z1 = self.nodes[one.index()] == Node::Zero;
-        match (z0, z1) {
-            (true, true) => self.zero(),
+    /// The multiset intersection of two sorted part lists, and what is
+    /// left of each — the common factor of a sum.
+    fn split_common(a: &[Addr], b: &[Addr]) -> (Vec<Addr>, Vec<Addr>, Vec<Addr>) {
+        let (mut common, mut ra, mut rb) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut i, mut j) = (0usize, 0usize);
+        while i < a.len() && j < b.len() {
+            match a[i].cmp(&b[j]) {
+                std::cmp::Ordering::Equal => {
+                    common.push(a[i]);
+                    i += 1;
+                    j += 1;
+                }
+                std::cmp::Ordering::Less => {
+                    ra.push(a[i]);
+                    i += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    rb.push(b[j]);
+                    j += 1;
+                }
+            }
+        }
+        ra.extend_from_slice(&a[i..]);
+        rb.extend_from_slice(&b[j..]);
+        (common, ra, rb)
+    }
+
+    /// `a + b`, normalized.
+    ///
+    /// Four rewrites, each decided on the addresses:
+    ///
+    /// * `0 + x = x`;
+    /// * `a + a = 2a`, which is a `Product` with scale `√2²`;
+    /// * `s·P + t·P = 0` when the scales [cancel](Scale::cancels) — an
+    ///   exact cancellation recognized **without knowing what `P` is**,
+    ///   which is destructive interference decided structurally;
+    /// * `s·CP + t·CQ = C·(s·P + t·Q)` — the common factor pulled out,
+    ///   so a shared sub-DAG is named once instead of twice.
+    pub fn sum(&mut self, a: Addr, b: Addr) -> Addr {
+        let za = self.nodes[a.index()] == Node::Zero;
+        let zb = self.nodes[b.index()] == Node::Zero;
+        match (za, zb) {
+            (true, true) => return self.zero(),
             (true, false) => {
                 self.stats.zero_sums += 1;
-                one
+                return b;
             }
             (false, true) => {
                 self.stats.zero_sums += 1;
-                zero
+                return a;
             }
-            (false, false) => self.intern(Node::Branch { zero, one }),
+            (false, false) => {}
         }
+        if self.rewrite {
+            if a == b {
+                self.stats.doubled += 1;
+                return self.product(Scale::TWO, vec![a]);
+            }
+            let pair = match (&self.nodes[a.index()], &self.nodes[b.index()]) {
+                (
+                    Node::Product {
+                        scale: s,
+                        parts: pa,
+                    },
+                    Node::Product {
+                        scale: t,
+                        parts: pb,
+                    },
+                ) => Some((*s, *t, AddressSpace::split_common(pa, pb))),
+                _ => None,
+            };
+            if let Some((s, t, (common, ra, rb))) = pair {
+                if ra.is_empty() && rb.is_empty() && s.cancels(t) {
+                    self.stats.cancelled += 1;
+                    return self.zero();
+                }
+                if !common.is_empty() && self.factor {
+                    self.stats.factored += 1;
+                    let la = self.product(s, ra);
+                    let lb = self.product(t, rb);
+                    let inner = self.sum(la, lb);
+                    let mut parts = common;
+                    parts.push(inner);
+                    return self.product(Scale::ONE, parts);
+                }
+            }
+        }
+        let (left, right) = if a <= b { (a, b) } else { (b, a) };
+        self.intern(Node::Sum { left, right })
     }
 
     // ─────────────────────────── building ───────────────────────────
@@ -433,9 +678,9 @@ impl AddressSpace {
                         stack.push((p, false));
                     }
                 }
-                Node::Branch { zero, one } => {
-                    stack.push((*zero, false));
-                    stack.push((*one, false));
+                Node::Sum { left, right } => {
+                    stack.push((*left, false));
+                    stack.push((*right, false));
                 }
             }
         }
@@ -458,9 +703,9 @@ impl AddressSpace {
                     }
                     acc
                 }
-                Node::Branch { zero, one } => {
-                    self.values[zero.index()].expect("post-order")
-                        + self.values[one.index()].expect("post-order")
+                Node::Sum { left, right } => {
+                    self.values[left.index()].expect("post-order")
+                        + self.values[right.index()].expect("post-order")
                 }
             };
             self.values[a.index()] = Some(v);
@@ -488,9 +733,9 @@ impl AddressSpace {
                     }
                     acc
                 }
-                Node::Branch { zero, one } => {
-                    let a0 = self.exact[zero.index()].expect("post-order");
-                    let a1 = self.exact[one.index()].expect("post-order");
+                Node::Sum { left, right } => {
+                    let a0 = self.exact[left.index()].expect("post-order");
+                    let a1 = self.exact[right.index()].expect("post-order");
                     a0.add(a1)?
                 }
             };

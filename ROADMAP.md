@@ -2330,28 +2330,73 @@ phase polynomial, and it is sound for the same reason the memo is: a
 component's sum depends only on its polynomial up to renaming, so it
 does not matter which query first built it.
 
-**Measured, versus merely not yet observed** — kept apart, because an
-earlier draft of this section ran them together and asserted a mechanism
-that a wider search then refuted.
+**Rewrites on addresses — SHIPPED, and measured to be worth little.**
+Four act before anything is evaluated: `0 + x = x`; `a + a = 2a`;
+`s·P + t·P = 0` when the scales cancel, which decides destructive
+interference *without knowing what `P` is*; and the common factor
+`s·CP + t·CQ = C·(s·P + t·Q)`. Plus product absorption, since scales
+form a group under `Scale::times`. What they buy, over 64 queries:
 
-* **Cost.** The checkable statement is that a *single* query performs
-  exactly one composition per merge-solver node — measured equal on
-  every basis state of every circuit in `tests/address.rs`, which is
-  what one expects since it is the same recursion under the same pivot.
-  So the per-query cost is the merge solver's and everything this module
-  adds is reuse *between* queries. Whether the growth law across a
-  circuit family changes is **not measured here** and is not claimed
-  either way.
-* **`0 + x = x` fires.** A branch child can reduce to the zero
-  polynomial. `tests/address.rs` carries the shortest witness a
-  60,000-circuit search found — eleven gates — so the refuted mechanism
-  cannot quietly return. The rate is 10 of 60,000 random Clifford+T
-  circuits at 2–4 qubits: one sample, with nothing here bounding it.
-* **`x · 0 = 0` has not been observed firing** in any of those 60,000.
-  An observation with a sample attached, not a claim that it cannot; the
-  constructor is reachable and the tests exercise it directly.
-* The symbol is exact for any dyadic turn; exact *evaluation* is the
-  eighth-turn fragment, refused by name otherwise.
+```
+circuit         absorb only        absorb+factor      sum census (rewrites off)
+                 addr    eval       addr    eval      sums  same  common  disj
+grid 2x2 L=2      125     125        182     113        43     0       9    34
+grid 3x3 L=1      273     273        337     237        97    14       2    81
+grid 3x3 L=2     1818    1818       2930    1772       660     2       0   658
+grid 4x4 L=1     1084    1084       1592     905       380     2      60   318
+```
+
+* Common-factor extraction is a **trade**: it replaces one `Sum` node
+  with four, costing 1.5–1.6× the addresses to save 3–17% of the
+  evaluations. Off by default; `set_factoring` turns it on.
+* Product absorption **never fires on its own** — a `Product`'s parts
+  are component sums, so a nested product only exists once another
+  rewrite has made one.
+* `a + a = 2a` and the scale cancellation have **not been observed
+  firing**. Not on 40,000 random Clifford+T circuits — and random
+  circuits are close to the wrong instrument here, since cancellation is
+  a structural coincidence and random sampling destroys exactly the
+  cross-correlated structure that would produce one — nor on the
+  structured families where it should live: mirror circuits (`C` then
+  `C†`), symmetric graph states on cycles and complete graphs, repeated
+  identical blocks. What those measure instead is **where the
+  cancellation went**: a mirror circuit reduces to `h* = 0` and *two*
+  addresses, so `PathSum::reduce` has taken all of the interference
+  before the address level exists. That is evidence about where to look
+  and not a proof that the rewrites cannot fire.
+
+Which reframes what the cancellation rewrite is for. `h*` is what
+survives the reducer, and the reducer's job *is* to consume
+interference — so a cancellation at the address level would be
+interference the rewrite rules **missed**. `AddressStats::cancelled` is
+therefore an **incompleteness detector for `PathSum::reduce`** rather
+than an optimization counter, and it reads zero on everything run so
+far, structured and random alike: evidence that the rules are complete
+on what has been tried, and a standing check that costs three lines.
+
+`AddressSpace::sum_census` is the instrument and is the more useful
+deliverable than the rewrites themselves: it bounds what *any*
+sum-rewrite could reach on a given circuit by classifying every sum's
+operands. On these grids 82–99% of sums have **disjoint** factor sets,
+out of reach of any factoring rewrite, and the `same_parts` row — the
+ceiling for a rewrite that combines coefficients over a shared factor
+set — is 0.3–14%.
+
+**Cost, stated checkably.** A *single* query performs exactly one
+composition per merge-solver node — measured equal on every basis state
+of every circuit in `tests/address.rs`, which is what one expects since
+it is the same recursion under the same pivot. So the per-query cost is
+the merge solver's and everything this module adds is reuse *between*
+queries. Whether the growth law across a circuit family changes is **not
+measured here** and is not claimed either way. And `x · 0 = 0` has not
+been observed firing on any circuit tried, which is an observation with
+a sample attached rather than a claim that it cannot.
+
+`0 + x = x` **does** fire: a branch child can reduce to the zero
+polynomial, and `tests/address.rs` carries the shortest witness a
+60,000-circuit search found — eleven gates. An earlier draft of this
+section asserted a *mechanism* for why it could not happen, from a
+smaller search that found none; the wider search refuted that.
 
 Reuse is not confined to one circuit, and that is worth stating
 separately because it is the sharper claim: the GHZ test addresses

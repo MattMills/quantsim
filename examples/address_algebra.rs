@@ -163,35 +163,74 @@ fn main() -> Result<()> {
         println!("{line}");
     }
 
-    rule("4. measured, versus merely not yet observed");
-    let s = Scale {
-        turn: 1 << 58,
-        half: 0,
-    };
+    rule("4. the rewrites: what they reach, and what bounds them");
+    println!(
+        "  {:<15} {:>22} {:>22}   {:>26}",
+        "circuit", "absorb only", "absorb + factor", "sum census (rewrites off)"
+    );
+    println!(
+        "  {:<15} {:>10} {:>11} {:>10} {:>11}   {:>6} {:>6} {:>6} {:>6}",
+        "", "addr", "eval", "addr", "eval", "sums", "same", "common", "disj"
+    );
+    for (name, c, q) in [
+        ("grid 2x2 L=2", grid(2, 2), 16u64),
+        ("grid 3x3 L=1", grid(3, 1), 64),
+        ("grid 3x3 L=2", grid(3, 2), 64),
+        ("grid 4x4 L=1", grid(4, 1), 64),
+    ] {
+        let ps = PathSum::from_circuit(&c)?;
+        let mut r = Vec::new();
+        for fac in [false, true] {
+            let mut sp = AddressSpace::new();
+            sp.set_factoring(fac);
+            for b in 0..q {
+                let a = sp.address(&ps, b, 5_000_000)?;
+                sp.value(a)?;
+            }
+            r.push((sp.len(), sp.stats().evaluations));
+        }
+        let mut plain = AddressSpace::new();
+        plain.set_rewrites(false);
+        for b in 0..q {
+            plain.address(&ps, b, 5_000_000)?;
+        }
+        let cen = plain.sum_census();
+        println!(
+            "  {name:<15} {:>10} {:>11} {:>10} {:>11}   {:>6} {:>6} {:>6} {:>6}",
+            r[0].0, r[0].1, r[1].0, r[1].1, cen.sums, cen.same_parts, cen.some_common, cen.disjoint
+        );
+    }
     for line in [
-        "  On cost, the checkable claim: for ONE query the address route performs",
-        "  exactly as many compositions as the merge solver performs nodes -- the same",
-        "  recursion under the same pivot -- so the per-query cost IS the merge",
-        "  solver's, and everything here is reuse between queries. Whether the growth",
-        "  law across a circuit family changes is not measured, and not claimed.",
         "",
-        "  0 + x = x FIRES. A branch child can reduce to the zero polynomial; the",
-        "  shortest witness a 60,000-circuit search found is eleven gates, and it is a",
-        "  test. It is rare -- 10 of 60,000 random Clifford+T circuits at 2-4 qubits --",
-        "  and an earlier smaller search finding none led this module to assert a",
-        "  MECHANISM for why it could not happen. The wider search refuted that. The",
-        "  rate is one sample; nothing here bounds it.",
+        "  Factoring costs addresses and buys evaluations: a trade, so it is off by",
+        "  default. Absorption alone changes nothing -- a Product's parts are component",
+        "  sums, so there is no nested product to absorb until another rewrite makes",
+        "  one. The census is the ceiling: whatever is disjoint no factoring rewrite",
+        "  can reach, and `same` bounds a rewrite that combines coefficients.",
         "",
-        "  x . 0 = 0 has NOT been observed firing in any of those 60,000 circuits.",
-        "  That is an observation with a sample attached, not a claim that it cannot.",
+        "  a + a = 2a and the scale cancellation have not been observed firing -- not",
+        "  on 40,000 random circuits (close to the wrong instrument: cancellation is a",
+        "  structural coincidence and random sampling destroys structure), nor on",
+        "  mirror circuits, symmetric graph states, or repeated blocks. Those show",
+        "  where it went instead: a mirror circuit reduces to h* = 0 and TWO addresses,",
+        "  so the reduction took all of the interference before this level existed.",
+        "",
+        "  For ONE query the address route performs exactly one composition per",
+        "  merge-solver node -- same recursion, same pivot -- so the per-query cost is",
+        "  the merge solver's and everything here is reuse between queries. Whether the",
+        "  growth law across a family changes is not measured, and not claimed.",
         "",
         "  The symbol is exact for any dyadic turn; exact EVALUATION is the eighth-turn",
-        "  fragment, and anything else is refused by name rather than rounded:",
+        "  fragment, refused by name rather than rounded:",
     ] {
         println!("{line}");
     }
-    println!("    turn 2^58 is an eighth turn: {}", s.is_eighth());
-    println!("    -> {}", s.to_exact().unwrap_err());
+    let odd = Scale {
+        turn: 1 << 58,
+        half: 0,
+    };
+    println!("    turn 2^58 is an eighth turn: {}", odd.is_eighth());
+    println!("    -> {}", odd.to_exact().unwrap_err());
     let a = sp.address(&ps, 0, 10)?;
     assert!(matches!(sp.node(a), Node::Zero));
     Ok(())
