@@ -1194,10 +1194,19 @@ measure rather than hide.
   straddling two regions cannot take their union, because a set of
   sites is not something a chain-addressed register can hold; it
   **migrates** into the smallest member-block containing them, swallows
-  whatever that block cuts into, and pays the difference. So a bad
-  ordering ends a simulation *by name* — `TooManyQubits` carrying the
-  block it needed — rather than by exhausting memory, and the layout
-  stops being advice.
+  whatever that block cuts into, and pays the difference. So the layout
+  stops being advice: what a gate costs is a **width**, reported by
+  `projected` without allocating anything — one vertical lattice edge
+  on an 8×8 grid forces a 16-site block under row-major and a 2-site
+  block under the curve, on any machine.
+  The module owns **no capacity policy**. Whether a block fits is asked
+  of the [resource guard](src/guard.rs), which admits every merge
+  against the bytes *measured* available and reports both counts; the
+  only width bound in the module is structural (local basis indices are
+  `usize`). Measured across a 256× range of budgets, the demand a
+  layout puts on the register is the same number every time and only
+  the outcome changes — the cost is the layout's, the budget is the
+  machine's.
   Summing the placement width over every lattice edge gives four exact
   closed forms, verified at every power-of-two side from 4 to 64:
 
@@ -1221,11 +1230,16 @@ measure rather than hide.
   Which is why the register mixes families
   ([`Overlay::families`](src/curve.rs)). On a graph state that is
   row-local on half the lattice and patch-local on the other — the
-  case no single family serves — the mixed overlay completes what the
-  row-major family refuses and holds less than either: at side 16,
-  padding **120** against the Hilbert family's 168 and a single
-  Hilbert ordering's 186; peak memory **524 800** amplitudes against
-  528 384 and 788 480. That is the mosaic register's contract on the
+  case no single family serves — the mixed overlay holds less than
+  either: at side 16, padding **120** against the Hilbert family's 168
+  and a single Hilbert ordering's 186; peak **8 396 800 B** against
+  8 454 144 and 12 615 680. The row-major family is not in that
+  comparison because it cannot be run: on a graph state over 4×4
+  patches it reaches a `cz` demanding a **32-site** region — 2³²
+  amplitudes, **68 719 476 736 bytes** — for a two-site gate, where the
+  curve runs the same circuit in **4 MiB**. A ratio between two
+  measured demands, not a verdict from a threshold. That is the mosaic
+  register's contract on the
   layout axis — heterogeneous representations in one register, elected
   per operation against a measured cost, every migration ledgered.
   Padding is often *borrowed*, not spent: after each gate the register
@@ -1238,7 +1252,10 @@ measure rather than hide.
   avoid.
   Stated as *not* shown: the election is a per-migration minimum, not
   per-region freedom, so on a run the overlay does not beat the best
-  single family on peak width — only on padding and total memory.
+  single family on peak width — only on padding and total memory. In
+  particular the row-major family's `(s+1)/2` placement advantage does
+  **not** survive into a run: it demands the same 32-site region the
+  single ordering does.
   The module also carries the census bridge:
   `PolarSpace::generators() × 2^n` gives the **stabilizer-state counts**
   6, 60, 1080, 36,720 — reached here by counting maximal isotropic

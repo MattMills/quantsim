@@ -3,7 +3,7 @@
 
 use quantsim::curve::{GridOrder, Order, Overlay};
 use quantsim::overlay::*;
-use quantsim::{Backend, DenseState, Error, GateMatrix, GateRegistry, Prng, Scalar, C64};
+use quantsim::{Backend, DenseState, GateMatrix, GateRegistry, Prng, Scalar, C64};
 
 /// Every lattice edge of a `side × side` grid, as site pairs.
 fn edges(side: usize) -> Vec<(usize, usize)> {
@@ -73,6 +73,29 @@ fn strips_and_patches(side: usize, q: usize) -> Vec<(usize, usize)> {
         }
     }
     out
+}
+
+/// The largest region a layout would be forced to hold while running
+/// `ops`, walked only as far as it can be walked cheaply — the demand
+/// is read off `projected`, which allocates nothing.
+fn demand(ov: &Overlay, ops: &[(usize, usize)], side: usize) -> usize {
+    let reg = GateRegistry::<C64>::standard();
+    let h = reg.get("h").unwrap().matrix(&[]).unwrap();
+    let cz = reg.get("cz").unwrap().matrix(&[]).unwrap();
+    let mut r = OverlayRegister::<C64>::new(side, ov).unwrap();
+    for s in 0..r.sites() {
+        r.apply(&h, &[s]).unwrap();
+    }
+    let mut biggest = 0usize;
+    for &(a, b) in ops {
+        let want = r.projected(&[a, b]).unwrap().map_or(0, |p| p.width());
+        biggest = biggest.max(want);
+        if want > 16 {
+            break;
+        }
+        r.apply(&cz, &[a, b]).unwrap();
+    }
+    biggest
 }
 
 fn cz_gate() -> GateMatrix<C64> {
@@ -217,62 +240,88 @@ fn memory_is_the_sum_of_regions_not_two_to_the_width() {
 }
 
 #[test]
-fn a_layout_that_cannot_keep_the_gate_local_refuses_by_name() {
-    // One vertical edge on an 8×8 lattice. Row-major puts its
-    // endpoints eight chain positions apart, so the smallest block
-    // holding both is sixteen sites — 65536 amplitudes for a two-site
-    // gate. The Hilbert curve puts them adjacent.
+fn what_a_layout_forces_is_a_width_not_a_verdict() {
+    // The layout's signal needs no budget and no policy: one vertical
+    // lattice edge on an 8×8 grid projects to a sixteen-site block
+    // under row-major and a two-site block under the curve. That is
+    // true on any machine and at any memory limit.
     let side = 8;
+    for (order, vertical, horizontal) in [
+        (Order::RowMajor, 16, 2),
+        (Order::Snake, 16, 2),
+        (Order::Hilbert, 2, 4),
+    ] {
+        let reg = OverlayRegister::<C64>::single(side, order).unwrap();
+        assert_eq!(
+            reg.projected(&[0, side]).unwrap().unwrap().width(),
+            vertical,
+            "{order:?} on one vertical edge"
+        );
+        assert_eq!(
+            reg.projected(&[0, 1]).unwrap().unwrap().width(),
+            horizontal,
+            "{order:?} on one horizontal edge"
+        );
+    }
+    // Neither ordering is uniformly better on single edges: the rows
+    // are perfect horizontally and terrible vertically, the curve is
+    // even-handed. It is the *sum over the lattice* that separates
+    // them, and the overlay that fixes the asymmetry.
+    // A gate already inside one region projects to nothing at all.
+    let mut reg = OverlayRegister::<C64>::single(side, Order::Hilbert).unwrap();
     let (h, _, cx) = gates();
-    let mut row = OverlayRegister::<C64>::single(side, Order::RowMajor).unwrap();
-    let mut hil = OverlayRegister::<C64>::single(side, Order::Hilbert).unwrap();
-    row.set_region_cap(4);
-    hil.set_region_cap(4);
-    row.apply(&h, &[0]).unwrap();
-    hil.apply(&h, &[0]).unwrap();
-    assert!(
-        matches!(
-            row.apply(&cx, &[0, side]),
-            Err(Error::TooManyQubits {
-                requested: 16,
-                max: 4
-            })
-        ),
-        "row-major names the block it needed"
-    );
-    hil.apply(&cx, &[0, side]).unwrap();
-    assert_eq!(hil.widest(), 2, "the curve keeps the vertical edge local");
+    reg.apply(&h, &[0]).unwrap();
+    reg.apply(&cx, &[0, side]).unwrap();
+    assert_eq!(reg.projected(&[0, side]).unwrap(), None, "already together");
 }
 
 #[test]
-fn the_curve_completes_a_local_circuit_the_rows_cannot() {
+fn a_local_circuit_costs_the_curve_megabytes_and_the_rows_gigabytes() {
+    // A lattice graph state on 4×4 patches — local by construction, the
+    // case a layout exists to serve. The curve holds it in four
+    // megabytes. The rows reach a point where one cz demands a
+    // thirty-two-site region: 2^32 amplitudes, 64 GiB, for a two-site
+    // gate. No threshold is involved in saying so; those are the
+    // widths the two layouts force.
     let side = 8;
-    let (h, t, cx) = gates();
-    let mats = [&h, &t, &cx];
-    let _ = mats;
+    let (h, _, _) = gates();
     let cz = cz_gate();
     let ops = patch_edges(side, 4);
-    let mut done = Vec::new();
-    for order in [Order::RowMajor, Order::Snake, Order::Hilbert] {
+
+    let mut hil = OverlayRegister::<C64>::single(side, Order::Hilbert).unwrap();
+    for s in 0..hil.sites() {
+        hil.apply(&h, &[s]).unwrap();
+    }
+    for &(a, b) in &ops {
+        hil.apply(&cz, &[a, b]).unwrap();
+    }
+    assert_eq!(hil.ledger().peak_width(), 16, "one 4×4 patch at a time");
+    assert_eq!(hil.peak_memory_bytes(), 4 << 20, "four mebibytes");
+
+    // Row-major, walked as far as it can be walked cheaply: the demand
+    // is read off `projected`, which allocates nothing.
+    for order in [Order::RowMajor, Order::Snake] {
         let mut reg = OverlayRegister::<C64>::single(side, order).unwrap();
-        reg.set_region_cap(16);
         for s in 0..reg.sites() {
             reg.apply(&h, &[s]).unwrap();
         }
-        let mut ok = 0usize;
+        let mut biggest = 0usize;
         for &(a, b) in &ops {
-            match reg.apply(&cz, &[a, b]) {
-                Ok(()) => ok += 1,
-                Err(Error::TooManyQubits { .. }) => break,
-                Err(e) => panic!("{order:?}: {e}"),
+            let want = reg.projected(&[a, b]).unwrap().map_or(0, |p| p.width());
+            biggest = biggest.max(want);
+            if want > 16 {
+                break;
             }
+            reg.apply(&cz, &[a, b]).unwrap();
         }
-        done.push((order, ok, reg.ledger().peak_width()));
+        assert_eq!(biggest, 32, "{order:?} demands a thirty-two-site region");
+        // 2^32 amplitudes of C64 — four orders of magnitude past what
+        // the same circuit costs the curve.
+        assert_eq!(
+            (1u128 << 32) * std::mem::size_of::<C64>() as u128,
+            68_719_476_736
+        );
     }
-    assert_eq!(done[2].1, ops.len(), "the curve finishes: {done:?}");
-    assert!(done[0].1 < ops.len(), "the rows do not: {done:?}");
-    assert!(done[1].1 < ops.len(), "nor the snake: {done:?}");
-    assert_eq!(done[2].2, 16, "and it never held more than one 4×4 patch");
 }
 
 #[test]
@@ -323,7 +372,6 @@ fn the_election_shows_up_in_the_ledger_of_a_run() {
     let _ = mats;
     let cz = cz_gate();
     let mut reg = OverlayRegister::<C64>::family(side, Order::Hilbert).unwrap();
-    reg.set_region_cap(16);
     for s in 0..reg.sites() {
         reg.apply(&h, &[s]).unwrap();
     }
@@ -337,7 +385,7 @@ fn the_election_shows_up_in_the_ledger_of_a_run() {
         l.gates(),
         "every gate either migrated or was already local"
     );
-    assert!(l.peak_width() >= 2 && l.peak_width() <= reg.region_cap());
+    assert!(l.peak_width() >= 2 && l.peak_width() <= 16);
     assert!(l.decided() <= l.merge_count());
     assert!(
         l.elections() > 0,
@@ -351,7 +399,6 @@ fn padding_is_what_the_layout_charged_beyond_the_gate() {
     let (_, _, cx) = gates();
     // Row-major, one vertical edge: two sites demanded, sixteen taken.
     let mut row = OverlayRegister::<C64>::single(side, Order::RowMajor).unwrap();
-    row.set_region_cap(16);
     row.apply(&cx, &[0, side]).unwrap();
     let m = row.ledger().merges()[0];
     assert_eq!((m.demand, m.width(), m.padding()), (2, 16, 14));
@@ -569,7 +616,6 @@ fn the_heterogeneous_overlay_is_strictly_the_best_of_both() {
         let ops = strips_and_patches(side, 4);
         let run = |ov: &Overlay| {
             let mut r = OverlayRegister::<C64>::new(side, ov).unwrap();
-            r.set_region_cap(16);
             for s in 0..r.sites() {
                 r.apply(&h, &[s]).unwrap();
             }
@@ -579,11 +625,17 @@ fn the_heterogeneous_overlay_is_strictly_the_best_of_both() {
                 .count();
             (done, r.ledger().total_padding(), r.ledger().peak_memory())
         };
-        let (d_rm, _, _) = run(&rm);
+        // The row-major family is not in this comparison because it
+        // cannot be run: it demands a thirty-two-site region, which is
+        // 64 GiB. `tests/overlay_guard.rs` measures that refusal.
+        assert_eq!(
+            demand(&rm, &ops, side),
+            32,
+            "side {side}: the row-major family demands 2^32 amplitudes"
+        );
         let (d_hb, pad_hb, mem_hb) = run(&hb);
         let (d_one, pad_one, mem_one) = run(&one(Order::Hilbert));
         let (d_mix, pad_mix, mem_mix) = run(&mix);
-        assert!(d_rm < ops.len(), "side {side}: the rows refuse");
         assert_eq!(d_mix, ops.len(), "side {side}: the mix completes");
         assert_eq!(d_hb, ops.len());
         assert_eq!(d_one, ops.len());
@@ -649,7 +701,6 @@ fn uncomputation_gives_the_whole_lattice_back() {
     let (h, _, _) = gates();
     let cz = cz_gate();
     let mut reg = OverlayRegister::<C64>::mixed(side, &[Order::RowMajor, Order::Hilbert]).unwrap();
-    reg.set_region_cap(16);
     for s in 0..reg.sites() {
         reg.apply(&h, &[s]).unwrap();
     }
@@ -674,7 +725,6 @@ fn splitting_can_be_turned_off_and_then_the_register_only_grows() {
     let cz = cz_gate();
     let mut reg = OverlayRegister::<C64>::single(side, Order::Hilbert).unwrap();
     reg.set_auto_split(false);
-    reg.set_region_cap(16);
     for s in 0..reg.sites() {
         reg.apply(&h, &[s]).unwrap();
     }
@@ -687,29 +737,4 @@ fn splitting_can_be_turned_off_and_then_the_register_only_grows() {
     // And asking for it back works, because the state really is a product.
     assert!(reg.compact() > 0);
     assert_eq!(reg.region_count(), reg.sites());
-}
-
-#[test]
-fn a_region_cap_is_clamped_to_what_a_usize_index_can_address() {
-    let mut reg = OverlayRegister::<C64>::single(16, Order::Hilbert).unwrap();
-    reg.set_region_cap(1000);
-    assert_eq!(reg.region_cap(), quantsim::overlay::MAX_REGION_SITES);
-    // The whole 16×16 lattice is always a block, and naming it must not
-    // overflow the amplitude count it would cost.
-    let corners = [0usize, 16 * 16 - 1];
-    let p = reg.admits(&corners).unwrap();
-    assert_eq!(p.width(), 256);
-    assert_eq!(p.amplitudes(), u128::MAX, "saturates rather than wraps");
-    // And it is refused before anything is allocated.
-    let (h, _, _) = gates();
-    let cz = cz_gate();
-    reg.apply(&h, &[corners[0]]).unwrap();
-    reg.apply(&h, &[corners[1]]).unwrap();
-    assert!(matches!(
-        reg.apply(&cz, &corners),
-        Err(Error::TooManyQubits {
-            requested: 256,
-            max: 63
-        })
-    ));
 }

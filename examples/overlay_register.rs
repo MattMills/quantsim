@@ -4,7 +4,7 @@
 
 use quantsim::curve::{GridOrder, Order, Overlay};
 use quantsim::overlay::OverlayRegister;
-use quantsim::{GateMatrix, GateRegistry, Result, C64};
+use quantsim::{guard, GateMatrix, GateRegistry, Result, C64};
 
 fn edges(side: usize) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
@@ -71,12 +71,30 @@ fn main() -> Result<()> {
         "A gate that straddles two regions migrates into the smallest block that holds",
         "both, swallows whatever that block cuts into, and pays the difference.",
         "",
-        "1. What a nearest-neighbour layer costs to *place*, summed over lattice edges",
-        "   on a fresh register — the layout's own number, before anything commits.",
+        "The module owns no capacity policy: what a gate costs is a width, reported by",
+        "`projected` without allocating; whether that width fits is asked of the",
+        "resource guard, in bytes, measured. On one 8x8 lattice edge:",
+        "",
     ] {
         println!("{line}");
     }
-    println!();
+    for order in [Order::RowMajor, Order::Snake, Order::Hilbert] {
+        let r = OverlayRegister::<C64>::single(8, order)?;
+        println!(
+            "  {:<9} vertical edge -> {:>2} sites,  horizontal edge -> {:>2} sites",
+            format!("{order:?}"),
+            r.projected(&[0, 8])?.expect("straddles").width(),
+            r.projected(&[0, 1])?.expect("straddles").width(),
+        );
+    }
+    for line in [
+        "",
+        "1. What a nearest-neighbour layer costs to *place*, summed over lattice edges",
+        "   on a fresh register — the layout's own number, before anything commits.",
+        "",
+    ] {
+        println!("{line}");
+    }
     println!(
         "  {:>4}  {:>12} {:>12} {:>12} {:>12}",
         "side", "row-major", "row-major D4", "hilbert", "hilbert D4"
@@ -114,12 +132,12 @@ fn main() -> Result<()> {
     for side in [8usize, 16] {
         let ops = strips_and_patches(side, 4);
         println!(
-            "\n  side {side}, {} two-site gates, cap 16 sites",
+            "\n  side {side}, {} two-site gates, 256 MiB budget",
             ops.len()
         );
         println!(
             "  {:>14}  {:>9} {:>5} {:>7} {:>11} {:>6}",
-            "overlay", "completed", "peak", "padding", "peak memory", "elect"
+            "overlay", "completed", "peak", "padding", "peak bytes", "elect"
         );
         for (name, ov) in [
             (
@@ -138,32 +156,46 @@ fn main() -> Result<()> {
             ),
         ] {
             let mut r = OverlayRegister::<C64>::new(side, &ov)?;
-            r.set_region_cap(16);
             for s in 0..r.sites() {
                 r.apply(&h, &[s])?;
             }
-            let done = ops
-                .iter()
-                .take_while(|&&(a, b)| r.apply(&cz, &[a, b]).is_ok())
-                .count();
+            let mut done = 0usize;
+            let mut wanted = 0usize;
+            for &(a, b) in &ops {
+                if r.apply(&cz, &[a, b]).is_ok() {
+                    done += 1;
+                } else {
+                    wanted = r.projected(&[a, b])?.map_or(0, |p| p.width());
+                    break;
+                }
+            }
             let l = r.ledger();
             println!(
-                "  {name:>14}  {:>4}/{:<4} {:>5} {:>7} {:>11} {:>6}{}",
+                "  {name:>14}  {:>4}/{:<4} {:>5} {:>7} {:>13} {:>6}{}",
                 done,
                 ops.len(),
                 l.peak_width(),
                 l.total_padding(),
-                l.peak_memory(),
+                r.peak_memory_bytes(),
                 l.elections(),
-                if done == ops.len() { "" } else { "  refused" }
+                if done == ops.len() {
+                    String::new()
+                } else {
+                    format!(
+                        "  stopped wanting {wanted} sites ({} B)",
+                        (1u128 << wanted) * std::mem::size_of::<C64>() as u128
+                    )
+                }
             );
         }
     }
 
     for line in [
         "",
-        "   The mixed overlay completes what the rows refuse and holds less than either",
+        "   The mixed overlay completes what the rows cannot and holds less than either",
         "   family — because it contains a family that suits each part of the circuit.",
+        "   The 32-site demand is the layout's; the budget is the machine's; measured",
+        "   across a 256x range of budgets the demand is the same number every time.",
         "",
         "3. Padding is borrowed, not always spent. A graph-state layer applied twice is",
         "   the identity; the register has to notice and give the lattice back.",
@@ -172,7 +204,6 @@ fn main() -> Result<()> {
     }
     let side = 8;
     let mut r = OverlayRegister::<C64>::mixed(side, &[Order::RowMajor, Order::Hilbert])?;
-    r.set_region_cap(16);
     for s in 0..r.sites() {
         r.apply(&h, &[s])?;
     }
@@ -207,5 +238,6 @@ fn main() -> Result<()> {
         r.sites(),
         r.sites()
     );
+    guard::set_memory_limit(None);
     Ok(())
 }

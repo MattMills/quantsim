@@ -29,10 +29,24 @@
 //! is generally larger than the union, and the difference —
 //! [`Merge::padding`] — is what the layout charged for that gate.
 //!
-//! So the ordering is not advice. Under a bad one a single edge forces
-//! a block big enough to end the simulation, and the register says so
-//! by name ([`Error::TooManyQubits`], carrying the block it needed)
-//! rather than by exhausting memory.
+//! So the ordering is not advice — it is a width, and the width is a
+//! property of the layout alone. [`projected`](OverlayRegister::projected)
+//! reports it without allocating anything: one vertical lattice edge on
+//! an 8×8 grid forces a **16-site** block under row-major and a
+//! **2-site** block under the Hilbert curve, on any machine and under
+//! any memory limit.
+//!
+//! This module owns **no capacity policy**. Whether a block fits is
+//! asked of the [resource guard](crate::guard), which admits every
+//! merge against the bytes *measured* available at that moment and
+//! fails with [`Error::OutOfMemory`] carrying both counts. A register
+//! that refused at a precomputed width would inhibit computations the
+//! machine can perform — the mistake `guard` exists to have stopped
+//! making — so the only width bound here is
+//! [`MAX_REGION_SITES`], which is structural (local basis indices are
+//! `usize`). Measured across a 256× range of budgets, the demand a
+//! layout puts on the register is the same number every time; only the
+//! outcome changes.
 //!
 //! The other half of the contract is that padding can be *borrowed*.
 //! [`compact`](OverlayRegister::compact) — run automatically after
@@ -89,10 +103,17 @@
 //!   there is, and beats the Hilbert family outright;
 //! * on a run — a graph state that is row-local on half the lattice
 //!   and patch-local on the other half, which is the case no single
-//!   family serves — it completes what the row-major family refuses,
-//!   and holds less than either: at side 16, padding 120 against the
-//!   Hilbert family's 168 and a single Hilbert ordering's 186, peak
-//!   memory 524 800 amplitudes against 528 384 and 788 480.
+//!   family serves — it holds less than either: at side 16, padding
+//!   120 against the Hilbert family's 168 and a single Hilbert
+//!   ordering's 186, peak memory **8 396 800 B** against 8 454 144 and
+//!   12 615 680.
+//!
+//! And the row-major family is not in that comparison because it
+//! cannot be run at all: on a graph state over 4×4 patches it reaches
+//! a `cz` that demands a **32-site** region — 2³² amplitudes,
+//! **68 719 476 736 bytes** — for a two-site gate, while the curve
+//! runs the same circuit in **4 MiB**. That is a ratio between two
+//! measured demands, not a verdict from a threshold.
 //!
 //! That is the [mosaic register](crate::backend::MosaicState)'s
 //! contract on the
@@ -107,9 +128,12 @@
 //! *that whole block*, so on a run the overlay cannot beat the best
 //! single family on peak width — only on padding and on total memory,
 //! and only because the mix contains a family that suits each part of
-//! the circuit. Electing among tied contenders by which one cuts into
-//! fewest regions ([`OverlayRegister::contenders`]) is implemented and
-//! is the right rule, but has not yet changed a measured outcome.
+//! the circuit. In particular the row-major family's `(s+1)/2`
+//! placement advantage does **not** survive into a run: it demands the
+//! same 32-site region the single ordering does. Electing among tied
+//! contenders by which one cuts into fewest regions
+//! ([`OverlayRegister::contenders`]) is implemented and is the right
+//! rule, but has not yet changed a measured outcome.
 //!
 //! ## Conventions
 //!
@@ -132,20 +156,18 @@ use crate::error::{Error, Result};
 use crate::math::GateMatrix;
 use crate::scalar::Scalar;
 
-/// Default cap on the sites one region may hold.
-///
-/// A region of `w` sites is `2^w` amplitudes, so this is a 1 Mi-amplitude
-/// ceiling. It exists so that a layout which cannot keep a circuit local
-/// **fails by name** — [`Error::TooManyQubits`] naming the block it
-/// needed — instead of being discovered as an allocation failure.
-pub const DEFAULT_REGION_CAP: usize = 20;
-
-/// Structural ceiling on the sites one region may hold: basis indices
-/// are `usize`, the same bound
+/// Structural ceiling on the sites one region may hold: local basis
+/// indices are `usize`, the same bound
 /// [`FACTOR_MAX_QUBITS`](crate::backend::FACTOR_MAX_QUBITS) puts on a
-/// factor. [`set_region_cap`](OverlayRegister::set_region_cap) clamps
-/// to this; the policy ceiling is [`DEFAULT_REGION_CAP`], which is far
-/// below it.
+/// factor.
+///
+/// This is **not** a capacity policy. Whether a region fits is decided
+/// by the [resource guard](crate::guard), which admits every merge
+/// against the memory *measured* available at that moment and fails
+/// with [`Error::OutOfMemory`] carrying both byte counts. A register
+/// that refused at a precomputed width would inhibit computations the
+/// machine can perform, which is the mistake `guard` exists to have
+/// stopped making.
 pub const MAX_REGION_SITES: usize = 63;
 
 /// Default rank-1 residual below which a region is judged to factor.
@@ -322,7 +344,6 @@ pub struct OverlayRegister<S: Scalar> {
     regions: Vec<Region<S>>,
     /// `home[site]` is the index in `regions` holding that site.
     home: Vec<usize>,
-    cap: usize,
     auto_split: bool,
     split_tol: f64,
     ledger: Ledger,
@@ -369,7 +390,6 @@ impl<S: Scalar> OverlayRegister<S> {
             point,
             regions: Vec::new(),
             home: vec![0; n],
-            cap: DEFAULT_REGION_CAP.min(MAX_REGION_SITES),
             auto_split: true,
             split_tol: DEFAULT_SPLIT_TOLERANCE,
             ledger: Ledger::default(),
@@ -397,17 +417,6 @@ impl<S: Scalar> OverlayRegister<S> {
     /// See [`Overlay::families`].
     pub fn mixed(side: usize, orders: &[Order]) -> Result<Self> {
         OverlayRegister::new(side, &Overlay::families(side, orders)?)
-    }
-
-    /// Set the cap on sites per region, clamped to
-    /// [`MAX_REGION_SITES`]. See [`DEFAULT_REGION_CAP`].
-    pub fn set_region_cap(&mut self, sites: usize) {
-        self.cap = sites.min(MAX_REGION_SITES);
-    }
-
-    /// The cap on sites per region.
-    pub fn region_cap(&self) -> usize {
-        self.cap
     }
 
     /// Whether to try splitting regions back apart after every gate.
@@ -496,6 +505,18 @@ impl<S: Scalar> OverlayRegister<S> {
     /// Amplitudes currently held: the **sum** over regions, not `2^n`.
     pub fn memory_amplitudes(&self) -> u128 {
         self.regions.iter().map(|r| 1u128 << r.sites.len()).sum()
+    }
+
+    /// Bytes currently held — the unit the [guard](crate::guard)
+    /// admits merges in, and the one a layout comparison should be
+    /// stated in.
+    pub fn memory_bytes(&self) -> u128 {
+        self.memory_amplitudes() * std::mem::size_of::<S>() as u128
+    }
+
+    /// Bytes at the register's high-water mark.
+    pub fn peak_memory_bytes(&self) -> u128 {
+        self.ledger.peak_memory * std::mem::size_of::<S>() as u128
     }
 
     /// The migration record.
@@ -632,9 +653,29 @@ impl<S: Scalar> OverlayRegister<S> {
 
     // ─────────────────────── the migration ───────────────────────
 
-    /// Bring every site of `sites` into one region, migrating as the
-    /// layout requires, and return that region's index.
-    fn coalesce(&mut self, sites: &[usize]) -> Result<usize> {
+    /// What a gate on `sites` would cost this layout, computed without
+    /// allocating or changing anything.
+    ///
+    /// This is the layout's own signal and it needs **no budget**: the
+    /// answer is a block width, not a verdict. A vertical lattice edge
+    /// on an 8×8 grid projects to 16 sites under row-major and 2 under
+    /// the Hilbert curve, at any memory limit and on any machine.
+    /// Whether the register can then *hold* that block is a separate
+    /// question, and one the [resource guard](crate::guard) answers by
+    /// measuring rather than by a constant.
+    ///
+    /// `None` means the gate is already inside one region and costs no
+    /// migration at all.
+    pub fn projected(&self, sites: &[usize]) -> Result<Option<Placement>> {
+        let chosen = self.homes_of(sites)?;
+        if chosen.len() == 1 {
+            return Ok(None);
+        }
+        Ok(Some(self.plan(chosen)?.0))
+    }
+
+    /// The distinct regions holding `sites`, in first-touch order.
+    fn homes_of(&self, sites: &[usize]) -> Result<Vec<usize>> {
         let mut chosen: Vec<usize> = Vec::new();
         for &s in sites {
             let h = *self.home.get(s).ok_or(Error::QubitOutOfRange {
@@ -645,41 +686,55 @@ impl<S: Scalar> OverlayRegister<S> {
                 chosen.push(h);
             }
         }
+        Ok(chosen)
+    }
+
+    /// The closure, read-only: elect a block for the chosen regions;
+    /// a block that cuts into another region has to swallow it whole,
+    /// and swallowing may force a bigger block, so iterate to a fixed
+    /// point. It terminates because the swallowed set only grows and
+    /// the whole lattice is a block of every member.
+    fn plan(&self, chosen: Vec<usize>) -> Result<(Placement, Vec<usize>, Vec<usize>)> {
+        let mut chosen = chosen;
+        loop {
+            let mut span: Vec<usize> = Vec::new();
+            for &i in &chosen {
+                span.extend_from_slice(&self.regions[i].sites);
+            }
+            let placement = self.elect(&span)?;
+            let block = self.block_sites(placement);
+            let mut needed: Vec<usize> = Vec::new();
+            for &s in &block {
+                let h = self.home[s];
+                if !needed.contains(&h) {
+                    needed.push(h);
+                }
+            }
+            if needed.len() == chosen.len() {
+                return Ok((placement, block, needed));
+            }
+            chosen = needed;
+        }
+    }
+
+    /// Bring every site of `sites` into one region, migrating as the
+    /// layout requires, and return that region's index.
+    fn coalesce(&mut self, sites: &[usize]) -> Result<usize> {
+        let chosen = self.homes_of(sites)?;
         if chosen.len() == 1 {
             self.ledger.local += 1;
             return Ok(chosen[0]);
         }
         let demand: usize = chosen.iter().map(|&i| self.regions[i].sites.len()).sum();
+        let (placement, block, chosen) = self.plan(chosen)?;
 
-        // The closure: a block that cuts into a region has to swallow
-        // it whole, and swallowing may force a bigger block.
-        let (placement, block, chosen) = {
-            let mut chosen = chosen;
-            loop {
-                let mut span: Vec<usize> = Vec::new();
-                for &i in &chosen {
-                    span.extend_from_slice(&self.regions[i].sites);
-                }
-                let placement = self.elect(&span)?;
-                let block = self.block_sites(placement);
-                let mut needed: Vec<usize> = Vec::new();
-                for &s in &block {
-                    let h = self.home[s];
-                    if !needed.contains(&h) {
-                        needed.push(h);
-                    }
-                }
-                if needed.len() == chosen.len() {
-                    break (placement, block, needed);
-                }
-                chosen = needed;
-            }
-        };
-
-        if block.len() > self.cap {
+        // The only width bound here is structural — local basis indices
+        // are `usize`. Whether the machine can hold the block is asked
+        // of the guard below, in bytes, by measurement.
+        if block.len() > MAX_REGION_SITES {
             return Err(Error::TooManyQubits {
                 requested: block.len(),
-                max: self.cap,
+                max: MAX_REGION_SITES,
             });
         }
 
@@ -708,7 +763,11 @@ impl<S: Scalar> OverlayRegister<S> {
                     .collect(),
             );
         }
-        let mut amps = vec![S::zero(); 1usize << width];
+        let mut amps = crate::guard::try_vec(
+            1usize << width,
+            S::zero(),
+            &format!("overlay region ({width} sites)"),
+        )?;
         for (idx, slot) in amps.iter_mut().enumerate() {
             let mut acc = S::one();
             for (r, &i) in order.iter().enumerate() {
@@ -856,6 +915,15 @@ impl<S: Scalar> OverlayRegister<S> {
     /// support straddles regions.
     ///
     /// `sites[j]` is the gate matrix's qubit `j`.
+    ///
+    /// The migration allocates through the [resource
+    /// guard](crate::guard), so a block the machine cannot hold fails
+    /// with [`Error::OutOfMemory`] carrying the bytes needed and the
+    /// bytes measured available — never against a width constant.
+    /// Nothing is mutated before that allocation succeeds, so a
+    /// refused gate leaves the register exactly as it was and
+    /// [`projected`](Self::projected) still reports the block it
+    /// wanted.
     pub fn apply(&mut self, matrix: &GateMatrix<S>, sites: &[usize]) -> Result<()> {
         crate::circuit::validate_targets(self.sites(), sites)?;
         let expected = 1usize

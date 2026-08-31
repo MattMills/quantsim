@@ -1324,10 +1324,22 @@ cannot take their union — a set of sites is not something a
 chain-addressed register can hold — so it **migrates** into the
 smallest member-block containing them, absorbs whatever that block
 cuts into (the closure), and pays the difference as `Merge::padding`.
-Memory is the sum of `2^{sites}` over regions, never `2^n`, and a
-layout that cannot keep a circuit local ends it *by name*
-(`TooManyQubits` carrying the block it needed) rather than by
-exhausting memory.
+Memory is the sum of `2^{sites}` over regions, never `2^n`.
+
+**No capacity policy lives in this module, deliberately.** What a gate
+costs a layout is a *width*, and `OverlayRegister::projected` reports
+it without allocating anything: one vertical lattice edge on an 8×8
+grid forces a 16-site block under row-major and a 2-site block under
+the curve, on any machine and under any limit. Whether that width fits
+is asked of `guard`, which admits every merge against the bytes
+measured available and fails with `OutOfMemory` carrying both counts;
+the only width bound in the module is structural (`MAX_REGION_SITES`,
+local basis indices are `usize`), exactly as `guard`'s own doc
+requires — *"scale inhibition comes from here"*, not from precomputed
+width constants. `tests/overlay_guard.rs` runs the same circuit under
+three budgets spanning 256× and measures the demand at the stopping
+point to be the **same number every time**: the cost is the layout's,
+the budget is the machine's, and they are independent.
 
 Summing `Placement::width` over every lattice edge of a fresh register
 — the layout's own number, before anything commits — gives four exact
@@ -1367,18 +1379,25 @@ the `D₄` families of several orderings in one overlay. On a graph
 state that is row-local on half the lattice and 4×4-patch-local on the
 other — the case no single family serves — the mixed overlay ties the
 row-major family on placement (the best there is), beats the Hilbert
-family outright, completes what the row-major family refuses, and
-holds less than either:
+family outright, and holds less than either at run time:
 
 ```
-side 16, 288 two-site gates, cap 16 sites
-overlay          completed   peak   padding   peak memory
-row-major           97/288      4        32           768   refused
-hilbert            288/288     16       186       788,480
-row-major D₄        97/288      4        32           768   refused
-hilbert D₄         288/288     16       168       528,384
-mixed              288/288     16       120       524,800
+side 16, 288 two-site gates, 256 MiB budget
+overlay          completed   peak   padding    peak bytes
+row-major           97/288      4        32        12,288   wanted 32 sites (64 GiB)
+hilbert            288/288     16       186    12,615,680
+row-major D₄        97/288      4        32        12,288   wanted 32 sites (64 GiB)
+hilbert D₄         288/288     16       168     8,454,144
+mixed              288/288     16       120     8,396,800
 ```
+
+The budget in that table decides only who stops, never what anyone
+demanded: the 32-site region is 2³² amplitudes, 68,719,476,736 bytes,
+for a two-site gate, while the curve runs the same circuit in 4 MiB.
+Note also that the row-major family's `(s+1)/2` placement advantage
+does **not** survive into a run — it demands the same 32 sites the
+single ordering does, which is the accumulated-commitment limit stated
+below.
 
 That is the mosaic register's contract on the layout axis:
 heterogeneous representations in one register, elected per operation
