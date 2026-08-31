@@ -90,10 +90,16 @@ use crate::rng::Prng;
 use crate::scalar::{Scalar, C64};
 use crate::sim::Simulator;
 
-/// Largest modulus this module will accept. Structural: products are taken
-/// in `u128`, and the work register must fit a `u64` basis index with the
-/// phase ancilla beside it.
-pub const MAX_MODULUS: u64 = 1 << 31;
+/// Largest modulus this module will accept, and the bound is structural
+/// rather than chosen: products are taken in `u128`, so the arithmetic is
+/// exact to `2^64`, and the binding constraint is the register — a
+/// `w`-bit work register plus one phase ancilla must fit the 63-qubit
+/// `u64` basis index, so `w ≤ 62`.
+pub const MAX_MODULUS: u64 = 1 << 62;
+
+/// Most phase bits a run can take: the ladder computes `2^{t-1}` as a
+/// `u64` exponent.
+pub const MAX_PHASE_BITS: usize = 63;
 
 // ── modular arithmetic, kept explicit ────────────────────────────────
 
@@ -582,12 +588,17 @@ impl OrderFinder {
             )));
         }
         let w = work_bits(modulus);
-        let t = 2 * w + 1;
-        if t > 62 {
-            return Err(Error::InvalidState(format!(
-                "modulus {modulus} needs {t} phase bits, past the 62 a u64 exponent allows"
-            )));
+        if w + 1 > 63 {
+            return Err(Error::TooManyQubits {
+                requested: w + 1,
+                max: 63,
+            });
         }
+        // `2w+1` bits resolve any order below `N`; past `MAX_PHASE_BITS`
+        // that is unrepresentable, and unnecessary — `t` bits resolve
+        // orders to about `2^{t/2}`, so 63 covers `r` up to ~2^31, far
+        // past what the support (which *is* `r`) can be held in.
+        let t = (2 * w + 1).min(MAX_PHASE_BITS);
         Ok(OrderFinder {
             modulus,
             base: base % modulus,
@@ -654,9 +665,9 @@ impl OrderFinder {
         let _scope = crate::guard::enter();
         let w = self.work_bits();
         let t = self.phase_bits;
-        if t == 0 || t > 62 {
+        if t == 0 || t > MAX_PHASE_BITS {
             return Err(Error::InvalidState(format!(
-                "phase_bits {t} outside [1, 62]"
+                "phase_bits {t} outside [1, {MAX_PHASE_BITS}]"
             )));
         }
         let work: Vec<usize> = (0..w).collect();
@@ -735,9 +746,9 @@ impl OrderFinder {
         let _scope = crate::guard::enter();
         let w = self.work_bits();
         let t = self.phase_bits;
-        if t == 0 || t > 62 {
+        if t == 0 || t > MAX_PHASE_BITS {
             return Err(Error::InvalidState(format!(
-                "phase_bits {t} outside [1, 62]"
+                "phase_bits {t} outside [1, {MAX_PHASE_BITS}]"
             )));
         }
         let work: Vec<usize> = (0..w).collect();
