@@ -15,7 +15,11 @@
 //! what makes a ladder reaching `r > 10^7` constructible at all.
 //!
 //! `dense` is absent: it holds `2^n` slots occupied or not, so its limit
-//! is arithmetic rather than a measurement.
+//! is arithmetic rather than a measurement. The `xdense` column reports
+//! every other row's bytes as a multiple of that vector, because a label
+//! is not a measurement: a representation sitting at `1.00` has
+//! materialized whatever it is called, and the wall it then hits is its
+//! own escape hatch rather than the computation's cost.
 
 use std::time::{Duration, Instant};
 
@@ -228,6 +232,34 @@ struct Point {
     nanos: u64,
     bytes: usize,
     support: usize,
+    qubits: usize,
+}
+
+/// Reported bytes as a multiple of the dense `2^n` vector for the same
+/// width — the number that says whether a representation is actually
+/// compressing anything.
+///
+/// It is worth a column because a label is not a measurement.
+/// `phase_field::load` escapes to dense by construction, so a row named
+/// "phase-field" is `DenseState` from the first permutation kernel
+/// onward, and it sits at exactly 1.00x here — including where the
+/// support is 28 of 2^15. The wall it then reports (137 GB at 33 qubits)
+/// is that escape, not the computation: the identical case completes on
+/// sparse, adaptive, mosaic and e8-constellation, at 1.6 MB and 19 ms.
+fn dense_ratio(p: &Point) -> Option<f64> {
+    if p.qubits >= 60 {
+        return None;
+    }
+    let dense = (1u64 << p.qubits) as f64 * std::mem::size_of::<C64>() as f64;
+    Some(p.bytes as f64 / dense)
+}
+
+fn ratio_cell(p: &Point) -> String {
+    match dense_ratio(p) {
+        None => "—".into(),
+        Some(r) if r < 0.01 => format!("{r:.4}"),
+        Some(r) => format!("{r:.2}"),
+    }
 }
 
 fn climb(
@@ -290,8 +322,8 @@ fn main() -> Result<()> {
     println!();
     println!("== semiclassical order finding, scaled on r, budget {budget:?}/run ==");
     println!(
-        "  {:<17} {:>12} {:>20} {:>4} {:>3} {:>9} {:>9} {:>12}  stopped by",
-        "backend", "max r", "N", "a", "w", "time", "bytes", "support"
+        "  {:<17} {:>12} {:>20} {:>4} {:>3} {:>9} {:>9} {:>12} {:>7}  stopped by",
+        "backend", "max r", "N", "a", "w", "time", "bytes", "support", "xdense"
     );
     let mut curves: Vec<(&str, Vec<Point>)> = Vec::new();
     for name in BACKENDS {
@@ -304,22 +336,24 @@ fn main() -> Result<()> {
                 nanos: t.elapsed().as_nanos() as u64,
                 bytes: e.peak_bytes,
                 support: e.peak_support,
+                qubits: e.qubits,
             })
         });
         match points.last() {
             Some(p) => println!(
-                "  {name:<17} {:>12} {:>20} {:>4} {:>3} {:>9} {:>9} {:>12}  {stop}",
+                "  {name:<17} {:>12} {:>20} {:>4} {:>3} {:>9} {:>9} {:>12} {:>7}  {stop}",
                 p.rung.r,
                 p.rung.n,
                 p.rung.a,
                 p.rung.w,
                 human(p.nanos),
                 bytes(p.bytes),
-                p.support
+                p.support,
+                ratio_cell(p)
             ),
             None => println!(
-                "  {name:<17} {:>12} {:>20} {:>4} {:>3} {:>9} {:>9} {:>12}  {stop}",
-                "—", "—", "—", "—", "—", "—", "—"
+                "  {name:<17} {:>12} {:>20} {:>4} {:>3} {:>9} {:>9} {:>12} {:>7}  {stop}",
+                "—", "—", "—", "—", "—", "—", "—", "—"
             ),
         }
         curves.push((name, points));
