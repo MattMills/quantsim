@@ -1,25 +1,15 @@
-//! Runtime and scale of the factoring techniques, across every register
-//! type the crate offers.
+//! Scale each factoring mechanism until it stops, and report where.
 //!
 //! Run with `cargo run --release --example factoring_scale`.
 //!
-//! The other two factoring examples measure *structure* — support,
-//! qubits, multiplication counts. None of those is a second of wall
-//! clock. This one measures time and bytes.
+//! Every (mechanism, representation) pair climbs the width on its own
+//! until a run refuses or overruns its budget; nothing is capped at a
+//! fixed width. Both endings are recorded — a refusal names the wall, an
+//! overrun names the budget — and the last width that completed is the
+//! measurement.
 //!
-//! **How a run is allowed to end.** Every measured run is armed with a
-//! wall-clock budget through [`quantsim::guard`]. Overrunning it is a
-//! **failure** and aborts this program with the error, everywhere except
-//! section 3, whose declared purpose is to find where each representation
-//! stops: in sections 2 and 3 a budget overrun *is* the measurement, and
-//! is reported as one. A representation that cannot hold the register
-//! refuses by name (out of memory, too many qubits, gate unsupported) and
-//! that is a table row, not a failure — the difference between "this
-//! cannot be done" and "this did not finish" is the whole point of
-//! separating them.
-//!
-//! No conclusion here is written ahead of the table it describes: the
-//! orderings in section 2 are computed from the measured rows.
+//! `dense` is absent: it holds `2^n` slots occupied or not, so its limit
+//! is arithmetic rather than a measurement.
 
 use std::time::{Duration, Instant};
 
@@ -29,27 +19,6 @@ use quantsim::prelude::*;
 use quantsim::regev::{self, ExpSchedule, Regev};
 use quantsim::shor::{self, OrderFinder, PhaseForm};
 
-/// Balanced semiprimes `p·q` with strictly increasing width.
-const LADDER: [(u64, u64, u64); 10] = [
-    (15, 3, 5),
-    (35, 5, 7),
-    (221, 13, 17),
-    (899, 29, 31),
-    (4087, 61, 67),
-    (7387, 83, 89),
-    (32399, 179, 181),
-    (126_727, 353, 359),
-    (256_027, 503, 509),
-    (1_040_399, 1019, 1021),
-];
-
-/// **Every** representation in the crate that implements
-/// [`Backend`](quantsim::Backend) — the ten in the standard registry, the
-/// two opt-in ℂ-only ones, and the seven that ship unregistered and have
-/// to be installed by hand below. `dense` is deliberately absent: it
-/// stores `2^n` slots whether or not they are zero, so its limit is
-/// arithmetic rather than a measurement, and letting it set the ladder
-/// would cap every other representation at its wall.
 const BACKENDS: [&str; 18] = [
     "sparse",
     "adaptive",
@@ -71,11 +40,6 @@ const BACKENDS: [&str; 18] = [
     "framed-sparse",
 ];
 
-/// Install the representations the standard registry leaves out. They are
-/// `Backend` implementors like any other; that they are not registered by
-/// default is a statement about their scope, not their existence, and a
-/// sweep that skipped them would be surveying the registry rather than
-/// the crate.
 fn register_every_representation(sim: &mut Simulator) -> Result<()> {
     use quantsim::backend::{
         ArityPolicy, BraidedState, CliffordFramedState, DeviceState, DurationModel, FramedState,
@@ -105,47 +69,59 @@ fn register_every_representation(sim: &mut Simulator) -> Result<()> {
     Ok(())
 }
 
-/// A budget overrun outside section 3 is a failure, not a data point.
-fn fail_on_timeout<T>(r: Result<T>) -> Result<std::result::Result<T, quantsim::Error>> {
-    match r {
-        Ok(v) => Ok(Ok(v)),
-        Err(e @ quantsim::Error::Timeout { .. }) => Err(e),
-        Err(e) => Ok(Err(e)),
+/// The balanced semiprime `p·q` of exactly `w` bits with `p` as large as
+/// the range allows.
+fn semiprime(w: usize) -> Option<(u64, u64, u64)> {
+    if !(4..=63).contains(&w) {
+        return None;
     }
+    let lo = 1u64 << (w - 1);
+    let hi = (1u64 << w) - 1;
+    // Largest `p` whose partner still lands in `[lo, hi]`; `q > p`, so a
+    // perfect square is never returned.
+    let mut p = (hi as f64).sqrt() as u64 + 1;
+    while p >= 2 {
+        if shor::is_prime(p) {
+            let mut q = p + 1;
+            while p.checked_mul(q).is_some_and(|n| n <= hi) {
+                if shor::is_prime(q) && p * q >= lo {
+                    return Some((p * q, p, q));
+                }
+                q += 1;
+            }
+        }
+        p -= 1;
+    }
+    None
 }
 
-fn timed<T>(budget: Duration, reps: usize, mut f: impl FnMut() -> Result<T>) -> Result<(u64, T)> {
-    let mut samples = Vec::with_capacity(reps);
-    let mut last = None;
-    for _ in 0..reps {
-        let start = Instant::now();
-        let out = guard::with_time_budget(budget, &mut f)?;
-        samples.push(start.elapsed().as_nanos() as u64);
-        last = Some(out);
-    }
-    samples.sort_unstable();
-    Ok((samples[samples.len() / 2], last.unwrap()))
+fn first_coprime(n: u64) -> u64 {
+    (2..n)
+        .find(|&a| quantsim::padic::gcd(a, n) == 1)
+        .unwrap_or(2)
 }
 
 fn human(nanos: u64) -> String {
     match nanos {
-        n if n < 10_000 => format!("{n} ns"),
-        n if n < 10_000_000 => format!("{:.1} µs", n as f64 / 1e3),
-        n if n < 10_000_000_000 => format!("{:.1} ms", n as f64 / 1e6),
-        n => format!("{:.2} s", n as f64 / 1e9),
+        n if n < 10_000 => format!("{n}ns"),
+        n if n < 10_000_000 => format!("{:.1}µs", n as f64 / 1e3),
+        n if n < 10_000_000_000 => format!("{:.1}ms", n as f64 / 1e6),
+        n => format!("{:.2}s", n as f64 / 1e9),
     }
 }
 
 fn bytes(b: usize) -> String {
     match b {
-        v if v < 10_000 => format!("{v} B"),
-        v if v < 10_000_000 => format!("{:.1} KB", v as f64 / 1e3),
-        v => format!("{:.1} MB", v as f64 / 1e6),
+        v if v < 10_000 => format!("{v}B"),
+        v if v < 10_000_000 => format!("{:.1}KB", v as f64 / 1e3),
+        v => format!("{:.1}MB", v as f64 / 1e6),
     }
 }
 
-/// The wall's own message, trimmed to the table.
 fn wall(e: &quantsim::Error) -> String {
+    if let quantsim::Error::Timeout { elapsed_ms, .. } = e {
+        return format!("over budget at {elapsed_ms}ms");
+    }
     let s = e.to_string();
     let s = s.split(';').next().unwrap_or(&s).trim().to_string();
     if s.chars().count() > 44 {
@@ -155,353 +131,241 @@ fn wall(e: &quantsim::Error) -> String {
     }
 }
 
-fn first_coprime(n: u64) -> u64 {
-    (2..n).find(|&a| quantsim::padic::gcd(a, n) == 1).unwrap()
+/// One completed run at one width.
+#[derive(Clone)]
+struct Point {
+    w: usize,
+    n: u64,
+    r: usize,
+    qubits: usize,
+    nanos: u64,
+    bytes: usize,
+    support: usize,
+}
+
+/// Climb `w` from `start` until `run` fails, returning every completed
+/// point and the message that stopped it.
+fn climb(
+    start: usize,
+    budget: Duration,
+    mut run: impl FnMut(u64, usize) -> Result<Point>,
+) -> (Vec<Point>, String) {
+    let mut points = Vec::new();
+    for w in start..=63 {
+        let Some((n, _, _)) = semiprime(w) else {
+            return (points, "no semiprime at this width".into());
+        };
+        match guard::with_time_budget(budget, || run(n, w)) {
+            Ok(p) => points.push(p),
+            Err(e) => return (points, wall(&e)),
+        }
+    }
+    (points, "width ceiling".into())
+}
+
+fn fit(points: &[Point], key: impl Fn(&Point) -> usize) -> String {
+    if points.len() < 3 {
+        return "—".into();
+    }
+    let xs: Vec<usize> = points.iter().map(&key).collect();
+    let ys: Vec<usize> = points.iter().map(|p| p.nanos as usize).collect();
+    let mut pairs: Vec<(usize, usize)> = xs.into_iter().zip(ys).collect();
+    pairs.sort_unstable();
+    pairs.dedup_by_key(|p| p.0);
+    if pairs.len() < 3 {
+        return "—".into();
+    }
+    let (a, b): (Vec<usize>, Vec<usize>) = pairs.into_iter().unzip();
+    format!("{:?}", fit_law(&a, &b).law)
 }
 
 fn main() -> Result<()> {
-    // A representation that cannot hold the register should refuse, not
-    // exhaust the machine. The limit makes that refusal a measurement.
     guard::set_memory_limit(Some(1 << 30));
-
     let mut sim: Simulator = Simulator::new();
     register_every_representation(&mut sim)?;
-    let budget = Duration::from_secs(30);
-    // Sections that hunt for a limit use a shorter budget and report the
-    // overrun; every other section must finish inside `budget` or fail.
-    let sweep_budget = Duration::from_secs(5);
+    let budget = Duration::from_secs(2);
 
-    println!("== 1. semiclassical Shor: wall clock against the width ==");
-    println!("   one order-finding run, median of 3, sparse representation, 30 s budget");
-    println!("     N          p×q          w    r          time      bytes    support  orbit");
-    let mut widths = Vec::new();
-    let mut times = Vec::new();
-    let mut order_pairs: Vec<(usize, usize)> = Vec::new();
-    for &(n, p, q) in LADDER.iter() {
-        let a = first_coprime(n);
-        let r = shor::multiplicative_order(a, n).unwrap();
-        let finder = OrderFinder::new(n, a)?;
-        let mut seed = 0u64;
-        let (t, e) = timed(budget, 3, || {
-            seed += 1;
-            let mut rng = Prng::new(seed);
-            finder.estimate(&sim, PhaseForm::Semiclassical, &mut rng)
-        })?;
-        println!(
-            "   {n:<9}  {:<11}  {:2}  {r:<9}  {:>8}  {:>9}  {:8}  {:6}",
-            format!("{p}×{q}"),
-            finder.work_bits(),
-            human(t),
-            bytes(e.peak_bytes),
-            e.peak_support,
-            e.peak_orbit
-        );
-        widths.push(finder.work_bits());
-        times.push(t as usize);
-        order_pairs.push((r as usize, t as usize));
-    }
-    println!(
-        "   fitted time law in the width w: {:?}",
-        fit_law(&widths, &times).law
-    );
-    order_pairs.sort_unstable();
-    order_pairs.dedup_by_key(|p| p.0);
-    let (os, ts): (Vec<usize>, Vec<usize>) = order_pairs.into_iter().unzip();
-    println!(
-        "   fitted time law in the order r: {:?}",
-        fit_law(&os, &ts).law
-    );
-    println!("   Time is (2w+1) rounds × O(support) = O(w·r), and r is what moves.");
-    println!("   The sharpest evidence is not the fit — a fit can be argued with — but");
-    println!("   the inversion inside the table: N = 126727 at w = 17 runs FASTER than");
-    println!("   N = 32399 at w = 15, a wider modulus in less time, because its order");
-    println!("   is smaller (15752 against 16020). A cost that tracked the width could");
-    println!("   not do that. Two rows, no fitting, no argument.");
+    println!("budget {budget:?}/run, memory limit 1GiB, 1 run per width");
 
     println!();
-    println!("== 2. every representation in the crate, across the whole ladder ==");
-    println!("   semiclassical order finding, median of 3, times in ms; a row stops at");
-    println!("   its first refusal or 3 s overrun, since both are monotone in width.");
-    print!("     {:<17}", "backend / w =");
-    let mut ws = Vec::new();
-    for &(n, _, _) in LADDER.iter() {
-        let w = shor::work_bits(n);
-        ws.push(w);
+    println!("== semiclassical order finding, each representation to its own wall ==");
+    println!(
+        "  {:<17} {:>5} {:>11} {:>9} {:>9} {:>9} {:>9}  stopped by",
+        "backend", "max w", "N", "r", "time", "bytes", "support"
+    );
+    let mut curves: Vec<(&str, Vec<Point>)> = Vec::new();
+    for name in BACKENDS {
+        let (points, stop) = climb(4, budget, |n, _| {
+            let f = OrderFinder::new(n, first_coprime(n))?.on_backend(name);
+            let t = Instant::now();
+            let e = f.estimate(&sim, PhaseForm::Semiclassical, &mut Prng::new(7))?;
+            Ok(Point {
+                w: f.work_bits(),
+                n,
+                r: e.peak_orbit,
+                qubits: e.qubits,
+                nanos: t.elapsed().as_nanos() as u64,
+                bytes: e.peak_bytes,
+                support: e.peak_support,
+            })
+        });
+        match points.last() {
+            Some(p) => println!(
+                "  {name:<17} {:>5} {:>11} {:>9} {:>9} {:>9} {:>9}  {stop}",
+                p.w,
+                p.n,
+                p.r,
+                human(p.nanos),
+                bytes(p.bytes),
+                p.support
+            ),
+            None => println!(
+                "  {name:<17} {:>5} {:>11} {:>9} {:>9} {:>9} {:>9}  {stop}",
+                "—", "—", "—", "—", "—", "—"
+            ),
+        }
+        curves.push((name, points));
+    }
+
+    println!();
+    println!("== the same curves, width by width (ms) ==");
+    let deepest = curves.iter().map(|c| c.1.len()).max().unwrap_or(0);
+    print!("  {:<17}", "backend / w");
+    let widths: Vec<usize> = curves
+        .iter()
+        .max_by_key(|c| c.1.len())
+        .map(|c| c.1.iter().map(|p| p.w).collect())
+        .unwrap_or_default();
+    for w in &widths {
         print!("{w:>8}");
     }
-    println!("   stopped by");
-    let matrix_budget = Duration::from_secs(3);
-    let mut ranking: Vec<(String, usize, u64)> = Vec::new();
-    let mut per_column: Vec<(String, Vec<Option<u64>>)> = Vec::new();
-    for name in BACKENDS {
-        print!("     {name:<17}");
-        let mut reached = 0usize;
-        let mut total = 0u64;
-        let mut cols: Vec<Option<u64>> = Vec::new();
-        let mut stopped = String::from("(ladder exhausted)");
-        for (col, &(n, _, _)) in LADDER.iter().enumerate() {
-            let a = first_coprime(n);
-            let finder = OrderFinder::new(n, a)?.on_backend(name);
-            let mut seed = 100u64 + col as u64;
-            let out = timed(matrix_budget, 3, || {
-                seed += 1;
-                let mut rng = Prng::new(seed);
-                finder.estimate(&sim, PhaseForm::Semiclassical, &mut rng)
-            });
-            match out {
-                Ok((t, _)) => {
-                    print!("{:>8.1}", t as f64 / 1e6);
-                    reached = ws[col];
-                    total += t;
-                    cols.push(Some(t));
-                }
-                Err(e) => {
-                    stopped = wall(&e);
-                    cols.push(None);
-                    for _ in col..LADDER.len() {
-                        print!("{:>8}", "—");
-                    }
-                    break;
-                }
+    println!("   time law in w      time law in r");
+    for (name, points) in &curves {
+        if points.is_empty() {
+            continue;
+        }
+        print!("  {name:<17}");
+        for i in 0..deepest {
+            match points.get(i) {
+                Some(p) => print!("{:>8.1}", p.nanos as f64 / 1e6),
+                None => print!("{:>8}", "—"),
             }
         }
-        println!("   {stopped}");
-        ranking.push((name.to_string(), reached, total));
-        per_column.push((name.to_string(), cols));
+        println!("   {:<18} {}", fit(points, |p| p.w), fit(points, |p| p.r));
     }
-    // Conclusions computed from the matrix above, not written ahead of it.
-    let deepest = ranking.iter().map(|r| r.1).max().unwrap_or(0);
-    let at_depth: Vec<&(String, usize, u64)> = ranking.iter().filter(|r| r.1 == deepest).collect();
-    let mut fastest = at_depth.clone();
-    fastest.sort_by_key(|r| r.2);
-    println!();
-    println!(
-        "   {} of {} representations reached w = {deepest}, the deepest any did:",
-        at_depth.len(),
-        BACKENDS.len()
-    );
-    println!(
-        "     {:?}",
-        at_depth.iter().map(|r| r.0.as_str()).collect::<Vec<_>>()
-    );
-    println!(
-        "   of those, fastest summed over the ladder: {:?}",
-        fastest
-            .iter()
-            .take(3)
-            .map(|r| r.0.as_str())
-            .collect::<Vec<_>>()
-    );
-    let mut shallow: Vec<&(String, usize, u64)> =
-        ranking.iter().filter(|r| r.1 < deepest).collect();
-    shallow.sort_by_key(|r| std::cmp::Reverse(r.1));
-    println!(
-        "   the rest stopped at w = {:?}",
-        shallow
-            .iter()
-            .map(|r| (r.0.as_str(), r.1))
-            .collect::<Vec<_>>()
-    );
-    // Two negative results worth stating outright, both read off the rows.
-    let by_name = |n: &str| ranking.iter().find(|r| r.0 == n).map(|r| r.2).unwrap_or(0);
-    let cols_of = |n: &str| {
-        per_column
-            .iter()
-            .find(|r| r.0 == n)
-            .map(|r| r.1.clone())
-            .unwrap_or_default()
-    };
-    let (sp, ad) = (by_name("sparse"), by_name("adaptive"));
-    let (sc, ac) = (cols_of("sparse"), cols_of("adaptive"));
-    let (mut ad_slower, mut ad_faster, mut ad_tied) = (0, 0, 0);
-    for (a, b) in ac.iter().zip(sc.iter()) {
-        if let (Some(a), Some(b)) = (a, b) {
-            match a.cmp(b) {
-                std::cmp::Ordering::Greater => ad_slower += 1,
-                std::cmp::Ordering::Less => ad_faster += 1,
-                std::cmp::Ordering::Equal => ad_tied += 1,
-            }
-        }
-    }
-    if sp > 0 && ad > 0 {
-        println!();
-        println!("   adaptive against sparse, column by column rather than by assertion:");
-        println!("     slower in {ad_slower}, faster in {ad_faster}, tied in {ad_tied} of the {} widths both reached;",
-            ad_slower + ad_faster + ad_tied);
-        println!(
-            "     summed over the ladder, {:.2}x sparse. An adaptive layer that",
-            ad as f64 / sp as f64
-        );
-        println!("     pays the promotion check and never promotes is overhead on this");
-        println!("     workload — a negative result, stated as one.");
-    }
-    let cluster: Vec<&(String, usize, u64)> = at_depth
-        .iter()
-        .copied()
-        .filter(|r| r.2 as f64 <= 2.0 * sp.max(1) as f64)
-        .collect();
-    println!();
-    println!(
-        "   And the spread is narrower than the row count suggests: {} of the",
-        cluster.len()
-    );
-    println!("   representations that reached w = 20 land within 2x of sparse. They are");
-    println!("   sparse maps underneath with different bookkeeping on top, so this is");
-    println!(
-        "   one structure measured {} ways, not {} competing structures.",
-        cluster.len(),
-        cluster.len()
-    );
-    println!();
-    println!("   MPS, MERA and bulk are not losing because they are bad. A uniform");
-    println!("   superposition over r basis states with no local structure is their");
-    println!("   worst case by construction: the orbit {{a^k mod N}} has no low-bond");
-    println!("   description, so a bond-truncating representation has to carry it in");
-    println!("   full and pay for the machinery besides. This workload — a permutation");
-    println!("   on a cyclic orbit — is close to the least discriminating thing one");
-    println!("   could hand a representation, and the table should be read as ordering");
-    println!("   them for it and for nothing else.");
-
-    println!("== 3. how far the non-dense representations carry the full-register form ==");
-    println!("   Its control register is t = 2w+1 qubits in uniform superposition, and");
-    println!("   the inverse QFT spreads each of the r work values over all of it, so");
-    println!("   the state has 2^t·r *nonzero* amplitudes. A dense vector would hold");
-    println!("   2^(3w+1) slots regardless — quoted below as arithmetic, not run,");
-    println!("   because its limit is not a measurement and would cap the sweep.");
-    println!("     N       w    t   nonzeros (2^t·r)   dense slots     sparse           mosaic");
-    for &(n, _, _) in LADDER.iter().take(6) {
-        let a = first_coprime(n);
-        let base = OrderFinder::new(n, a)?;
-        let w = base.work_bits();
-        let t = base.phase_bits;
-        let r = shor::multiplicative_order(a, n).unwrap();
-        let predicted = (1u128 << t.min(96)) * r as u128;
-        let dense_slots = 1u128 << (w + t).min(96);
-        let mut cells = Vec::new();
-        for backend in ["sparse", "mosaic"] {
-            let finder = OrderFinder::new(n, a)?.on_backend(backend);
-            let start = Instant::now();
-            let out = guard::with_time_budget(sweep_budget, || {
-                let mut rng = Prng::new(9);
-                finder.estimate(&sim, PhaseForm::FullRegister, &mut rng)
-            });
-            cells.push(match out {
-                Ok(e) => format!(
-                    "{} {}",
-                    human(start.elapsed().as_nanos() as u64),
-                    bytes(e.peak_bytes)
-                ),
-                Err(e) => wall(&e),
-            });
-        }
-        println!(
-            "   {n:<7} {w:2}  {t:3}   {predicted:16}   {dense_slots:13}   {:<16} {}",
-            cells[0], cells[1]
-        );
-    }
-    println!("   Both eventually stop, because 2^t·r is exponential in w whatever");
-    println!("   holds it — the full-register form is a cross-check, not a technique.");
-    println!("   The semiclassical form, whose support is r rather than 2^t·r, is the");
-    println!("   one section 1 and section 2 carry to w = 20.");
 
     println!();
-    println!("== 4. Regev's three schedules, timed ==");
-    println!("   one sample, median of 3, N = 35 (w = 6), d = 3 — at d = 2 the");
-    println!("   sequential and Regev schedules cost the same d·R = 2R full-width");
-    println!("   multiplications by construction, so d = 2 cannot show the trade.");
-    println!("     schedule      R   qubits      time       bytes   support   full mults");
-    let mut schedule_times: Vec<(usize, String, u64, usize)> = Vec::new();
+    println!("== full-register order finding, to its own wall ==");
+    println!(
+        "  {:<17} {:>5} {:>7} {:>11} {:>9} {:>9} {:>9} {:>11}  stopped by",
+        "backend", "max w", "qubits", "N", "r", "time", "bytes", "support"
+    );
+    for name in [
+        "sparse",
+        "adaptive",
+        "mosaic",
+        "phase-field",
+        "framed-sparse",
+    ] {
+        let (points, stop) = climb(4, budget, |n, _| {
+            let f = OrderFinder::new(n, first_coprime(n))?.on_backend(name);
+            let t = Instant::now();
+            let e = f.estimate(&sim, PhaseForm::FullRegister, &mut Prng::new(7))?;
+            Ok(Point {
+                w: f.work_bits(),
+                n,
+                r: e.peak_orbit,
+                qubits: e.qubits,
+                nanos: t.elapsed().as_nanos() as u64,
+                bytes: e.peak_bytes,
+                support: e.peak_support,
+            })
+        });
+        match points.last() {
+            Some(p) => println!(
+                "  {name:<17} {:>5} {:>7} {:>11} {:>9} {:>9} {:>9} {:>11}  {stop}",
+                p.w,
+                p.qubits,
+                p.n,
+                p.r,
+                human(p.nanos),
+                bytes(p.bytes),
+                p.support
+            ),
+            None => println!("  {name:<17} {:>5}   {stop}", "—"),
+        }
+    }
+
+    println!();
+    println!("== regev, each schedule to its own wall (d = 2, R = w) ==");
+    println!(
+        "  {:<12} {:<12} {:>5} {:>9} {:>7} {:>9} {:>9} {:>9} {:>6}  stopped by",
+        "schedule", "backend", "max w", "N", "qubits", "time", "bytes", "support", "mults"
+    );
     for schedule in [
         ExpSchedule::Sequential,
         ExpSchedule::Regev,
         ExpSchedule::Fibonacci,
     ] {
-        for r in [3usize, 4] {
-            let cfg = Regev::new(35, 3)?
-                .with_exponent_bits(r)
-                .with_schedule(schedule);
-            let q = cfg.layout().qubits;
-            if q > regev::MAX_WIDTH {
-                println!("   {schedule:<12} {r}   {q:6}   past the u64 basis index at this R");
-                continue;
-            }
-            let mut seed = 200u64;
-            let attempt = fail_on_timeout(timed(budget, 3, || {
-                seed += 1;
-                let mut rng = Prng::new(seed);
-                cfg.sample(&sim, &mut rng)
-            }))?;
-            match attempt {
-                Ok((t, s)) => {
-                    println!(
-                        "   {schedule:<12} {r}   {q:6}  {:>9}  {:>10}  {:8}  {:6}",
-                        human(t),
-                        bytes(s.cost.peak_bytes),
-                        s.cost.peak_support,
-                        s.cost.full_multiplications
-                    );
-                    schedule_times.push((r, schedule.to_string(), t, s.cost.full_multiplications));
+        for name in ["sparse", "mosaic"] {
+            let mut last: Option<(usize, u64, usize, u64, usize, usize, usize)> = None;
+            let mut stop = String::from("width ceiling");
+            for w in 4..=63usize {
+                let Some((n, _, _)) = semiprime(w) else {
+                    stop = "no semiprime at this width".into();
+                    break;
+                };
+                let cfg = match Regev::new(n, 2) {
+                    Ok(c) => c.with_schedule(schedule).on_backend(name),
+                    Err(e) => {
+                        stop = wall(&e);
+                        break;
+                    }
+                };
+                let q = cfg.layout().qubits;
+                if q > regev::MAX_WIDTH {
+                    stop = format!("{q} qubits past the u64 basis index");
+                    break;
                 }
-                Err(e) => println!("   {schedule:<12} {r}   {q:6}   {}", wall(&e)),
+                let t = Instant::now();
+                match guard::with_time_budget(budget, || cfg.sample(&sim, &mut Prng::new(7))) {
+                    Ok(s) => {
+                        last = Some((
+                            w,
+                            n,
+                            q,
+                            t.elapsed().as_nanos() as u64,
+                            s.cost.peak_bytes,
+                            s.cost.peak_support,
+                            s.cost.full_multiplications,
+                        ));
+                    }
+                    Err(e) => {
+                        stop = wall(&e);
+                        break;
+                    }
+                }
+            }
+            match last {
+                Some((w, n, q, t, b, sup, mults)) => println!(
+                    "  {schedule:<12} {name:<12} {w:>5} {n:>9} {q:>7} {:>9} {:>9} {:>9} {mults:>6}  {stop}",
+                    human(t),
+                    bytes(b),
+                    sup
+                ),
+                None => println!(
+                    "  {schedule:<12} {name:<12} {:>5}  {stop}",
+                    "—"
+                ),
             }
         }
     }
-    // Ordered from the rows, per R, rather than asserted over them.
-    for r in [3usize, 4] {
-        let mut rows: Vec<&(usize, String, u64, usize)> =
-            schedule_times.iter().filter(|x| x.0 == r).collect();
-        if rows.len() < 2 {
-            continue;
-        }
-        rows.sort_by_key(|x| x.2);
-        let fastest = rows[0].1.clone();
-        rows.sort_by_key(|x| x.3);
-        let cheapest = rows[0].1.clone();
-        println!("   R = {r}: fastest to simulate {fastest}, fewest full-width mults {cheapest}");
-    }
-    println!("   The two orderings above are the finding: the schedule that spends the");
-    println!("   fewest full-width multiplications — the currency a real circuit pays —");
-    println!("   is not the one that simulates fastest, because simulation pays for");
-    println!("   registers it has to hold and hardware pays for multiplications it has");
-    println!("   to run. Neither column is a verdict on the other.");
 
     println!();
-    println!("== 5. Shor against Regev, in wall clock ==");
-    println!("   Three rows, not ten: Regev's exponent box is 2^(dR) with R = w, so");
-    println!("   the simulation cost doubles twice per bit of N and the ladder ends");
-    println!("   four entries earlier than Shor's. That is the finding, not a gap.");
-    println!("     N     shor: time / mults    regev: time / mults per sample   ratio");
-    for &(n, _, _) in LADDER.iter().take(3) {
-        let a = first_coprime(n);
-        let finder = OrderFinder::new(n, a)?;
-        let mut seed = 300u64;
-        let (st, se) = timed(budget, 3, || {
-            seed += 1;
-            let mut rng = Prng::new(seed);
-            finder.estimate(&sim, PhaseForm::Semiclassical, &mut rng)
-        })?;
-        let mut seed = 400u64;
-        let attempt = fail_on_timeout(timed(budget, 1, || {
-            seed += 1;
-            let mut rng = Prng::new(seed);
-            regev::factor(&sim, n, 2, &mut rng)
-        }))?;
-        match attempt {
-            Ok((rt, rep)) => println!(
-                "   {n:<5} {:>10} / {:<3}       {:>12} / {:<3}          {:>6.0}×",
-                human(st),
-                se.modular_multiplications,
-                human(rt),
-                rep.cost.full_multiplications / rep.samples.len(),
-                rt as f64 / st.max(1) as f64
-            ),
-            Err(e) => println!("   {n:<7} {:>12}   refused: {}", human(st), wall(&e)),
-        }
-    }
-    println!("   Both columns are in the table: Regev needs fewer full-width modular");
-    println!("   multiplications per sample and orders of magnitude more simulator");
-    println!("   time, because its exponent box is 2^(dR) ≥ N by construction against");
-    println!("   Shor's orbit r. Simulability and hardware cost are not the same axis,");
-    println!("   and nothing here should be read as a verdict on the second.");
+    println!("== structural limits reached above, not measured ==");
+    println!("  shor::MAX_MODULUS      {}", shor::MAX_MODULUS);
+    println!("  phase bits <= 62       w <= 30 for 2w+1 phase bits");
+    println!("  regev::MAX_WIDTH       {}", regev::MAX_WIDTH);
+    println!("  sparse basis index     63 qubits");
     Ok(())
 }
