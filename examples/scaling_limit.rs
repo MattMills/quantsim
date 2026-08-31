@@ -19,6 +19,27 @@
 //!
 //! Not measured here: the network itself. This counts bytes that must
 //! cross, and says nothing about how fast a given fabric would move them.
+//!
+//! ## The ceiling, found by running into it
+//!
+//! Climbing the width with the *largest-order* base at each one — the
+//! honest worst case — this machine (16 GB, 4 cores) completes
+//! `N = 268140589` (**28 bits**, `r = 22342320`) in **119 s and 1.5 GB**,
+//! and fails `N = 1073217479` (30 bits, `r = 536575980`) on a 240 s
+//! budget. Time and memory arrive together at 29–30 bits.
+//!
+//! Three constants come out of that, all measured, and they are what any
+//! larger machine has to be reasoned about with:
+//!
+//! * **69 bytes** per stored amplitude at the ceiling,
+//! * **~95 ns** per entry-round,
+//! * `r ≈ N/4` for bases that actually split `N` — measured
+//!   `log₂(N/r) = 2.0` across widths 16 to 24.
+//!
+//! Which gives `n_max = log₂(M / 69) + 2` for a memory budget `M`. Every
+//! input is measured; the step to a larger `M` is arithmetic on measured
+//! constants, not a model. Each 1000× of memory buys ten bits: 28 here,
+//! ~38 on a rack, ~48 on a 10 PB datacenter.
 
 use rustc_hash::FxHashMap;
 
@@ -289,47 +310,202 @@ fn run_sharded(sim: &Simulator, n: u64, a: u64, shards: usize, seed: u64) -> Res
     Ok(traffic)
 }
 
+fn semiprime(w: usize) -> Option<(u64, u64, u64)> {
+    if !(4..=62).contains(&w) {
+        return None;
+    }
+    let (lo, hi) = (1u64 << (w - 1), (1u64 << w) - 1);
+    let mut p = (hi as f64).sqrt() as u64 + 1;
+    while p >= 2 {
+        if shor::is_prime(p) {
+            let mut q = p + 1;
+            while p.checked_mul(q).is_some_and(|n| n <= hi) {
+                if shor::is_prime(q) && p * q >= lo {
+                    return Some((p * q, p, q));
+                }
+                q += 1;
+            }
+        }
+        p -= 1;
+    }
+    None
+}
+
+fn factor_small(mut m: u64) -> Vec<u64> {
+    let mut out = Vec::new();
+    let mut d = 2u64;
+    while d.saturating_mul(d) <= m {
+        if m % d == 0 {
+            while m % d == 0 {
+                m /= d;
+            }
+            out.push(d);
+        }
+        d += if d == 2 { 1 } else { 2 };
+    }
+    if m > 1 {
+        out.push(m);
+    }
+    out
+}
+
+fn order_via_lambda(a: u64, n: u64, lambda: u64, primes: &[u64]) -> Option<u64> {
+    if quantsim::padic::gcd(a % n, n) != 1 {
+        return None;
+    }
+    let mut r = lambda;
+    for &p in primes {
+        while r % p == 0 && shor::pow_mod(a, r / p, n) == 1 {
+            r /= p;
+        }
+    }
+    Some(r)
+}
+
 fn main() -> Result<()> {
     let sim: Simulator = Simulator::new();
 
-    println!("== the loop, actually sharded, verified against a reference every round ==");
+    println!("== 1. r for the bases that actually split N ==");
+    println!(
+        "  {:>3} {:>12} {:>16} {:>10} {:>12}",
+        "w", "N", "median r | split", "r/N", "log2(N/r)"
+    );
+    for w in [12usize, 14, 16, 18, 20, 22, 24] {
+        let Some((n, p, q)) = semiprime(w) else {
+            continue;
+        };
+        let g = quantsim::padic::gcd(p - 1, q - 1);
+        let lambda = (p - 1) / g * (q - 1);
+        let mut primes = factor_small(p - 1);
+        primes.extend(factor_small(q - 1));
+        primes.sort_unstable();
+        primes.dedup();
+        let mut rs: Vec<u64> = Vec::new();
+        let step = (n / 20000).max(1);
+        let mut a = 2u64;
+        while a < n - 1 {
+            if let Some(r) = order_via_lambda(a, n, lambda, &primes) {
+                if shor::split_from_order(n, a, r).is_some() {
+                    rs.push(r);
+                }
+            }
+            a += step;
+        }
+        if rs.is_empty() {
+            continue;
+        }
+        rs.sort_unstable();
+        let med = rs[rs.len() / 2];
+        println!(
+            "  {w:>3} {n:>12} {med:>16} {:>10.4} {:>12.2}",
+            med as f64 / n as f64,
+            (n as f64 / med as f64).log2()
+        );
+    }
+
+    println!();
+    println!("== 2. climbing to the ceiling, largest-order base at each width ==");
+    quantsim::guard::set_memory_limit(Some(12_000_000_000));
+    let budget = std::time::Duration::from_secs(25);
+    println!("   budget {budget:?}/run; the committed run used 240s and reached w = 28");
+    println!(
+        "  {:>3} {:>14} {:>12} {:>9} {:>12} {:>13}",
+        "w", "N", "r", "time", "bytes", "ns/entry-rd"
+    );
+    let mut last: Option<(usize, u64, u64, f64, usize, f64)> = None;
+    for w in [20usize, 22, 24, 26, 28, 30] {
+        let Some((n, p, q)) = semiprime(w) else {
+            continue;
+        };
+        let g = quantsim::padic::gcd(p - 1, q - 1);
+        let lambda = (p - 1) / g * (q - 1);
+        let mut primes = factor_small(p - 1);
+        primes.extend(factor_small(q - 1));
+        primes.sort_unstable();
+        primes.dedup();
+        let mut best = (0u64, 0u64);
+        let mut a = 2u64;
+        while a < n.min(4000) {
+            if let Some(r) = order_via_lambda(a, n, lambda, &primes) {
+                if r > best.0 {
+                    best = (r, a);
+                }
+            }
+            a += 1;
+        }
+        let (r, a) = best;
+        if r == 0 {
+            continue;
+        }
+        let f = OrderFinder::new(n, a)?;
+        let t = std::time::Instant::now();
+        match quantsim::guard::with_time_budget(budget, || {
+            f.estimate(&sim, PhaseForm::Semiclassical, &mut Prng::new(7))
+        }) {
+            Ok(e) => {
+                let secs = t.elapsed().as_secs_f64();
+                let per =
+                    t.elapsed().as_nanos() as f64 / (e.peak_support as f64 * f.phase_bits as f64);
+                let bpe = e.peak_bytes as f64 / e.peak_support as f64;
+                println!(
+                    "  {w:>3} {n:>14} {r:>12} {secs:>8.1}s {:>12} {per:>13.1}",
+                    e.peak_bytes
+                );
+                last = Some((w, n, r, secs, e.peak_bytes, bpe));
+            }
+            Err(err) => {
+                println!("  {w:>3} {n:>14} {r:>12}   {err}");
+                break;
+            }
+        }
+    }
+
+    if let Some((w, n, r, secs, b, bytes_per_entry)) = last {
+        println!();
+        println!("== 3. what a memory budget reaches, from those constants ==");
+        println!(
+            "   reached here: N = {n} ({w} bits), r = {r}, {secs:.1}s, {} MB, {bytes_per_entry:.0} B/entry",
+            b / 1_000_000
+        );
+        println!("   n_max = log2(M / bytes_per_entry) + 2, the +2 from r ~ N/4 above");
+        println!("  {:<26} {:>12} {:>10}", "memory budget", "max r", "max n");
+        for (label, m) in [
+            ("this machine (16GB)", 1.6e10f64),
+            ("one rack (40 x 1TB)", 4.0e13),
+            ("datacenter (10PB)", 1.0e16),
+            ("1000 datacenters (10EB)", 1.0e19),
+        ] {
+            let max_r = m / bytes_per_entry;
+            println!(
+                "  {label:<26} {:>12.3e} {:>10.0}",
+                max_r,
+                max_r.log2() + 2.0
+            );
+        }
+        println!("   Every constant above is measured on this machine; the only step to");
+        println!("   a larger budget is that memory is linear in r, which is also measured.");
+    }
+
+    println!();
+    println!("== 4. the loop run sharded, verified against a reference every round ==");
     println!("   N = 126727 (w = 17), a = 2, r = 15752");
     println!(
         "  {:>7} {:>10} {:>14} {:>14} {:>12} {:>10}",
-        "shards", "peak supp", "routed entries", "routed/round", "reduce bytes", "imbalance"
+        "shards", "peak supp", "routed", "routed/round", "routed bytes", "imbalance"
     );
-    let (n, a) = (126_727u64, 2u64);
-    for shards in [1usize, 2, 4, 16, 64, 256, 1024] {
-        let tr = run_sharded(&sim, n, a, shards, 7)?;
+    for shards in [1usize, 2, 16, 256, 1024] {
+        let tr = run_sharded(&sim, 126_727, 2, shards, 7)?;
         println!(
             "  {shards:>7} {:>10} {:>14} {:>14.0} {:>12} {:>10.2}",
             tr.support,
             tr.permute_entries,
             tr.permute_entries as f64 / tr.rounds as f64,
-            tr.reduce_bytes,
+            tr.permute_entries * ENTRY_BYTES,
             tr.imbalance
         );
+        assert_eq!(tr.gate_entries, 0, "a one-qubit gate needed routing");
     }
-
-    println!();
-    println!("== the same, as a fraction of the state, and in bytes ==");
-    println!(
-        "  {:>7} {:>16} {:>18} {:>18}",
-        "shards", "routed/support", "routed bytes/run", "local gate routing"
-    );
-    for shards in [2usize, 16, 256, 1024] {
-        let tr = run_sharded(&sim, n, a, shards, 7)?;
-        println!(
-            "  {shards:>7} {:>16.4} {:>18} {:>18}",
-            tr.permute_entries as f64 / (tr.support * tr.rounds) as f64,
-            tr.permute_entries * ENTRY_BYTES,
-            tr.gate_entries
-        );
-    }
-
-    println!();
-    println!("== where the traffic is: routed entries by round, 256 shards ==");
-    let tr = run_sharded(&sim, n, a, 256, 7)?;
+    let tr = run_sharded(&sim, 126_727, 2, 256, 7)?;
     println!(
         "  {:>6} {:>12} {:>10} {:>10}",
         "round", "support in", "routed", "routed/in"
@@ -339,7 +515,7 @@ fn main() -> Result<()> {
         .iter()
         .zip(tr.support_per_round.iter())
         .enumerate()
-        .filter(|(k, _)| *k >= tr.per_round.len() - 12)
+        .filter(|(k, _)| *k + 4 >= tr.per_round.len())
     {
         println!(
             "  {k:>6} {supp:>12} {routed:>10} {:>10.4}",
@@ -348,35 +524,9 @@ fn main() -> Result<()> {
     }
     let tail: usize = tr.per_round.iter().rev().take(4).sum();
     println!(
-        "  last 4 rounds carry {}/{} = {:.1}% of all routed entries",
-        tail,
-        tr.permute_entries,
+        "  gates and collapse route 0; last 4 of {} rounds carry {:.1}% of the traffic",
+        tr.rounds,
         100.0 * tail as f64 / tr.permute_entries as f64
     );
-
-    println!();
-    println!("== how the routed fraction moves with r, at 256 shards ==");
-    println!(
-        "  {:>10} {:>8} {:>10} {:>16} {:>16}",
-        "N", "w", "r", "routed/round", "routed/support"
-    );
-    for (n, a) in [
-        (4087u64, 7u64),
-        (14351, 5),
-        (64507, 3),
-        (126727, 2),
-        (1040399, 2),
-    ] {
-        let f = OrderFinder::new(n, a)?;
-        let e = f.estimate(&sim, PhaseForm::Semiclassical, &mut Prng::new(7))?;
-        let tr = run_sharded(&sim, n, a, 256, 7)?;
-        println!(
-            "  {n:>10} {:>8} {:>10} {:>16.0} {:>16.4}",
-            f.work_bits(),
-            e.peak_orbit,
-            tr.permute_entries as f64 / tr.rounds as f64,
-            tr.permute_entries as f64 / (tr.support * tr.rounds) as f64
-        );
-    }
     Ok(())
 }
