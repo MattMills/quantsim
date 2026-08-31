@@ -581,11 +581,24 @@ impl Backend<C64> for PhaseFieldState {
                 if field.is_zero() {
                     return;
                 }
-                let total = 1u64 << self.n;
-                for i in 0..total {
-                    if (i & field.pinned_mask) == field.pinned_bits {
-                        f(i, field.amplitude(i));
+                // Enumerate the *free* assignments and scatter them into
+                // the unpinned positions, rather than filtering the whole
+                // index space. The support is `2^free`, which
+                // `nonzero_count` already reports in closed form, so
+                // sweeping `0..2^n` cost `2^n / 2^free` times too much —
+                // unbounded for a pinned state on a wide register, and
+                // with no checkpoint inside it, not interruptible either.
+                let free: Vec<usize> = (0..self.n)
+                    .filter(|q| (field.pinned_mask >> q) & 1 == 0)
+                    .collect();
+                for code in 0..(1u64 << free.len()) {
+                    let mut index = field.pinned_bits;
+                    for (k, &q) in free.iter().enumerate() {
+                        if (code >> k) & 1 == 1 {
+                            index |= 1u64 << q;
+                        }
                     }
+                    f(index, field.amplitude(index));
                 }
             }
             Repr::Dense(d) => d.for_each_nonzero(f),

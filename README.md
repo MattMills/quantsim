@@ -2626,7 +2626,19 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  what does not, and why the branching election has to
                  be measured),
                  geometric_qudits (the obstruction and its boundary,
-                 motion, holonomy, frame-in-frame, and the interior)
+                 motion, holonomy, frame-in-frame, and the interior),
+                 shor (the permutation kernel, the semiclassical form,
+                 the orbit law, and what the phase register costs),
+                 regev (the three exponentiation schedules, the lattice
+                 step, and where the qubit counts cross),
+                 factoring_scale (wall clock and bytes for both, across
+                 every representation in the crate),
+                 bulk_scaling (width cost separated from support cost,
+                 and what the confounded marginal fits hide),
+                 wide_shor (order finding past the u64 basis index —
+                 four figures of qubits in kilobytes),
+                 scaling_limit (the loop run sharded, verified against a
+                 reference every round, and what crosses between shards)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at

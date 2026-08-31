@@ -91,21 +91,89 @@ honest wall is U's own landscape, which the atlas can measure per U.
 **Certification:** phases of Clifford unitaries in exact D[ω]; Ball intervals
 bounding bit-decision margins.
 
-#### A3. Shor factoring, resource-honest — `SPEC`
-Not a toy demo: the pristine spec is semiclassical QPE (A2) over modular
-exponentiation, with the honest decomposition of where quantumness lives.
-Modular-exponentiation circuits are **basis permutations** — on a basis state
-they are classical reversible arithmetic, and a sparse/permutation
-representation carries the work register at *any* width with support = 1 until
-the QFT interference begins; the superposed control collapses to one recycled
-ancilla in the semiclassical form. The irreducibly quantum content is the
-phase interference over the period — which is where the measured wall will
-appear, and *should*. **Status: proven speedup (vs known classical).
-Landscape targets:** permutation-kernel backend (ROADMAP already names
-permutation kernels); factor 15/21/35 end-to-end CERTIFIED in exact D[ω] where
-gates permit; measure the law of the interference step as its own atlas axis.
-**Alternate landscape:** residue-tower registers — phase estimation over
-(ℤ/2^m)⁸ meets the constellation group natively.
+#### A3. Shor factoring, resource-honest — `SHIPPED`
+Built as specified: semiclassical (Griffiths–Niu / Kitaev) phase estimation
+over modular exponentiation carried as a **basis permutation**
+(`shor::controlled_mul_mod` through `Backend::apply_permutation`), never as a
+compiled adder. The control register collapses to one recycled ancilla, so
+the run is `w + 1` qubits against the textbook `w + 2w + 1`.
+
+**The measured law**, and it is two numbers rather than one:
+
+* the **orbit** — distinct residues the work register holds — is exactly
+  `r`, the multiplicative order, at every width from `w = 4` to `w = 20`;
+* the **support** is `r` or `2r`, the factor of two being the ancilla
+  holding both branches mid-round. Which regime a case lands in is a
+  property of when the orbit saturates, *not* of the width: `N = 32399`
+  gives `r` for base 2 and `2r` for base 3 at one and the same width.
+
+Neither is a function of `w`. The arithmetic is free at any width — a
+permutation kernel on a basis state has support 1 at a 31-bit modulus — and
+the whole cost is the period, which is what should have been true.
+Fitted over the ladder: time is `Polynomial{degree ≈ 1}` in `r` and
+exponential in `w` only because `r` grows with `N`. Factors 15 … 1040399,
+with the lucky-gcd route counted separately so period finding is not
+credited with it, and the "trial division wins at these widths" footnote
+measured (10⁵–10⁵·⁶×) rather than asserted.
+**Landscape:** measured across **all 18 `Backend` implementors** in the
+crate, not the ten in the standard registry; eight reach `w = 20`
+(sparse, adaptive, mosaic, phase-field, clifford-frame, braided, logical,
+framed-sparse), MPS/MERA/bulk stop at `w = 10` — a cyclic orbit is not a
+low-bond object — and the graph-state bundle refuses outright.
+**Past the `u64` basis index.** Every `Backend` in the crate addresses
+basis states by `u64`, so the claim above — cost is `O(support)` at any
+width, support is the orbit — was untestable past 63 qubits, because the
+register could not address the modulus. `wide` supplies the index type
+instead (`Wide`, `Montgomery`, `WideRegister`; not a `Backend`, for the
+same reason `pathsum` is not), and `shor::WideOrderFinder` runs the same
+loop over it. Measured: identical outcome to the `u64` path, bit for bit,
+over 16 seeds on six moduli; order finding at **4124 qubits** in 13 ms and
+145 KB; and the arithmetic alone — one basis state, no interference — at
+**8277 qubits** in **1126 bytes**, 96 µs per modular multiplication.
+**What that shows, stated narrowly.** The wide register buys
+addressability, not speed: on the *same* problem (`N = 268140589`,
+`r = 212784`) it returns the identical measured value and is **3.25×
+slower** than `sparse`, because the keys and the arithmetic are
+multi-limb. The four-figure runs are fast because `r = 256` there *by
+construction* — cost is `t·r·limbs²`, and holding `r` fixed while `w`
+grows is exactly the experiment "is the width free?". It is not a claim
+that a 4123-bit modulus can be factored: that needs `r ≈ 2^2000`, and `r`
+is the support. What is genuinely new is only that `sparse` cannot be
+*constructed* past 63 qubits at all, so the question could not previously
+be asked.
+**Still open:** the ℤ_N-native qudit register (`mixed::CompoundRegister`)
+would drop the `y ≥ N` identity branch the padded binary register carries;
+`modwidth` already prices that form exactly, and `shor::ladder_widths`
+exposes the forecast with its scope stated.
+
+#### A3b. Regev factoring, and the schedule that is the whole argument — `SHIPPED`
+The `d ≈ √n`-register generalization, with the classical half (LLL over the
+congruence kernel) built in `lattice`. The point the implementation makes
+is that the multi-register *idea* buys nothing — the naive schedule costs
+`d·R` full-width multiplications, exactly Shor's bill — and that the saving
+is entirely in the **schedule**. Three are built, all three verified to
+compute the same permutation over the whole box and to leave no garbage:
+
+| schedule | full-width mults | small mults | work registers |
+|---|---|---|---|
+| sequential | `d·R` | 0 | 1 |
+| regev | `2R` | `2dR` | `R + 2` |
+| fibonacci | `2K`, `K → 1.44R` | `2dK` | 3 |
+
+`y ↦ y²` is not injective mod `N`, which is why Regev's own schedule needs a
+fresh register per squaring and lands at `Õ(n^{3/2})` qubits. Replacing it
+with the reversible `(x, y) ↦ (y, x·y)` costs Fibonacci-weighted exponents
+(hence Zeckendorf digits, computed reversibly) and `1.44×` the full-width
+multiplications, for three registers instead of `R + 2` — the crossover is
+`w(R−1) > d·K` and is visible at `w = 6`.
+**Honest boundaries, measured:** the Gaussian preparation Regev's analysis
+needs is indistinguishable from a uniform box here in both cost and
+success; the lattice weight is a real dial that is *not* binding at this
+scale (8/8 at every weight from 1 to 65536) once LLL size-reduces
+correctly; and Regev is cheaper in circuit multiplications while being
+~10⁴× more expensive to simulate, because its exponent box is `2^{dR} ≥ N`
+by construction against Shor's orbit `r`. Simulability and hardware cost
+are not the same axis, and this is the crate's clearest case of it.
 
 #### A4. Amplitude estimation (quantum Monte Carlo) — `SPEC → near`
 The *useful* quadratic speedup: estimating `⟨ψ|P|ψ⟩`-type quantities with 1/ε
@@ -311,8 +379,9 @@ Near-term, each with acceptance criteria in the repo's measured style:
    clifford-framed, trajectory noise.
 5. **B2 matchgate backend** — the biggest single landscape addition; then the
    doped-matchgate cost family beside the Clifford one.
-6. **A3 Shor, resource-honest** — permutation kernels + semiclassical QFT;
-   15/21 certified exactly; the interference step as a new atlas axis.
+6. ~~**A3 Shor, resource-honest**~~ — shipped, with Regev beside it; the
+   remaining rung is the ℤ_N-native qudit register and the interference
+   step as its own atlas axis.
 7. **E3 mod-2^m stabilizer tableau** — turns the Weyl pair's 8th-root
    compression into a polynomial representation; W(E8) as its Clifford group.
 

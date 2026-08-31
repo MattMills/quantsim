@@ -115,6 +115,44 @@ pub trait Backend<S: Scalar> {
     fn project(&mut self, qubit: usize, outcome: bool, renorm: f64);
     /// Reset to `|0…0⟩`.
     fn reset(&mut self);
+    /// Apply a basis permutation in place: each occupied index moves to
+    /// `map(index)`, amplitudes unchanged.
+    ///
+    /// The default collects the support, rewrites it and reloads — three
+    /// passes and two hash tables. A representation that stores its
+    /// support directly can do it in one, and
+    /// [`SparseState`] does; the measured profile of
+    /// [`shor`](crate::shor) is dominated by this call, which is why it
+    /// is a trait method with an override rather than a free function.
+    ///
+    /// A non-injective `map` is not unitary and is reported as
+    /// [`Error::InvalidState`] rather than silently applied.
+    fn apply_permutation(&mut self, label: &str, map: &dyn Fn(u64) -> u64) -> Result<()> {
+        let n = self.num_qubits();
+        let mut entries: Vec<(u64, S)> = Vec::with_capacity(self.nonzero_count());
+        self.for_each_nonzero(&mut |i, a| entries.push((i, a)));
+        let mut seen: HashMap<u64, u64> = HashMap::with_capacity(entries.len());
+        let mut out: Vec<(u64, S)> = Vec::with_capacity(entries.len());
+        for (step, &(i, a)) in entries.iter().enumerate() {
+            if step % 4096 == 0 {
+                crate::guard::checkpoint()?;
+            }
+            let j = map(i);
+            if n < 64 && j >= (1u64 << n) {
+                return Err(Error::InvalidState(format!(
+                    "{label} sent index {i} to {j}, outside the {n}-qubit register"
+                )));
+            }
+            if let Some(prev) = seen.insert(j, i) {
+                return Err(Error::InvalidState(format!(
+                    "{label} is not injective: indices {prev} and {i} both map to {j}"
+                )));
+            }
+            out.push((j, a));
+        }
+        self.load(&out)
+    }
+
     /// Replace the state with the given amplitudes (unlisted indices become
     /// zero). Indices are bounds-checked; normalization is the caller's
     /// choice — measurement copes with unnormalized states.

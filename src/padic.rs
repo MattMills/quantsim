@@ -1236,6 +1236,46 @@ pub fn sweep(
 
 // ── the radix a geometry supplies ────────────────────────────────────
 
+/// Every continued-fraction convergent of `x ≥ 0` with denominator at
+/// most `max_den`, in increasing denominator.
+///
+/// [`best_rational`] returns the last of these and is what a radix wants.
+/// Period recovery wants the whole list — the convergent that reveals an
+/// order is not always the closest one to the measured phase — so both
+/// live here rather than the expansion being written twice.
+pub fn convergents(x: f64, max_den: u64) -> Vec<(u64, u64)> {
+    let mut out = Vec::new();
+    if x < 0.0 || x.is_nan() || max_den == 0 {
+        return out;
+    }
+    let (mut h0, mut h1) = (0i128, 1i128);
+    let (mut k0, mut k1) = (1i128, 0i128);
+    let mut v = x;
+    for _ in 0..64 {
+        if !v.is_finite() {
+            break;
+        }
+        let a = v.floor();
+        let a_i = a as i128;
+        let h2 = a_i * h1 + h0;
+        let k2 = a_i * k1 + k0;
+        if k2 <= 0 || k2 > max_den as i128 || h2 < 0 {
+            break;
+        }
+        h0 = h1;
+        h1 = h2;
+        k0 = k1;
+        k1 = k2;
+        out.push((h1 as u64, k1 as u64));
+        let frac = v - a;
+        if frac.abs() < 1e-12 {
+            break;
+        }
+        v = 1.0 / frac;
+    }
+    out
+}
+
 /// Best rational approximation `num/den` to `x` with `den ≤ max_den`, by
 /// continued fractions. Returns `(num, den, |x − num/den|)`.
 pub fn best_rational(x: f64, max_den: u64) -> (i64, u64, f64) {
