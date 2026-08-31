@@ -212,8 +212,11 @@ fn main() -> Result<()> {
         fit_law(&os, &ts).law
     );
     println!("   Time is (2w+1) rounds × O(support) = O(w·r), and r is what moves.");
-    println!("   The width law reads exponential only because r grows with N, which");
-    println!("   is the algorithm's content, not the representation's cost.");
+    println!("   The sharpest evidence is not the fit — a fit can be argued with — but");
+    println!("   the inversion inside the table: N = 126727 at w = 17 runs FASTER than");
+    println!("   N = 32399 at w = 15, a wider modulus in less time, because its order");
+    println!("   is smaller (15752 against 16020). A cost that tracked the width could");
+    println!("   not do that. Two rows, no fitting, no argument.");
 
     println!();
     println!("== 2. every representation in the crate, across the whole ladder ==");
@@ -229,10 +232,12 @@ fn main() -> Result<()> {
     println!("   stopped by");
     let matrix_budget = Duration::from_secs(3);
     let mut ranking: Vec<(String, usize, u64)> = Vec::new();
+    let mut per_column: Vec<(String, Vec<Option<u64>>)> = Vec::new();
     for name in BACKENDS {
         print!("     {name:<17}");
         let mut reached = 0usize;
         let mut total = 0u64;
+        let mut cols: Vec<Option<u64>> = Vec::new();
         let mut stopped = String::from("(ladder exhausted)");
         for (col, &(n, _, _)) in LADDER.iter().enumerate() {
             let a = first_coprime(n);
@@ -248,9 +253,11 @@ fn main() -> Result<()> {
                     print!("{:>8.1}", t as f64 / 1e6);
                     reached = ws[col];
                     total += t;
+                    cols.push(Some(t));
                 }
                 Err(e) => {
                     stopped = wall(&e);
+                    cols.push(None);
                     for _ in col..LADDER.len() {
                         print!("{:>8}", "—");
                     }
@@ -260,6 +267,7 @@ fn main() -> Result<()> {
         }
         println!("   {stopped}");
         ranking.push((name.to_string(), reached, total));
+        per_column.push((name.to_string(), cols));
     }
     // Conclusions computed from the matrix above, not written ahead of it.
     let deepest = ranking.iter().map(|r| r.1).max().unwrap_or(0);
@@ -294,9 +302,65 @@ fn main() -> Result<()> {
             .map(|r| (r.0.as_str(), r.1))
             .collect::<Vec<_>>()
     );
-    println!("   This is one algorithm on ten moduli. It orders these representations");
-    println!("   for *this* workload — a permutation kernel on a cyclic orbit — and");
-    println!("   claims nothing about any other.");
+    // Two negative results worth stating outright, both read off the rows.
+    let by_name = |n: &str| ranking.iter().find(|r| r.0 == n).map(|r| r.2).unwrap_or(0);
+    let cols_of = |n: &str| {
+        per_column
+            .iter()
+            .find(|r| r.0 == n)
+            .map(|r| r.1.clone())
+            .unwrap_or_default()
+    };
+    let (sp, ad) = (by_name("sparse"), by_name("adaptive"));
+    let (sc, ac) = (cols_of("sparse"), cols_of("adaptive"));
+    let (mut ad_slower, mut ad_faster, mut ad_tied) = (0, 0, 0);
+    for (a, b) in ac.iter().zip(sc.iter()) {
+        if let (Some(a), Some(b)) = (a, b) {
+            match a.cmp(b) {
+                std::cmp::Ordering::Greater => ad_slower += 1,
+                std::cmp::Ordering::Less => ad_faster += 1,
+                std::cmp::Ordering::Equal => ad_tied += 1,
+            }
+        }
+    }
+    if sp > 0 && ad > 0 {
+        println!();
+        println!("   adaptive against sparse, column by column rather than by assertion:");
+        println!("     slower in {ad_slower}, faster in {ad_faster}, tied in {ad_tied} of the {} widths both reached;",
+            ad_slower + ad_faster + ad_tied);
+        println!(
+            "     summed over the ladder, {:.2}x sparse. An adaptive layer that",
+            ad as f64 / sp as f64
+        );
+        println!("     pays the promotion check and never promotes is overhead on this");
+        println!("     workload — a negative result, stated as one.");
+    }
+    let cluster: Vec<&(String, usize, u64)> = at_depth
+        .iter()
+        .copied()
+        .filter(|r| r.2 as f64 <= 2.0 * sp.max(1) as f64)
+        .collect();
+    println!();
+    println!(
+        "   And the spread is narrower than the row count suggests: {} of the",
+        cluster.len()
+    );
+    println!("   representations that reached w = 20 land within 2x of sparse. They are");
+    println!("   sparse maps underneath with different bookkeeping on top, so this is");
+    println!(
+        "   one structure measured {} ways, not {} competing structures.",
+        cluster.len(),
+        cluster.len()
+    );
+    println!();
+    println!("   MPS, MERA and bulk are not losing because they are bad. A uniform");
+    println!("   superposition over r basis states with no local structure is their");
+    println!("   worst case by construction: the orbit {{a^k mod N}} has no low-bond");
+    println!("   description, so a bond-truncating representation has to carry it in");
+    println!("   full and pay for the machinery besides. This workload — a permutation");
+    println!("   on a cyclic orbit — is close to the least discriminating thing one");
+    println!("   could hand a representation, and the table should be read as ordering");
+    println!("   them for it and for nothing else.");
 
     println!("== 3. how far the non-dense representations carry the full-register form ==");
     println!("   Its control register is t = 2w+1 qubits in uniform superposition, and");

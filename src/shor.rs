@@ -31,15 +31,23 @@
 //!   count ([`PhaseEstimate::peak_orbit`]) saturates at the multiplicative
 //!   order of the base, at every width, in every case measured — `w = 4`
 //!   through `w = 20`.
-//! * **The support is `r` or `2r`.** During a round the ancilla holds both
-//!   branches, so the register's nonzero count
-//!   ([`PhaseEstimate::peak_support`]) is *twice* the orbit reached before
-//!   that round. It is `2r` when the orbit saturates before the final
-//!   round and `r` when saturation lands on it. Which regime a case falls
-//!   in is a property of the orbit's saturation step, **not** of the
-//!   width: `N = 32399` gives `r` for base 2 and `2r` for base 3, at one
-//!   and the same width. The factor of two is the ancilla, which is the
-//!   entire phase register in this form.
+//! * **The support is `r` for even `r` and `2r` for odd `r`** — exactly,
+//!   in 51 of 51 `(N, a)` pairs measured. Support counts *amplitudes*:
+//!   mid-round the ancilla is in superposition, so `|y, 0⟩` and
+//!   `|a^{2^k}·y, 1⟩` are two entries, and since `a^{2^k} ∈ ⟨a⟩` the
+//!   multiplier never enlarges the set of reachable residues — it doubles
+//!   the count of pairs.
+//!
+//!   The mechanism is the 2-adic valuation of `r`. The ladder's
+//!   multipliers are `a^{2^k mod r}`, which for large `k` generate
+//!   `⟨a^{2^{v₂(r)}}⟩` — the odd part of the orbit, of size
+//!   `r / 2^{v₂(r)}`. The orbit sits on that plateau for most of the run
+//!   and doubles on each of the last `v₂(r)` rounds
+//!   ([`PhaseEstimate::orbit_trajectory`] shows it). So `r` odd means the
+//!   plateau is already `r` and every later round doubles the pair count,
+//!   giving `2r`; `r` even means the orbit only reaches `r` on the final
+//!   round, which nothing doubles, giving `r`.
+//!
 //!
 //! Neither is a function of the register width `w`. A 4-bit modulus and a
 //! 20-bit modulus with the same order cost the same. That is the honest
@@ -228,9 +236,26 @@ pub fn apply_permutation<S: Scalar>(
 ) -> Result<usize> {
     // The rewrite holds the support, so it is admitted like every other
     // exponential kernel in the crate rather than trusted to be small
-    // because the algorithm says so.
+    // because the algorithm says so — but the check is only taken where
+    // it can bind.
+    //
+    // With no explicit limit configured, `guard::admit` measures
+    // availability by reading `/proc/meminfo` and the cgroup files on
+    // every call: **13.5 µs**, against 4 ns when a limit is set and the
+    // budget is an atomic load. One call per controlled multiplication
+    // is `2w+1` of those per order-finding run, which at small support
+    // costs 40× the work it is guarding and was the whole of an
+    // unexplained fixed overhead. So: always check under a configured
+    // limit, where the check is free, and otherwise only above a floor
+    // no plausible budget would refuse.
+    const ADMIT_FLOOR: usize = 1 << 20;
     let entry = std::mem::size_of::<(u64, S)>();
-    crate::guard::admit(3 * state.nonzero_count() * entry, label)?;
+    let bytes = 3usize
+        .saturating_mul(state.nonzero_count())
+        .saturating_mul(entry);
+    if bytes >= ADMIT_FLOOR || crate::guard::memory_limit().is_some() {
+        crate::guard::admit(bytes, label)?;
+    }
     state.apply_permutation(label, map)?;
     Ok(state.nonzero_count())
 }
@@ -476,6 +501,26 @@ pub struct PhaseEstimate {
     /// uncontrolled ones.
     pub phase_gates: usize,
     /// Largest number of nonzero amplitudes held at any point.
+    ///
+    /// Amplitudes, not residues: mid-round the ancilla is in
+    /// superposition, so `|y, 0⟩` and `|a^{2^k}·y, 1⟩` are two entries
+    /// even though `a^{2^k}·y` is in the same subgroup `⟨a⟩`. The
+    /// multiplier never enlarges the *set* of reachable residues — it
+    /// cannot, being itself a power of `a` — it doubles the count of
+    /// *pairs*.
+    ///
+    /// Hence, exactly:
+    ///
+    /// ```text
+    /// peak_support = 2 · max over rounds that ran   of orbit_trajectory
+    /// peak_orbit   =     max over all entries       of orbit_trajectory
+    /// ```
+    ///
+    /// The final entry is the orbit after the last measurement, which no
+    /// round doubles, so the two coincide precisely when the orbit first
+    /// fills there. Measured, that is decided by the parity of `r`:
+    /// `peak_support = r` for even `r`, `2r` for odd `r`, 51/51. Nothing
+    /// about the width enters either side.
     pub peak_support: usize,
     /// Largest `memory_bytes` the representation reported — the number
     /// that actually differs between backends, since support is a
@@ -483,10 +528,16 @@ pub struct PhaseEstimate {
     pub peak_bytes: usize,
     /// Largest number of distinct residues the work register ever held —
     /// the orbit actually reached. Measured equal to `r` at every width
-    /// tried, and never a function of the width. `peak_support` is this
-    /// number or twice it; the two differ by whether the ancilla was in
-    /// superposition when the orbit saturated.
+    /// tried, and never a function of the width.
     pub peak_orbit: usize,
+    /// Distinct residues the work register held entering each round,
+    /// starting at 1. The ancilla is reset (or its reset folded into the
+    /// next round's Hadamard), so every surviving index carries the same
+    /// ancilla bit and this count *is* the support at those moments.
+    ///
+    /// This is what makes the `r` / `2r` split mechanical rather than a
+    /// story: see [`PhaseEstimate::peak_support`].
+    pub orbit_trajectory: Vec<usize>,
 }
 
 /// Order finding by phase estimation over `|y⟩ ↦ |a·y mod N⟩`.
@@ -620,6 +671,7 @@ impl OrderFinder {
         let mut peak = state.nonzero_count();
         let mut bytes = state.memory_bytes();
         let mut orbit = 1usize;
+        let mut trajectory = vec![1usize];
         let mut muls = 0usize;
         let mut rotations = 0usize;
         let h = hadamard::<S>()?;
@@ -651,6 +703,7 @@ impl OrderFinder {
             peak = peak.max(support);
             bytes = bytes.max(state.memory_bytes());
             orbit = orbit.max(support);
+            trajectory.push(support);
         }
         measured.reverse(); // b₁ … b_t
         let mut value = 0u64;
@@ -670,6 +723,7 @@ impl OrderFinder {
             peak_support: peak,
             peak_bytes: bytes,
             peak_orbit: orbit,
+            orbit_trajectory: trajectory,
         })
     }
 
@@ -737,6 +791,7 @@ impl OrderFinder {
             peak_support: peak,
             peak_bytes: bytes,
             peak_orbit: orbit,
+            orbit_trajectory: Vec::new(),
         })
     }
 }

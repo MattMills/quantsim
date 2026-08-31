@@ -283,6 +283,53 @@ fn the_orbit_is_the_order_and_the_support_is_the_orbit_or_twice_it() {
 }
 
 #[test]
+fn the_support_regime_is_decided_by_the_parity_of_the_order() {
+    // peak_support = r for even r, 2r for odd r — and the mechanism is
+    // the 2-adic valuation: the ladder's multipliers a^{2^k mod r}
+    // generate the odd part of the orbit, so the trajectory plateaus at
+    // r / 2^{v₂(r)} and doubles on each of the last v₂(r) rounds.
+    let sim: Simulator = Simulator::new();
+    let mut checked = 0;
+    for n in [
+        15u64, 21, 33, 35, 39, 55, 65, 91, 95, 119, 221, 899, 4087, 7387, 32399,
+    ] {
+        for a in [2u64, 3, 5, 7] {
+            if a >= n || quantsim::padic::gcd(a, n) != 1 {
+                continue;
+            }
+            let r = multiplicative_order(a, n).expect("coprime");
+            let finder = OrderFinder::new(n, a).unwrap();
+            let mut rng = Prng::new(1);
+            let est = finder
+                .estimate(&sim, PhaseForm::Semiclassical, &mut rng)
+                .unwrap();
+            let predicted = if r % 2 == 0 { r } else { 2 * r };
+            assert_eq!(
+                est.peak_support as u64, predicted,
+                "N={n} a={a} r={r}: support law broken"
+            );
+            assert_eq!(est.peak_orbit as u64, r, "N={n} a={a}: orbit is not r");
+
+            // The plateau is the odd part, and it is where the trajectory
+            // sits v₂(r) rounds from the end.
+            let v2 = r.trailing_zeros() as usize;
+            let traj = &est.orbit_trajectory;
+            assert_eq!(
+                traj[traj.len() - 1 - v2] as u64,
+                r >> v2,
+                "N={n} a={a} r={r}: plateau is not the odd part"
+            );
+            // And support is exactly twice the largest orbit a round doubled.
+            let doubled = *traj[..traj.len() - 1].iter().max().unwrap();
+            assert_eq!(est.peak_support, 2 * doubled);
+            assert_eq!(est.peak_orbit, *traj.iter().max().unwrap());
+            checked += 1;
+        }
+    }
+    assert!(checked >= 40, "only {checked} pairs exercised");
+}
+
+#[test]
 fn the_support_reaches_twice_the_orbit_once_saturation_beats_the_last_round() {
     // The regime the small cases do not show: when the orbit fills before
     // the final round, a later round doubles the register's nonzero

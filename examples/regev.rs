@@ -24,7 +24,105 @@ const SCHEDULES: [ExpSchedule; 3] = [
 fn main() -> Result<()> {
     let sim: Simulator = Simulator::new();
 
-    println!("== 1. the three schedules, measured against the table they claim ==");
+    println!("== 1. one full run, every intermediate shown, so it can be checked ==");
+    {
+        let n = 35u64;
+        let cfg = Regev::new(n, 2)?;
+        let layout = cfg.layout();
+        println!(
+            "   N = {n}, d = {}, R = {} exponent bits",
+            cfg.dimension, cfg.exponent_bits
+        );
+        println!(
+            "   primes pᵢ  {:?}   bases bᵢ = pᵢ² mod N  {:?}",
+            cfg.primes,
+            cfg.bases()
+        );
+        println!(
+            "   layout: {} exponent registers of {} qubits + {} work register(s) of {} = {} qubits",
+            layout.exponent.len(),
+            cfg.exponent_bits,
+            layout.work.len(),
+            quantsim::shor::work_bits(n),
+            layout.qubits
+        );
+        let q = 1i64 << cfg.exponent_bits;
+        let mut rng = Prng::new(4);
+        let report = cfg.run(&sim, &mut rng, 6)?;
+        println!("   the lattice L = {{ z : ∏ bᵢ^zᵢ ≡ 1 mod {n} }}, sampled 6 times:");
+        println!("     run   work value measured   dual vector w   ⟨w, v⟩ mod q for the winner");
+        let w = report.witness.as_ref().expect("a witness");
+        for (i, sample) in report.samples.iter().enumerate() {
+            let dot: i64 = sample
+                .dual
+                .iter()
+                .zip(w.vector.iter())
+                .map(|(&a, &b)| a as i64 * b)
+                .sum();
+            let centred = ((dot % q) + q) % q;
+            let centred = if centred > q / 2 {
+                centred - q
+            } else {
+                centred
+            };
+            println!(
+                "     {i}     {:<19}   {:<13}   {centred}",
+                sample.work_value,
+                format!("{:?}", sample.dual)
+            );
+        }
+        let rows: Vec<Vec<i64>> = report
+            .samples
+            .iter()
+            .map(|s| s.dual.iter().map(|&x| x as i64).collect())
+            .collect();
+        let basis =
+            quantsim::lattice::congruence_kernel(&rows, cfg.dimension, q, cfg.lattice_weight);
+        println!(
+            "   LLL over the congruence kernel gives, shortest first: {:?}",
+            basis.iter().take(4).collect::<Vec<_>>()
+        );
+        println!("   winning vector v       {:?}", w.vector);
+        let u = w.root;
+        println!("   u = ∏ pᵢ^vᵢ mod N      {u}");
+        println!(
+            "     check u² mod N       {u}² mod {n} = {}  (must be 1)",
+            quantsim::shor::mul_mod(u, u, n)
+        );
+        println!(
+            "     check u ≠ ±1         u = {u}, and ±1 is 1 or {}",
+            n - 1
+        );
+        println!(
+            "     gcd(u−1, N)          gcd({}, {n}) = {}",
+            u - 1,
+            quantsim::padic::gcd(u - 1, n)
+        );
+        println!(
+            "     gcd(u+1, N)          gcd({}, {n}) = {}",
+            u + 1,
+            quantsim::padic::gcd(u + 1, n)
+        );
+        println!(
+            "   factors                {} × {} = {}",
+            w.factors.0,
+            w.factors.1,
+            w.factors.0 * w.factors.1
+        );
+        assert_eq!(w.factors.0 * w.factors.1, n);
+        assert!(w.square_root_of_one);
+        assert_eq!(quantsim::shor::mul_mod(u, u, n), 1);
+        assert_ne!(u, 1);
+        assert_ne!(u, n - 1);
+        println!("   every line above is asserted in this example, not just printed.");
+        println!("   The squares are the whole construction: because bᵢ = pᵢ², any");
+        println!("   v ∈ L makes ∏ pᵢ^vᵢ a square root of 1, and any square root other");
+        println!("   than ±1 splits N. Shor gets one per successful order run; Regev");
+        println!("   gets one per short lattice vector.");
+    }
+
+    println!();
+    println!("== 2. the three schedules, measured against the table they claim ==");
     println!("   N = 35, d = 2, R = 4");
     println!("     schedule      full   small   registers   qubits   claimed (full, small)");
     let (n, d, r) = (35u64, 2usize, 4usize);
@@ -54,7 +152,7 @@ fn main() -> Result<()> {
     println!("   asserted over the whole box in tests/regev.rs, not eyeballed here.");
 
     println!();
-    println!("== 2. where the saving actually starts ==");
+    println!("== 3. where the saving actually starts ==");
     println!("   Sequential costs d·R full-width multiplications; Regev's costs 2R.");
     println!("   So the multi-register idea pays nothing until d > 2.");
     println!("     d    R    sequential   regev   fibonacci");
@@ -68,7 +166,7 @@ fn main() -> Result<()> {
     }
 
     println!();
-    println!("== 3. the qubit crossover: Regev's schedule vs the Fibonacci ladder ==");
+    println!("== 4. the qubit crossover: Regev's schedule vs the Fibonacci ladder ==");
     println!("   Regev holds R+2 registers of w; Fibonacci holds 3, and pays for it in");
     println!("   d·K extra digit qubits. The crossover is a closed form, and it moves.");
     println!("     w    d    R    regev qubits   fibonacci qubits   winner");
@@ -100,7 +198,7 @@ fn main() -> Result<()> {
     println!("   Õ(n^1.5) → Õ(n) qubit result, visible here at w = 6.");
 
     println!();
-    println!("== 4. the lattice weight, and the failure it exists to prevent ==");
+    println!("== 5. the lattice weight, and the failure it exists to prevent ==");
     println!("   The sampled duals are rounded, so a true lattice vector has a small");
     println!("   residue, not a zero one. Demanding zero returns the trivial kernel.");
     println!("     weight   genuine square roots of one, over 8 seeds each");
@@ -136,7 +234,7 @@ fn main() -> Result<()> {
     println!("   was binding was an LLL that only size-reduced against stale μ.");
 
     println!();
-    println!("== 5. uniform against Gaussian preparation ==");
+    println!("== 6. uniform against Gaussian preparation ==");
     println!("   Regev's analysis assumes a Gaussian. A Hadamard layer gives a box.");
     println!("   Loading the Gaussian is free here and is not free on hardware.");
     println!("     N    preparation      prepared support   peak support   genuine/8");
@@ -182,7 +280,7 @@ fn main() -> Result<()> {
     println!("   Gaussian is what Regev's *analysis* needs, not what these sizes need.");
 
     println!();
-    println!("== 6. Shor against Regev, in both currencies ==");
+    println!("== 7. Shor against Regev, in both currencies ==");
     println!("   Circuit currency is full-width modular multiplications. Simulator");
     println!("   currency is peak support. They point opposite ways, and both are true.");
     println!("     N    shor mults   regev mults   shor support   regev support");
@@ -208,7 +306,7 @@ fn main() -> Result<()> {
     println!("   are not the same axis, and this is the clearest case of it in the crate.");
 
     println!();
-    println!("== 7. end to end ==");
+    println!("== 8. end to end ==");
     println!("     N   d    primes        skipped   witness v            u    factors");
     for n in [15u64, 21, 33, 35, 39, 51, 55] {
         for d in [2usize, 3] {
@@ -229,11 +327,10 @@ fn main() -> Result<()> {
         }
     }
     println!();
-    println!("   The skipped column is the honest one: a small prime that divides N");
-    println!("   cannot be a base, and noticing it *is* the factorization — for 12 of");
-    println!("   the 14 rows above, trial division by the base candidates alone had");
-    println!("   already split N before the first Hadamard. How far ahead it is in");
-    println!("   wall time is measured in examples/shor.rs, section 7, not asserted");
-    println!("   here.");
+    println!("   The skipped column is a property of base selection, not a result: a");
+    println!("   small prime that divides N cannot serve as a base, so the search for");
+    println!("   bases notices it. It is reported so that a row whose factors were");
+    println!("   already sitting in that column is not read as the lattice having");
+    println!("   done the work — the witness column is where that is shown.");
     Ok(())
 }
