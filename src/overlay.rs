@@ -76,11 +76,15 @@
 //!
 //! Two things fall out, and the second is a reversal:
 //!
-//! * The **Hilbert family saves exactly one third**, at every size, and
-//!   never more. Its members are rotors of a self-similar curve, so
-//!   they agree on every quadrant; where several of them tie at the
-//!   minimal level they name the *same block*, measured, at every size
-//!   — the tie is a labelling, not a choice.
+//! * The **Hilbert family saves exactly one third**: the two closed
+//!   forms differ by exactly `3/2`, and both are verified at every
+//!   power-of-two side from 4 to 64 — the ratio is exact given the
+//!   forms, and the forms are measured rather than proved. Its members
+//!   are rotors of a self-similar curve, so they agree on every
+//!   quadrant; where several tie at the minimal level they name the
+//!   *same block* — checked exhaustively over every site pair at sides
+//!   4, 8 and 16, so at those sizes the tie is a labelling and not a
+//!   choice.
 //! * The **row-major family saves a factor of `(s+1)/2`**, which grows
 //!   without bound, and **two members are the whole of it**: an
 //!   ordering and its transpose. Members three through eight add
@@ -90,7 +94,8 @@
 //! So as a single ordering the curve wins and the rows lose, which is
 //! the ranking [`curve`](crate::curve) measures. As an *overlay* the
 //! ranking inverts: `n log₂ n` against `2s²(s−1)`, and the gap widens
-//! at every size. The overlay's value is the **disagreement** between
+//! at every size the forms were verified at (4 to 64). The overlay's
+//! value is the **disagreement** between
 //! its members, and a self-similar family agrees with itself too much
 //! to have much of it.
 //!
@@ -108,12 +113,13 @@
 //!   ordering's 186, peak memory **8 396 800 B** against 8 454 144 and
 //!   12 615 680.
 //!
-//! And the row-major family is not in that comparison because it
-//! cannot be run at all: on a graph state over 4×4 patches it reaches
-//! a `cz` that demands a **32-site** region — 2³² amplitudes,
-//! **68 719 476 736 bytes** — for a two-site gate, while the curve
-//! runs the same circuit in **4 MiB**. That is a ratio between two
-//! measured demands, not a verdict from a threshold.
+//! The row-major family is not in that comparison because it was not
+//! run to completion: on a graph state over 4×4 patches it reaches a
+//! `cz` demanding a **32-site** region — 2³² amplitudes,
+//! **68 719 476 736 bytes** — for a two-site gate, where the curve runs
+//! the same circuit in **4 MiB**. Those are two measured demands and
+//! their ratio; whether a machine can meet the larger one is the
+//! guard's question, not this module's.
 //!
 //! That is the [mosaic register](crate::backend::MosaicState)'s
 //! contract on the
@@ -123,17 +129,18 @@
 //!
 //! ## What is not claimed
 //!
-//! The election is a per-migration minimum, not per-region freedom.
-//! Once a region commits to a block, the next migration must contain
-//! *that whole block*, so on a run the overlay cannot beat the best
-//! single family on peak width — only on padding and on total memory,
-//! and only because the mix contains a family that suits each part of
-//! the circuit. In particular the row-major family's `(s+1)/2`
-//! placement advantage does **not** survive into a run: it demands the
-//! same 32-site region the single ordering does. Electing among tied
-//! contenders by which one cuts into fewest regions
-//! ([`OverlayRegister::contenders`]) is implemented and is the right
-//! rule, but has not yet changed a measured outcome.
+//! The election is a per-migration minimum, not per-region freedom:
+//! once a region commits to a block, the next migration must contain
+//! *that whole block*. On every run measured here the overlay's gains
+//! were in padding and total memory and **not** in peak width, and the
+//! mechanism above suggests why — but nothing here establishes that it
+//! cannot beat peak width on some other circuit, and that is not
+//! claimed. Likewise the row-major family's `(s+1)/2` placement
+//! advantage did not survive into any run measured: it demanded the
+//! same 32-site region the single ordering did, on the two circuits
+//! tried. Electing among tied contenders by which one cuts into fewest
+//! regions ([`OverlayRegister::contenders`]) is implemented and is the
+//! right rule; it has not changed an outcome in anything measured.
 //!
 //! ## Conventions
 //!

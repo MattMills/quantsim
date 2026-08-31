@@ -1595,15 +1595,15 @@ pub struct MergeStats {
 /// that touch them, with every mask restricted to the live variables so
 /// the polynomial is exactly what it evaluates as.
 #[derive(Clone, Debug)]
-struct Component {
-    vars: Vec<usize>,
-    terms: Vec<(Term, Turn)>,
+pub(crate) struct Component {
+    pub(crate) vars: Vec<usize>,
+    pub(crate) terms: Vec<(Term, Turn)>,
 }
 
 /// A component's canonical form: the polynomial with variables
 /// relabelled by a deterministic order, so that equal keys are equal
 /// polynomials up to renaming — which is all the sum depends on.
-type CanonKey = Vec<(Vec<Vec<u32>>, Turn)>;
+pub(crate) type CanonKey = Vec<(Vec<Vec<u32>>, Turn)>;
 
 /// One variable's local signature in a refinement round: the arity of a
 /// term it sits in, how many variables that term touches, the term's
@@ -1683,7 +1683,7 @@ fn refine_order(comp: &Component, local: &HashMap<usize, usize>) -> Vec<usize> {
 }
 
 /// The component as a canonical polynomial over `0..k`.
-fn canonicalize(comp: &Component) -> CanonKey {
+pub(crate) fn canonicalize(comp: &Component) -> CanonKey {
     let local: HashMap<usize, usize> = comp.vars.iter().enumerate().map(|(i, &v)| (v, i)).collect();
     let rank_of = refine_order(comp, &local);
     let mut out: CanonKey = comp
@@ -1712,7 +1712,7 @@ fn canonicalize(comp: &Component) -> CanonKey {
 impl PathSum {
     /// A bare sum over `comp`'s variables: no output forms, unit scale,
     /// zero global phase — so its value is exactly `Σ_y ω^{φ(y)}`.
-    fn from_component(comp: &Component) -> PathSum {
+    pub(crate) fn from_component(comp: &Component) -> PathSum {
         let mut active = Mask::zero();
         let mut nvars = 0usize;
         for &v in &comp.vars {
@@ -1745,7 +1745,24 @@ impl PathSum {
     /// factorization [`FactoredState`](crate::backend::FactoredState)
     /// makes on the register, here on the residual — and each factor is
     /// then a separate, separately-memoizable problem.
+    /// [`split_residual`](Self::split_residual) with the prefactor left
+    /// as the **exact symbol** it always was: a turn and a half-power of
+    /// two, `ω^turn · √2^half`. `split_residual` is this composed with a
+    /// float readout, so the two never disagree.
+    fn split_residual_exact(&self) -> (Turn, i64, Vec<Component>) {
+        let (turn, half, comps) = self.split_parts();
+        (turn, half, comps)
+    }
+
     fn split_residual(&self) -> (C64, Vec<Component>) {
+        let (turn, half, comps) = self.split_parts();
+        (
+            turn_to_c64(turn) * C64::new(2f64.powf(half as f64 / 2.0), 0.0),
+            comps,
+        )
+    }
+
+    fn split_parts(&self) -> (Turn, i64, Vec<Component>) {
         let mut turn = self.phase;
         let mut live: Vec<(Vec<Mask>, Turn, Vec<usize>)> = Vec::new();
         let mut used = Mask::zero();
@@ -1784,8 +1801,7 @@ impl PathSum {
         }
 
         let free = self.active.count() - used.count();
-        let scale = 2f64.powf((self.e_half as f64) / 2.0 + free as f64);
-        let pre = turn_to_c64(turn) * C64::new(scale, 0.0);
+        let half = self.e_half + 2 * free as i64;
 
         // Union–find over the live variables.
         let vars: Vec<usize> = used.iter().collect();
@@ -1854,9 +1870,9 @@ impl PathSum {
             recovered += (c.vars.len() - touched.len()) as i32;
             c.vars = touched;
         }
-        let pre = pre * C64::new(2f64.powi(recovered), 0.0);
+        let half = half + 2 * recovered as i64;
         comps.sort_by(|a, b| a.vars.cmp(&b.vars));
-        (pre, comps)
+        (turn, half, comps)
     }
 }
 
@@ -1920,7 +1936,7 @@ fn component_sizes(vars: &[usize], terms: &[(Term, Turn)], skip: usize) -> Vec<u
 impl Pivot {
     /// The variable this policy would branch. Deterministic: ties break
     /// on the variable index, so a run is reproducible.
-    fn choose(self, comp: &Component) -> usize {
+    pub(crate) fn choose(self, comp: &Component) -> usize {
         match self {
             Pivot::First => comp.vars[0],
             Pivot::MaxDegree => {
@@ -2093,6 +2109,57 @@ impl PathSum {
     /// wide to index with a `u64`.
     pub fn amplitude_merged_mask(&self, bits: &Mask, budget: u64) -> Result<(C64, MergeStats)> {
         self.amplitude_merged_by(&|q| bits.bit(q), budget, Pivot::default())
+    }
+
+    /// Pin every output form to the requested bit, leaving the residual
+    /// the solver actually sums. `None` means the amplitude is
+    /// structurally zero — an output form is a constant that disagrees
+    /// with the bit asked for, so no assignment contributes.
+    pub(crate) fn pinned(&self, want_bit: &dyn Fn(usize) -> bool) -> Option<PathSum> {
+        let mut ps = self.clone();
+        for q in 0..ps.qubits {
+            let (m, c) = ps.forms[q].clone();
+            let want = want_bit(q);
+            if m.is_zero() {
+                if c != want {
+                    return None;
+                }
+                continue;
+            }
+            let piv = m.lowest().expect("a non-zero mask has a lowest bit");
+            let rest = m.xor(&Mask::single(piv));
+            ps.substitute(piv, &rest, c ^ want);
+            ps.active.clear(piv);
+            ps.forms[q] = (Mask::zero(), want);
+        }
+        ps.reduce();
+        Some(ps)
+    }
+
+    /// Whether the residual reduced to the zero polynomial — the
+    /// rewrite rules proved the sum is zero without summing it.
+    pub(crate) fn is_zero_residual(&self) -> bool {
+        self.zero
+    }
+
+    /// The two children of branching `comp` at `pivot`, each reduced.
+    /// Returns the child count of live variables before the branch so a
+    /// caller can see whether the rules consumed more than the pivot.
+    pub(crate) fn branch_children(comp: &Component, pivot: usize) -> [PathSum; 2] {
+        let base = PathSum::from_component(comp);
+        [false, true].map(|b| {
+            let mut child = base.clone();
+            child.substitute(pivot, &Mask::zero(), b);
+            child.active.clear(pivot);
+            child.reduce();
+            child
+        })
+    }
+
+    /// The exact prefactor and the independent components of a reduced
+    /// residual: `Σ = ω^turn · √2^half · ∏ Σ(componentᵢ)`.
+    pub(crate) fn factor_exact(&self) -> (Turn, i64, Vec<Component>) {
+        self.split_residual_exact()
     }
 
     fn amplitude_merged_by(

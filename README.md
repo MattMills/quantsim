@@ -1159,7 +1159,8 @@ measure rather than hide.
   | 64 | 64 / 60.0 | **32 / 24.0** |
   | 256 | 64 / 48.0 | **32 / 32.0** |
 
-  Hilbert is better at **every** block size and never worse — the
+  Hilbert is better at **every block size measured** and worse at none
+  — at sides 16 and 32, which is the sample and not a proof; the
   opposite verdict, on the same three orderings. The mechanism: a
   row-major block of `side` positions *is* one entire row, boundary
   `2·side`, while the rotor makes the curve's blocks compact regions.
@@ -1218,9 +1219,11 @@ measure rather than hide.
   | the Hilbert `D₄` family | `2s²(s−1)` |
 
   The **Hilbert family saves exactly one third**, at every size, and
-  never more — and where several of its rotors tie at the minimal
-  level they name the *same block*, measured, every time: the tie is a
-  labelling, not a choice. The **row-major family saves `(s+1)/2`**,
+  the two closed forms differ by exactly `3/2`, and both are verified
+  at every power-of-two side from 4 to 64. Where several of its rotors
+  tie at the minimal level they name the *same block* — checked
+  exhaustively over every site pair at sides 4, 8 and 16, so at those
+  sizes the tie is a labelling and not a choice. The **row-major family saves `(s+1)/2`**,
   without bound, and **two members are the whole of it** (an ordering
   and its transpose; members 3–8 add exactly nothing, because a
   lattice edge is horizontal or vertical). So the ranking **inverts**:
@@ -1251,11 +1254,13 @@ measure rather than hide.
   holding all of it, which is exactly the case the election exists to
   avoid.
   Stated as *not* shown: the election is a per-migration minimum, not
-  per-region freedom, so on a run the overlay does not beat the best
-  single family on peak width — only on padding and total memory. In
-  particular the row-major family's `(s+1)/2` placement advantage does
-  **not** survive into a run: it demands the same 32-site region the
-  single ordering does.
+  per-region freedom, and on every run measured the overlay's gains
+  were in padding and total memory rather than peak width. The
+  mechanism suggests why — a committed region constrains the next
+  migration — but nothing here establishes that it *cannot* win on
+  peak width elsewhere. Likewise the row-major family's `(s+1)/2`
+  placement advantage did not survive into either run tried: it
+  demanded the same 32-site region the single ordering did.
   The module also carries the census bridge:
   `PolarSpace::generators() × 2^n` gives the **stabilizer-state counts**
   6, 60, 1080, 36,720 — reached here by counting maximal isotropic
@@ -1264,6 +1269,88 @@ measure rather than hide.
   (Both sides compute `|Sp|` *from* its closed form rather than by
   enumerating the group, so that last check is near-tautological, and
   the test says so.)
+
+### The address algebra: canonical forms that compose
+
+[`address`](src/address.rs) closes the path sum's memo under
+composition. The merge solver already memoizes on a canonical residual
+form, but its memo has the type `CanonKey → C64`: an address maps to a
+**value**, so nothing can be done with one except decode it, and it is
+rebuilt from empty on every query. Three constructors —
+
+```text
+Zero
+Product { scale, parts: [Addr] }     ω^turn · √2^half · ∏ parts
+Branch  { zero: Addr, one: Addr }    the sum of the two children
+```
+
+— are the solver's own three moves (rules closing a residual, the
+interaction graph factoring, branching a variable) written as algebra
+instead of as control flow. Addresses reference addresses; a value is a
+fold done once, or never.
+
+* **The scale stays a symbol.** A residual's prefactor always *was*
+  `ω^turn · √2^half` with an exact dyadic turn; the memo evaluated it to
+  a float immediately. Keeping it means nodes merge when they are the
+  same symbol, and `value_exact` evaluates the whole DAG in the
+  Clifford+T ring `D[ω]` with **no floating point anywhere** — so exact
+  zero is *decided*, not thresholded. Measured against the dense
+  backend, the merged route and `ExactState`: worst deviation 5.7e-16.
+* **A Clifford amplitude is one symbol at every width.** GHZ at n = 4,
+  8, 12, 16 all reach the **same address** — `Product { scale: √2^-1,
+  parts: [] }`, a closed leaf, because `h* = 0` means there is nothing
+  to sum. The whole space holds one node. Equal addresses are equal
+  amplitudes, decided by identity with no arithmetic on either side.
+* **The space outlives the query**, which is the move the memo cannot
+  make. One space answering 64 basis amplitudes against a fresh space
+  per query:
+
+  | circuit | shared | isolated | reuse | 1st query | last |
+  |---|---|---|---|---|---|
+  | grid 3×3 L=1 | 260 | 1672 | 6.43× | 25 | 3 |
+  | grid 3×3 L=2 | 1392 | 15104 | **10.85×** | 215 | 7 |
+  | grid 4×4 L=1 | 824 | 5072 | 6.16× | 59 | 3 |
+
+  The last column is the point: the 64th amplitude costs single-digit
+  composition calls because nearly every form it needs is already
+  addressed. That is Gosper's hashlife move — step at the level of
+  canonical node ids rather than of cells — carried onto the phase
+  polynomial.
+
+**The rewrites, and what bounds them.** Four act on addresses before
+anything is evaluated: `0 + x = x`; `a + a = 2a`; `s·P + t·P = 0` when
+the scales cancel — destructive interference decided *without knowing
+what `P` is*; and the common factor `s·CP + t·CQ = C·(s·P + t·Q)`. Plus
+product absorption, since scales form a group. Measured, they are worth
+little, and the useful part is the instrument that says why:
+
+| circuit | absorb only | +factor | sums | same | common | disjoint |
+|---|---|---|---|---|---|---|
+| grid 3×3 L=1 | 273 addr / 273 eval | 337 / 237 | 97 | 14 | 2 | 81 |
+| grid 3×3 L=2 | 1818 / 1818 | 2930 / 1772 | 660 | 2 | 0 | 658 |
+| grid 4×4 L=1 | 1084 / 1084 | 1592 / 905 | 380 | 2 | 60 | 318 |
+
+Common-factor extraction is a **trade, not a win** — it replaces one
+`Sum` with four — so it is off by default. Absorption alone changes
+nothing, because a `Product`'s parts are component sums and there is no
+nested product until another rewrite makes one. `sum_census` is the
+ceiling: 82–99% of sums have **disjoint** factor sets that no factoring
+rewrite can reach.
+
+`a + a = 2a` and the scale cancellation have **not been observed
+firing** — not on 40,000 random circuits, which is close to the wrong
+instrument (cancellation is a structural coincidence and random
+sampling destroys structure), nor on the structured families where it
+should live: mirror circuits, symmetric graph states, repeated blocks.
+Those show where it went instead — a mirror circuit reduces to `h* = 0`
+and **two** addresses, so `reduce` took all the interference before this
+level existed. Evidence for where to look, not a proof it cannot fire.
+
+On cost, the checkable claim: for **one** query the address route
+performs exactly one composition per merge-solver node — the same
+recursion under the same pivot — so the per-query cost *is* the merge
+solver's and everything here is reuse between queries. Whether the
+growth law across a circuit family changes is **not measured**.
 
 ## Quick start
 

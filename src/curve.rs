@@ -158,10 +158,11 @@
 //!        256          64 / 48.0           32 / 32.0
 //! ```
 //!
-//! Hilbert is better at **every** block size, by up to 3.1× on the
-//! mean, and never worse — the opposite verdict from the chain
-//! measurements, on the same three orderings. The reason is the whole
-//! point: row-major's contiguous blocks are elongated strips (a
+//! Hilbert is better at **every block size measured**, by up to 3.1× on
+//! the mean, and worse at none of them — measured at sides 16 and 32,
+//! which is the sample and not a proof. That is the opposite verdict
+//! from the chain measurements, on the same three orderings. The
+//! mechanism is the whole point: row-major's contiguous blocks are elongated strips (a
 //! `side`-sized block is one entire row, boundary `2·side`), while the
 //! rotor makes Hilbert's blocks **compact regions**.
 //!

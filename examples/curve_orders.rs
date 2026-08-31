@@ -130,10 +130,11 @@ fn main() -> quantsim::Result<()> {
         "  total sits at the DEEPEST cuts. Separators shrink per node; node count",
         "  grows faster.",
         "",
-        "  Not shown here, and worth separating from what is: whether an OVERLAY of",
-        "  several distinct rotor assignments, used together as independent addressing",
-        "  bits rather than one at a time, improves on plain recursive bisection. That",
-        "  is a stronger claim than anything measured above and it stays open.",
+        "  What an OVERLAY of several rotor assignments buys, used together rather",
+        "  than one at a time, is section 6 below; what it buys a register that has",
+        "  to HOLD the state is `cargo run --example overlay_register`. Still not",
+        "  shown, and worth separating from what is: whether an overlay improves on",
+        "  plain recursive bisection, which is a different comparison from either.",
     ] {
         println!("{line}");
     }

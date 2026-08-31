@@ -1261,9 +1261,9 @@ block size    RowMajor max/mean    Hilbert max/mean
        256          64 / 48.0           32 / 32.0
 ```
 
-Hilbert is better at **every** block size and never worse — the
-opposite verdict from the chain measurements, on the same three
-orderings. The mechanism is isolated in the tests: a row-major block
+Hilbert is better at **every block size measured** and worse at none —
+at sides 16 and 32, which is the sample and not a proof; the opposite
+verdict from the chain measurements, on the same three orderings. The mechanism is isolated in the tests: a row-major block
 of `side` positions **is** one entire row, so its boundary is exactly
 `2·side`, while the rotor makes the curve's blocks compact regions.
 So the rotor is precisely what makes a *linear* index's contiguous
@@ -2270,6 +2270,146 @@ holding a state. Remaining work:
   `memory_bytes` over-reports for `N < 4`. A macro-generated family of
   exactly-sized types would fix it; `SplitQuaternion` is the
   exactly-sized `N = 2` case in the meantime.
+
+## The address algebra (canonical forms that compose) — SHIPPED (core)
+
+`pathsum`'s merge solver memoizes on a canonical residual form, and that
+is already worth an order: `(HT)^128 H` resolves in 63 nodes because the
+two halves of the cut residual are the same polynomial up to renaming.
+But the memo's type is `CanonKey → C64`. An address maps to a **value**,
+so nothing can be done with an address except decode it, and the map is
+scoped to one call — a memo table, not an algebra.
+
+`address::AddressSpace` closes it under composition:
+
+```text
+Zero
+Product { scale, parts: [Addr] }     ω^turn · √2^half · ∏ parts
+Branch  { zero: Addr, one: Addr }    the sum of the two children
+```
+
+Those are the solver's three moves — the rewrite rules closing a
+residual, the interaction graph factoring into independent components,
+branching one variable — as constructors rather than control flow.
+Addresses reference addresses, so the space is closed; a value is a fold
+over the DAG performed once, or never.
+
+**The scale is exact.** A residual's prefactor always was
+`ω^turn · √2^half`, `turn` an exact dyadic angle; `split_residual`
+evaluated it to a `C64` immediately. `Scale` keeps it, so two nodes
+merge when they are the same *symbol* rather than when two floats agree,
+and `value_exact` folds the whole DAG in `D[ω]` — the Clifford+T ring
+`exact` already works in — with no floating point anywhere. Exact zero
+is therefore **decided**, not tested against a tolerance. Verified
+against the dense backend, `amplitude_merged` and `ExactState` at worst
+5.7e-16.
+
+**A Clifford amplitude is one symbol at every width.** GHZ at n = 4, 8,
+12, 16 all reach the *same address*: `Product { scale: √2^-1, parts: [] }`,
+a closed leaf, because `h* = 0` means there is nothing left to sum. The
+space holds one node for all four. Equal addresses are equal amplitudes,
+decided by identity.
+
+**The space outlives the query.** One space answering 64 basis
+amplitudes, against a fresh space per query (which is what the memo
+does):
+
+```
+circuit         queries   shared   isolated    reuse   1st query   last
+grid 2x2 L=2         16      102        336    3.29x          21      7
+grid 3x3 L=1         64      260       1672    6.43x          25      3
+grid 3x3 L=2         64     1392      15104   10.85x         215      7
+grid 4x4 L=1         64      824       5072    6.16x          59      3
+```
+
+The last column is the result: the 64th amplitude of a 3×3 grid costs
+single-digit composition calls, because nearly every canonical form it
+needs is already addressed. This is Gosper's hashlife move — step at the
+level of canonical node ids rather than of cells — carried onto the
+phase polynomial, and it is sound for the same reason the memo is: a
+component's sum depends only on its polynomial up to renaming, so it
+does not matter which query first built it.
+
+**Rewrites on addresses — SHIPPED, and measured to be worth little.**
+Four act before anything is evaluated: `0 + x = x`; `a + a = 2a`;
+`s·P + t·P = 0` when the scales cancel, which decides destructive
+interference *without knowing what `P` is*; and the common factor
+`s·CP + t·CQ = C·(s·P + t·Q)`. Plus product absorption, since scales
+form a group under `Scale::times`. What they buy, over 64 queries:
+
+```
+circuit         absorb only        absorb+factor      sum census (rewrites off)
+                 addr    eval       addr    eval      sums  same  common  disj
+grid 2x2 L=2      125     125        182     113        43     0       9    34
+grid 3x3 L=1      273     273        337     237        97    14       2    81
+grid 3x3 L=2     1818    1818       2930    1772       660     2       0   658
+grid 4x4 L=1     1084    1084       1592     905       380     2      60   318
+```
+
+* Common-factor extraction is a **trade**: it replaces one `Sum` node
+  with four, costing 1.5–1.6× the addresses to save 3–17% of the
+  evaluations. Off by default; `set_factoring` turns it on.
+* Product absorption **never fires on its own** — a `Product`'s parts
+  are component sums, so a nested product only exists once another
+  rewrite has made one.
+* `a + a = 2a` and the scale cancellation have **not been observed
+  firing**. Not on 40,000 random Clifford+T circuits — and random
+  circuits are close to the wrong instrument here, since cancellation is
+  a structural coincidence and random sampling destroys exactly the
+  cross-correlated structure that would produce one — nor on the
+  structured families where it should live: mirror circuits (`C` then
+  `C†`), symmetric graph states on cycles and complete graphs, repeated
+  identical blocks. What those measure instead is **where the
+  cancellation went**: a mirror circuit reduces to `h* = 0` and *two*
+  addresses, so `PathSum::reduce` has taken all of the interference
+  before the address level exists. That is evidence about where to look
+  and not a proof that the rewrites cannot fire.
+
+Which reframes what the cancellation rewrite is for. `h*` is what
+survives the reducer, and the reducer's job *is* to consume
+interference — so a cancellation at the address level would be
+interference the rewrite rules **missed**. `AddressStats::cancelled` is
+therefore an **incompleteness detector for `PathSum::reduce`** rather
+than an optimization counter, and it reads zero on everything run so
+far, structured and random alike: evidence that the rules are complete
+on what has been tried, and a standing check that costs three lines.
+
+`AddressSpace::sum_census` is the instrument and is the more useful
+deliverable than the rewrites themselves: it bounds what *any*
+sum-rewrite could reach on a given circuit by classifying every sum's
+operands. On these grids 82–99% of sums have **disjoint** factor sets,
+out of reach of any factoring rewrite, and the `same_parts` row — the
+ceiling for a rewrite that combines coefficients over a shared factor
+set — is 0.3–14%.
+
+**Cost, stated checkably.** A *single* query performs exactly one
+composition per merge-solver node — measured equal on every basis state
+of every circuit in `tests/address.rs`, which is what one expects since
+it is the same recursion under the same pivot. So the per-query cost is
+the merge solver's and everything this module adds is reuse *between*
+queries. Whether the growth law across a circuit family changes is **not
+measured here** and is not claimed either way. And `x · 0 = 0` has not
+been observed firing on any circuit tried, which is an observation with
+a sample attached rather than a claim that it cannot.
+
+`0 + x = x` **does** fire: a branch child can reduce to the zero
+polynomial, and `tests/address.rs` carries the shortest witness a
+60,000-circuit search found — eleven gates. An earlier draft of this
+section asserted a *mechanism* for why it could not happen, from a
+smaller search that found none; the wider search refuted that.
+
+Reuse is not confined to one circuit, and that is worth stating
+separately because it is the sharper claim: the GHZ test addresses
+**four different circuits** at four widths into one space and gets one
+node. A canonical form's sum depends only on the polynomial, so it does
+not matter which circuit — let alone which query — first built it.
+
+**Next rungs.** Operating *on* addresses rather than through them: a
+rewrite recognizing `Branch{a, a} = 2a` and common factors across a
+`Product` without evaluating either side; serializing a space so it
+persists across processes rather than across queries; and using the
+address as the key for the `overlay` register's regions, so the layout
+and the residual share one content-addressed store.
 
 ## Braided boundary encoding — SHIPPED (core)
 
