@@ -202,12 +202,12 @@ fn the_constructors_form_an_algebra_over_addresses() {
         "order is not part of the symbol"
     );
 
-    // The zero identities, exercised directly (they do not arise from
-    // real circuits — see the module docs).
+    // The zero identities, exercised directly.
     assert!(AddressSpace::same(sp.product(Scale::ONE, vec![one, z]), z));
     assert!(AddressSpace::same(sp.sum(z, half), half));
     assert!(AddressSpace::same(sp.sum(half, z), half));
-    assert!(sp.stats().folds >= 3);
+    assert_eq!(sp.stats().zero_products, 1);
+    assert_eq!(sp.stats().zero_sums, 2);
 
     // A branch is a sum, and it evaluates as one.
     let s = sp.sum(half, half);
@@ -284,4 +284,63 @@ fn a_structurally_zero_output_costs_no_composition_at_all() {
     assert!(sp.is_zero(a).unwrap());
     let b = sp.address(&ps, 0b01, 1000).unwrap();
     assert!(!sp.is_zero(b).unwrap());
+}
+
+#[test]
+fn a_branch_child_can_vanish_and_the_sum_identity_fires() {
+    // The module previously claimed the reduction consumed the
+    // vanishing pattern before any branch could produce it as a child.
+    // It does not. This eleven-gate circuit is the shortest witness a
+    // 60,000-circuit search found, and it is here so the claim cannot
+    // quietly come back.
+    let mut c: Circuit<C64> = Circuit::new(2);
+    c.h(0);
+    c.t(0);
+    c.h(0);
+    c.h(1);
+    c.cz(0, 1);
+    c.h(0);
+    c.h(1);
+    c.s(1);
+    c.t(0);
+    c.h(1);
+    c.h(0);
+    let ps = PathSum::from_circuit(&c).unwrap();
+    let mut sp = AddressSpace::new();
+    for b in 0..4u64 {
+        sp.address(&ps, b, 100_000).unwrap();
+    }
+    assert_eq!(sp.stats().zero_sums, 2, "0 + x = x fired on a real circuit");
+    assert_eq!(sp.stats().zero_products, 0, "x · 0 did not");
+
+    // And it is still the right answer.
+    let sim: Simulator = Simulator::new();
+    let dense = sim.run(&c).unwrap();
+    for b in 0..4u64 {
+        let a = sp.address(&ps, b, 100_000).unwrap();
+        assert!((sp.value(a).unwrap() - dense.amplitude(b)).abs_sqr() < 1e-24);
+    }
+}
+
+#[test]
+fn one_query_costs_exactly_what_the_merge_solver_costs() {
+    // The checkable form of "the cost is unchanged": the address route
+    // is the same recursion under the same pivot, so a single query
+    // performs one composition per merge-solver node. Everything the
+    // module adds is reuse *between* queries, not within one.
+    for c in [grid(2, 2), grid(3, 1), grid(3, 2), grid(4, 1)] {
+        let ps = PathSum::from_circuit(&c).unwrap();
+        let n = c.num_qubits().min(6);
+        for b in 0..(1u64 << n) {
+            let mut sp = AddressSpace::new();
+            sp.address(&ps, b, 5_000_000).unwrap();
+            let (_, st) = ps.amplitude_merged(b, 5_000_000).unwrap();
+            assert_eq!(
+                sp.stats().builds,
+                st.nodes,
+                "one query, one composition per node ({} qubits, basis {b})",
+                c.num_qubits()
+            );
+        }
+    }
 }

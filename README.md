@@ -1159,7 +1159,8 @@ measure rather than hide.
   | 64 | 64 / 60.0 | **32 / 24.0** |
   | 256 | 64 / 48.0 | **32 / 32.0** |
 
-  Hilbert is better at **every** block size and never worse — the
+  Hilbert is better at **every block size measured** and worse at none
+  — at sides 16 and 32, which is the sample and not a proof; the
   opposite verdict, on the same three orderings. The mechanism: a
   row-major block of `side` positions *is* one entire row, boundary
   `2·side`, while the rotor makes the curve's blocks compact regions.
@@ -1218,9 +1219,11 @@ measure rather than hide.
   | the Hilbert `D₄` family | `2s²(s−1)` |
 
   The **Hilbert family saves exactly one third**, at every size, and
-  never more — and where several of its rotors tie at the minimal
-  level they name the *same block*, measured, every time: the tie is a
-  labelling, not a choice. The **row-major family saves `(s+1)/2`**,
+  the two closed forms differ by exactly `3/2`, and both are verified
+  at every power-of-two side from 4 to 64. Where several of its rotors
+  tie at the minimal level they name the *same block* — checked
+  exhaustively over every site pair at sides 4, 8 and 16, so at those
+  sizes the tie is a labelling and not a choice. The **row-major family saves `(s+1)/2`**,
   without bound, and **two members are the whole of it** (an ordering
   and its transpose; members 3–8 add exactly nothing, because a
   lattice edge is horizontal or vertical). So the ranking **inverts**:
@@ -1251,11 +1254,13 @@ measure rather than hide.
   holding all of it, which is exactly the case the election exists to
   avoid.
   Stated as *not* shown: the election is a per-migration minimum, not
-  per-region freedom, so on a run the overlay does not beat the best
-  single family on peak width — only on padding and total memory. In
-  particular the row-major family's `(s+1)/2` placement advantage does
-  **not** survive into a run: it demands the same 32-site region the
-  single ordering does.
+  per-region freedom, and on every run measured the overlay's gains
+  were in padding and total memory rather than peak width. The
+  mechanism suggests why — a committed region constrains the next
+  migration — but nothing here establishes that it *cannot* win on
+  peak width elsewhere. Likewise the row-major family's `(s+1)/2`
+  placement advantage did not survive into either run tried: it
+  demanded the same 32-site region the single ordering did.
   The module also carries the census bridge:
   `PolarSpace::generators() × 2^n` gives the **stabilizer-state counts**
   6, 60, 1080, 36,720 — reached here by counting maximal isotropic
@@ -1312,12 +1317,19 @@ fold done once, or never.
   canonical node ids rather than of cells — carried onto the phase
   polynomial.
 
-Stated as *not* claimed: the growth law is unchanged, still a property
-of the circuit's coupling graph, and dense 2D coupling still does not
-merge. And the zero identities (`x·0`, `0+x`) are implemented and have
-**never fired** — 0 of 4000 random Clifford+T circuits — because the
-reduction consumes the vanishing pattern before a branch can hand it
-back; reported rather than advertised.
+Measured versus merely not-yet-observed, kept apart. On cost the
+checkable claim is that for **one** query the address route performs
+exactly as many compositions as the merge solver performs nodes — the
+same recursion under the same pivot — so the per-query cost *is* the
+merge solver's and everything here is reuse between queries; whether
+the growth law across a circuit family changes is **not measured**.
+`0 + x = x` **fires** (a branch child can vanish; the shortest witness
+found is eleven gates and is a test), which refutes a mechanism this
+module previously asserted after a smaller search found none — it is
+rare, 10 of 60,000 random Clifford+T circuits, and nothing bounds that
+rate. `x · 0 = 0` has **not been observed** firing in those 60,000,
+which is an observation with a sample attached and not a claim that it
+cannot.
 
 ## Quick start
 

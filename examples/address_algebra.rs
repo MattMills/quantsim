@@ -163,21 +163,27 @@ fn main() -> Result<()> {
         println!("{line}");
     }
 
-    rule("4. what this does not claim");
+    rule("4. measured, versus merely not yet observed");
     let s = Scale {
         turn: 1 << 58,
         half: 0,
     };
     for line in [
-        "  The growth law is unchanged: it is still a property of the circuit's",
-        "  coupling graph, and dense 2D coupling still does not merge. What changed is",
-        "  that the cost amortizes across queries and that structural questions --",
-        "  equality, exact zero -- are answerable without arithmetic.",
+        "  On cost, the checkable claim: for ONE query the address route performs",
+        "  exactly as many compositions as the merge solver performs nodes -- the same",
+        "  recursion under the same pivot -- so the per-query cost IS the merge",
+        "  solver's, and everything here is reuse between queries. Whether the growth",
+        "  law across a circuit family changes is not measured, and not claimed.",
         "",
-        "  The zero identities (x.0 = 0, 0 + x = x) are implemented and have NEVER",
-        "  fired: 0 out of 4000 random Clifford+T circuits at 3-4 qubits. The",
-        "  reduction consumes the pattern that makes a residual vanish before any",
-        "  branch can hand it back as a child. Reported, not advertised.",
+        "  0 + x = x FIRES. A branch child can reduce to the zero polynomial; the",
+        "  shortest witness a 60,000-circuit search found is eleven gates, and it is a",
+        "  test. It is rare -- 10 of 60,000 random Clifford+T circuits at 2-4 qubits --",
+        "  and an earlier smaller search finding none led this module to assert a",
+        "  MECHANISM for why it could not happen. The wider search refuted that. The",
+        "  rate is one sample; nothing here bounds it.",
+        "",
+        "  x . 0 = 0 has NOT been observed firing in any of those 60,000 circuits.",
+        "  That is an observation with a sample attached, not a claim that it cannot.",
         "",
         "  The symbol is exact for any dyadic turn; exact EVALUATION is the eighth-turn",
         "  fragment, and anything else is refused by name rather than rounded:",

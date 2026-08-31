@@ -1261,9 +1261,9 @@ block size    RowMajor max/mean    Hilbert max/mean
        256          64 / 48.0           32 / 32.0
 ```
 
-Hilbert is better at **every** block size and never worse — the
-opposite verdict from the chain measurements, on the same three
-orderings. The mechanism is isolated in the tests: a row-major block
+Hilbert is better at **every block size measured** and worse at none —
+at sides 16 and 32, which is the sample and not a proof; the opposite
+verdict from the chain measurements, on the same three orderings. The mechanism is isolated in the tests: a row-major block
 of `side` positions **is** one entire row, so its boundary is exactly
 `2·side`, while the rotor makes the curve's blocks compact regions.
 So the rotor is precisely what makes a *linear* index's contiguous
@@ -2330,17 +2330,28 @@ phase polynomial, and it is sound for the same reason the memo is: a
 component's sum depends only on its polynomial up to renaming, so it
 does not matter which query first built it.
 
-**Stated as not claimed.** The growth law is unchanged — still a
-property of the coupling graph, and dense 2D coupling still does not
-merge. What changed is that cost amortizes across queries and that
-structural questions are answerable without arithmetic. The zero
-identities (`x·0 = 0`, `0 + x = x`) are implemented and correct and have
-**never fired**: 0 of 4000 random Clifford+T circuits at 3–4 qubits,
-because the reduction consumes the lone-half-turn pattern that makes a
-residual vanish before any branch can produce it as a child. They are
-kept because `0 + x = x` stops a dead branch splitting one node into
-two. And the symbol is exact for any dyadic turn while exact
-*evaluation* is the eighth-turn fragment, refused by name otherwise.
+**Measured, versus merely not yet observed** — kept apart, because an
+earlier draft of this section ran them together and asserted a mechanism
+that a wider search then refuted.
+
+* **Cost.** The checkable statement is that a *single* query performs
+  exactly one composition per merge-solver node — measured equal on
+  every basis state of every circuit in `tests/address.rs`, which is
+  what one expects since it is the same recursion under the same pivot.
+  So the per-query cost is the merge solver's and everything this module
+  adds is reuse *between* queries. Whether the growth law across a
+  circuit family changes is **not measured here** and is not claimed
+  either way.
+* **`0 + x = x` fires.** A branch child can reduce to the zero
+  polynomial. `tests/address.rs` carries the shortest witness a
+  60,000-circuit search found — eleven gates — so the refuted mechanism
+  cannot quietly return. The rate is 10 of 60,000 random Clifford+T
+  circuits at 2–4 qubits: one sample, with nothing here bounding it.
+* **`x · 0 = 0` has not been observed firing** in any of those 60,000.
+  An observation with a sample attached, not a claim that it cannot; the
+  constructor is reachable and the tests exercise it directly.
+* The symbol is exact for any dyadic turn; exact *evaluation* is the
+  eighth-turn fragment, refused by name otherwise.
 
 Reuse is not confined to one circuit, and that is worth stating
 separately because it is the sharper claim: the GHZ test addresses

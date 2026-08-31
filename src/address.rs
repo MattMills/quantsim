@@ -44,10 +44,10 @@
 //! * **The space outlives the query.** This is the one the memo could
 //!   not do. A `CanonKey → C64` map is scoped to one call of
 //!   `amplitude_merged`; an address space is content-addressed, so a
-//!   second amplitude of the same circuit reuses every form the first
-//!   one built. That is Gosper's hashlife move — time-step at the level
-//!   of canonical node ids rather than of cells — carried onto the
-//!   phase polynomial.
+//!   second amplitude reuses the forms the first one built — and not
+//!   only of the same circuit. That is Gosper's hashlife move —
+//!   time-step at the level of canonical node ids rather than of
+//!   cells — carried onto the phase polynomial.
 //!
 //! ## The measurement
 //!
@@ -66,19 +66,30 @@
 //! otherwise rather than rounding.
 //! [`value`](AddressSpace::value) always works and is float.
 //!
-//! The zero identities (`x · 0 = 0`, `0 + x = x`) are implemented and
-//! correct, and **have never fired**: over 4000 random Clifford+T
-//! circuits at 3–4 qubits, [`AddressStats::folds`] stayed at zero,
-//! because the reduction consumes the lone-half-turn pattern that makes
-//! a residual vanish before any branch can produce it as a child. They
-//! are kept because `0 + x = x` is what stops a dead branch from
-//! splitting one node into two, and reported here rather than
-//! advertised.
+//! ## Measured, versus merely not yet observed
 //!
-//! This changes what the solver *is*, not what it costs asymptotically:
-//! the growth law is still a property of the circuit's coupling graph.
-//! What it changes is that the cost is now amortized across queries and
-//! that structural questions are answerable without arithmetic.
+//! These are different and this module previously ran them together.
+//!
+//! * `0 + x = x` **fires**. A branch child can reduce to the zero
+//!   polynomial, and `tests/address.rs` carries an eleven-gate witness.
+//!   It is rare — 10 of 60,000 random Clifford+T circuits at 2–4
+//!   qubits. An earlier, smaller search found none and this module
+//!   asserted a *mechanism* for why it could not happen; the wider
+//!   search refutes that, and the rate above is a measurement over one
+//!   sample with no argument bounding it.
+//! * `x · 0 = 0` has **not been observed firing** in any of those
+//!   60,000 circuits. That is an observation with a sample attached and
+//!   not a claim that it cannot: the constructor is reachable and
+//!   `tests/address.rs` exercises it directly.
+//! * On cost, the checkable statement is this. For a **single** query
+//!   the address route performs exactly as many compositions as
+//!   [`amplitude_merged`](crate::pathsum::PathSum::amplitude_merged)
+//!   performs nodes — measured equal on every basis state of every
+//!   circuit in `tests/address.rs`, which is what one expects since it
+//!   is the same recursion under the same pivot. So the per-query cost
+//!   *is* the merge solver's, and everything this module adds is reuse
+//!   between queries. Whether the growth law across a circuit family
+//!   changes is **not measured here**, and is not claimed either way.
 
 use std::collections::HashMap;
 
@@ -204,10 +215,12 @@ pub struct AddressStats {
     pub form_hits: u64,
     /// Structural intern hits: a node built twice from the same parts.
     pub node_hits: u64,
-    /// Zero identities that fired on addresses without any evaluation
-    /// (`x · 0`, `0 + x`). Measured at **zero** on every circuit tried;
-    /// see the module docs.
-    pub folds: u64,
+    /// `x · 0 = 0` fired: a product collapsed because one factor was
+    /// the zero address, with no evaluation.
+    pub zero_products: u64,
+    /// `0 + x = x` fired: a branch had a vanishing child, so the node
+    /// is the surviving child rather than a new one.
+    pub zero_sums: u64,
     /// Deepest build nesting.
     pub max_depth: u32,
     /// Nodes whose value was actually computed.
@@ -300,7 +313,7 @@ impl AddressSpace {
     /// addresses, before anything is evaluated.
     pub fn product(&mut self, scale: Scale, mut parts: Vec<Addr>) -> Addr {
         if parts.iter().any(|&p| self.nodes[p.index()] == Node::Zero) {
-            self.stats.folds += 1;
+            self.stats.zero_products += 1;
             return self.zero();
         }
         parts.sort_unstable();
@@ -317,11 +330,11 @@ impl AddressSpace {
         match (z0, z1) {
             (true, true) => self.zero(),
             (true, false) => {
-                self.stats.folds += 1;
+                self.stats.zero_sums += 1;
                 one
             }
             (false, true) => {
-                self.stats.folds += 1;
+                self.stats.zero_sums += 1;
                 zero
             }
             (false, false) => self.intern(Node::Branch { zero, one }),
