@@ -222,3 +222,63 @@ fn the_grading_is_a_function_of_position_alone() {
     let deep = Position::algebras(&[O, O]).unwrap().nest(2).unwrap();
     assert_eq!(deep.bott().unwrap(), (185_556 % 8) as u8);
 }
+
+/// An independent implementation of the same dimension, written the
+/// other way round, as a free cross-check.
+///
+/// A sibling program computes the Freudenthal–Tits dimension as
+/// `2 + Σ Der + 4·e₁(t) + 2·e₂(t) + ∏ dim(Aᵢ)`, where this crate uses
+/// `3 + Σ Der + 5·e₁(t) + 3·e₂(t) + Σ_{k≥3} e_k(t)`. The two look
+/// different and are algebraically the same, because
+/// `∏(tᵢ + 1) = Σ_k e_k(t) = 1 + e₁ + e₂ + Σ_{k≥3} e_k` — so the
+/// product form absorbs exactly the `1`, one `e₁` and one `e₂` that
+/// separate the two constant/coefficient sets.
+///
+/// Pinning it here means either implementation drifting is caught, and
+/// it is the reason to keep the identity written down rather than
+/// rediscovered.
+#[test]
+fn the_sibling_product_form_is_the_same_dimension() {
+    fn elementary(t: &[u128], k: usize) -> u128 {
+        // e_k by the standard DP, so the check shares no code with the
+        // module it is checking. `e_k = 0` past the slot count.
+        if k > t.len() {
+            return 0;
+        }
+        let mut e = vec![0u128; t.len() + 1];
+        e[0] = 1;
+        for &ti in t {
+            for j in (1..=t.len()).rev() {
+                e[j] += e[j - 1] * ti;
+            }
+        }
+        e[k]
+    }
+    for slots in [
+        vec![O],
+        vec![C, O],
+        vec![H, O],
+        vec![O, O],
+        vec![R, H, O],
+        vec![O, O, O],
+        vec![O, O, O, O],
+        vec![H, O, O, C],
+        vec![O, O, O, O, O],
+    ] {
+        let p = Position::algebras(&slots).unwrap();
+        let t = p.interiors().unwrap();
+        let ders: u128 = slots.iter().map(|a| a.derivations()).sum();
+        let product: u128 = t.iter().map(|ti| ti + 1).product();
+        let sibling = 2 + ders + 4 * elementary(&t, 1) + 2 * elementary(&t, 2) + product;
+        assert_eq!(
+            p.dim().unwrap(),
+            sibling,
+            "{slots:?}: the two forms must agree"
+        );
+    }
+    // And the classical row is what both land on.
+    assert_eq!(Position::algebras(&[O]).unwrap().dim().unwrap(), 52);
+    assert_eq!(Position::algebras(&[C, O]).unwrap().dim().unwrap(), 78);
+    assert_eq!(Position::algebras(&[H, O]).unwrap().dim().unwrap(), 133);
+    assert_eq!(Position::algebras(&[O, O]).unwrap().dim().unwrap(), 248);
+}

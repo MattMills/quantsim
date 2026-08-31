@@ -940,6 +940,331 @@ measure rather than hide.
   irrational geometry enters only as a measured approximation with a
   reported error.
 
+- **Cross-lateral distributed registers**
+  ([`lateral`](src/lateral.rs)) — the logical network with the nodes on
+  different machines. Couple nodes only **transversally** (qubit `i` to
+  qubit `i`, the logical CX for a CSS code) and the Pauli frame
+  conjugates by `x_B ^= x_A`, `z_A ^= z_B` and a sign popcount: two
+  XORs of *aligned* bit-vectors, no term reaching a differently-indexed
+  qubit — pinned against gate-by-gate conjugation at **0 disagreements
+  in 200,000 random strings**, signs included. The syndrome is
+  𝔽₂-**linear** in the frame (`bits(p ⊕ q) = bits(p) ⊕ bits(q)`, every
+  pair, commuting or not), so a node that reads its own syndrome — an
+  ancilla-free deterministic read — can name the syndrome of the delta
+  that did *not* arrive. So the wire carries nothing but 𝔽₂: **27
+  bytes** per node per tick, independent of `2^n`. Measured on two toric
+  nodes, the distributed frame equals the gate-by-gate one and its
+  signature equals the syndromes a dense register actually shows, bit
+  for bit — 54 B across the wire against 1 MiB of amplitude.
+  **And that makes a dropped packet a Pauli fault**: both are an
+  unknown vector in 𝔽₂ recovered from `H·e = s`, except the network
+  knows *where* its loss happened and the physics does not. Known
+  locations turn error decoding into **erasure** decoding, worth
+  exactly a factor of two — measured off the code's own generators, not
+  read off a distance: erasure capacity `d − 1` against
+  `⌊(d−1)/2⌋` (toric L=2 **1** vs 0, L=3 **2** vs 1, surface d=3 **2**
+  vs 1, d=5 **4** vs 2), with the weight-`d` logical that ends it
+  produced as a witness. At L = 2 the same weight-1 fault that
+  [`retro::Decoder`](src/retro.rs) refuses by name is recovered
+  exactly as an erasure. `DelayGeometry` measures the network's real
+  metric (6 of 12 ordered pairs violate the triangle inequality on the
+  example fabric; tightening drops the diameter 11 → 8) and its
+  temporal diameter is the horizon floor; `Barrier` seals on **actual
+  arrivals** — clean, repaired, or degraded naming the peers — never on
+  the prediction that set `H`. And `DualLayer` crosses the **fine**
+  layer (the stabilizer code, per node, across ticks, at *zero
+  bandwidth*) against the **coarse** one (a Cauchy/GF(256) MDS code per
+  tick, across nodes): on a pattern where coarse alone leaves 3 slots
+  dark and fine alone leaves 4, the two crossed close all 24
+  byte-exactly in 2 rounds — and the layer that finishes it is the code
+  that was already protecting the qubits. Honest scope: the vocabulary
+  is Clifford, and the loss and delays are injected rather than
+  measured off a socket. This module distributes the **control plane**;
+  sharding the register itself is [`stitch`](src/stitch.rs), below.
+
+- **Sharding a register by its own symplectic form**
+  ([`stitch`](src/stitch.rs)) — the phase-free Pauli group is an 𝔽₂
+  space under an *alternating* form, so it has a symplectic normal
+  form: `radical ⊥ H₁ ⊥ … ⊥ H_h`. The radical is isotropic — an
+  abelian subgroup, which is to say a **stabilizer** — and each `Hᵢ` is
+  a hyperbolic pair `(eᵢ, fᵢ)` that anticommutes. Two consequences,
+  and together they are a sharding rule. **The radical carves**: `r`
+  commuting directions cut the `2ⁿ` module to `2^{n−r}`. **The pairs
+  cannot**, and that is exactly why they *partition*: `eᵢ` and `fᵢ`
+  anticommute, so no abelian subgroup — and therefore no node — holds
+  both, each pair forces a binary choice, and the `2^h` resulting
+  maximal isotropic extensions have regions meeting in zero. Their sum
+  is direct: `2^h · 2^{n−r−h} = 2^{n−r}`, exact.
+  `orthogonalize` reads `r` and `h` **off the code's own generators**
+  in `O(rank²·n)` with no `2ⁿ` anywhere — toric L=2 → `(r, h) = (6, 2)`,
+  L=3 → `(16, 2)`, surface d=3 → `(8, 1)`, d=5 → `(24, 1)`: the radical
+  *is* the stabilizer group and the pairs *are* the logical qubits,
+  found rather than told. And the direct sum is checked on
+  **amplitudes**, not on dimensions: the four toric slices are prepared
+  as actual states, shown to lie in the code space, shown to be a frame
+  rather than an orthogonal basis (Gram 1, 1/√2, 1/2 — the tensor of
+  `|0⟩/|+⟩` per axis), and a random code state projected out of a random
+  vector reassembles from them to < 1e-9.
+  **Where the exponential goes** is the point. Per node: one tableau,
+  polynomial in `n`, *not mentioning the node count* — 1024 nodes and
+  32 nodes on the same register differ by 40 bytes each. Network total:
+  `2^h · O(n²)`, exponential in the **logical** count, not the register
+  width, because the code already pulled the exponent from `n` down to
+  `k = n − r`. At `n = 30, r = 20, h = 10`: 1024 nodes × 256 B = 262 kB
+  against 17.2 GB monolithic. The price, stated: each node carries a
+  whole tableau to hold one coefficient, `O(n²)` bytes where a bare
+  `2^k` amplitude vector holds 16 — bought in exchange for a per-node
+  object that is polynomial, closed under Clifford evolution with no
+  communication, and independent of every other node. And `h` is
+  **hidden in the dimension**: two stitches of region dimension 1024
+  can be 8 slices or 128, so the object's size says nothing about how
+  many pieces it is in.
+
+- **The residual as a mosaic** ([`pathsum`](src/pathsum.rs)) —
+  [`PathSum`](src/pathsum.rs) holds a circuit's closed form and reduces
+  it to `h*`, its irreducible path content, which is **zero for every
+  Clifford circuit at any width** and grows with the T-count rather
+  than the register. Readout then paid `2^{h*}` by enumeration.
+  `amplitude_merged` declines that too, treating the residual the way
+  [`MosaicState`](src/backend/mosaic.rs) treats a register — as a
+  partition with a lens per part: **factor** (a disconnected
+  interaction graph makes the sum a product), **merge** (two
+  components that are the same polynomial up to renaming have the same
+  sum, so the second costs a lookup — `distinct_forms` is what the
+  route pays in place of `2^{h*}`), and **branch-and-reduce** (pin one
+  variable and run the rewrite rules again; a residual that stalls
+  frequently *unstalls* once one variable is fixed). Same number as
+  `amplitude` — asserted, not approximated, at 1e-16 over 200 random
+  circuits × every amplitude × every policy.
+  What that measures: **thin magic is logarithmic**, `(HT)^k H` has
+  `h* = k` and costs 19/29/39/51/**63** nodes at k = 8/16/32/64/**128**
+  — `2^128` by enumeration. **Width alone is free**: at the same qubit
+  count, T-count and depth, the 1D twin stays linear to 36 qubits and
+  t = 72 while the 2D grid pulls away, ratio 1.0 → 19.0 as the side
+  grows — the obstruction is *separator growth in the coupling graph*,
+  not register size. And the surviving exponential is in **√t, not t**:
+  on the square family (n qubits, n layers, `t = n²`), `log2(nodes)/n`
+  settles at ~1.5 across n = 3..10, so 31,513 nodes stand against
+  `2^90 ≈ 1.2e27`. A strict reduction of the growth law, and still a
+  growth law — stated as such.
+  The branching choice is an **election, measured**: connectivity is
+  the whole game on a chain and *flat* on a shallow grid (removing any
+  one variable disconnects nothing), degree is the reverse, and each
+  single signal is 2–45× worse than the other somewhere. Composing
+  them wins in every regime — the mosaic register's finding on a
+  different axis, that the right lens is a property of the part rather
+  than of the solver. Every policy returns the same amplitude; the
+  budget refuses **by name** rather than quietly enumerating.
+
+- **Geometric qudits** ([`volqudit`](src/volqudit.rs)) — a qudit is
+  normally a declaration (`d` levels, a label space `ℂ^d` with no
+  geometry inside it). This derives one instead, from a single ambient
+  object: [`stitch::Volume`](src/stitch.rs), the phase-free Pauli group
+  as an 𝔽₂ space under its symplectic form. Put an **isotropic flat**
+  `V` into it — a constraint, an obstruction — and three things follow
+  at once. `V` is the qudit's **position**, `O(r·n)` bits and movable;
+  `V^⊥` is the **bounded boundary** it induces, rank `2n − r`, always
+  containing `V`; and `V^⊥/V` carries a non-degenerate form of rank
+  `2h` with `h = n − r`, so `levels = 2^h` — read off the geometry,
+  never declared. Measured against every code in the crate: toric L=2
+  and L=3 → `h = 2`, surface d=3 and d=5 → `h = 1`, boundary rank
+  `2n − r` in every case, and the conjugate pairs come back from
+  [`orthogonalize`](src/stitch.rs) with the radical *being* the frame.
+  A non-isotropic frame is refused by name — it carves nothing and
+  bounds nothing.
+  **The admissible algebra is small because the geometry says so**, not
+  because it was chosen: naming an admissible operation costs `2h`
+  *bits*, naming a general element of `End` on the same level space
+  costs `4^h` *complex numbers* — 16 bits against 65,536 amplitudes for
+  the same 256-level qudit.
+  **Motion and holonomy.** A Clifford is a symplectic map, so
+  `transport` moves the frame while the signature stays fixed —
+  covariance, asserted. A transport that returns the frame is a
+  **loop**, and what the frame bounds need not come back with it:
+  `holonomy` reports the induced action on `V^⊥/V`, `curvature` is
+  `H(γ) − I`, and `holonomy_search` *finds* the non-flat loops by
+  enumeration rather than construction — on a free qubit it recovers
+  the whole of `SL(2,𝔽₂) ≅ S₃`, orders 2 and 3, from motion alone. An
+  open path's holonomy is refused, not approximated.
+  **Frame-in-frame** (`nest`): a qudit whose ambient *is* another
+  qudit's level space, with the inner frame priced in `O(h)` rather
+  than `O(n)` because the outer geometry already paid. **Promotion**
+  exposes only the interface, and two structurally different frames
+  with equal signatures promote to the same atom.
+  **And the interior**: split the ambient into slots and the face map
+  `d_i` asks the *coset* — is there any representative missing slot
+  `i`? — so the answer does not depend on how the basis was spelled.
+  Independent qudits side by side have interior rank **0** (the
+  control: every logical class sits on one slot). The GHZ frame keeps
+  exactly **1** dimension no face can see. A toric patch split in
+  halves keeps **2**. All of it is 𝔽₂ mask algebra: a 2^36-level qudit
+  on 40 qubits is 320 bits and 69 µs, and nothing anywhere materializes
+  `2^n`.
+
+- **Lattice onto chain: the orderings, the rotor, and a refutation**
+  ([`curve`](src/curve.rs)) — an MPS, a variable list and a qubit index
+  are all one-dimensional; a coupling fabric is not. The map between
+  them is an *ordering*, and it costs. Written to test the natural
+  expectation that a **locality-preserving space-filling curve** should
+  beat reading the rows. **It does not**, by exact laws pinned against
+  enumeration at every power-of-two side from 2 to 128:
+
+  | ordering | max dilation | cutwidth |
+  |---|---|---|
+  | RowMajor | `side` | `side + 1` |
+  | Snake | `2·side − 1` | `side + 1` |
+  | Hilbert | `(10·4^{k−1} − 1)/3` | `2·side − 2` |
+
+  Hilbert's cutwidth is **exactly twice** row-major's and its worst
+  dilation is `Θ(N)` against `Θ(√N)` — 126 vs 65 and 3,413 vs 64 at
+  side 64, with 21% more routing swaps. **The reason is a direction
+  error**: a space-filling curve preserves locality from *curve to
+  plane* (nearby indices → nearby points), which is what makes it right
+  for spatial indexing; a chain register needs the *opposite*, and the
+  Hilbert inverse has unbounded dilation. Half the expectation survived
+  — cutwidth is `Θ(side)` under **every** ordering, a property of the
+  grid — and the **snake** gets both halves: continuous like the curve,
+  and cutwidth, crossings and swaps identical to the rows.
+  **But that refutation is narrow, and the narrowness is the point.**
+  The Hilbert construction is not really an ordering: it is a **rotor
+  per cell applied recursively** — each quadrant entered under a
+  dihedral symmetry (`Rotor`, the eight elements of `D₄`; the Hilbert
+  rule is transpose / identity / identity / anti-transpose, two
+  reflections and two rotations). A linear index keeps only the order
+  the recursion visits cells in. Keep the recursion instead
+  (`Bisection`) and it beats **every** linear ordering:
+
+  | | law | growth |
+  |---|---|---|
+  | chain, best ordering | `side³ − side` | `Θ(N^{3/2})` |
+  | recursive bisection | `2·side² − 2·side` | `Θ(N)` |
+  | ratio | `(side + 1)/2` | `Θ(√N)` |
+
+  — 64.5× at side 128, unbounded. The **worst** cut is identical
+  (`side`, the grid's own bound), so the surviving half is confirmed
+  from the other side; the **total** differs by an order. A
+  representation paying per cut over a hierarchy
+  ([`MeraState`](src/backend/mera.rs), [`BulkState`](src/backend/bulk.rs))
+  pays the second row; one paying over a chain's cuts pays the first.
+  **So the curve was never the wrong idea — flattening it was.**
+  **And there is a tension the module resolves**: the bisection tree's
+  separators don't depend on the rotor at all, so what *is* the rotor
+  for? A balanced tree over a chain has the contiguous `2^k` blocks as
+  its subtrees, and a hierarchy's cost at a subtree is that block's
+  **boundary** (`block_boundary`). At side 32:
+
+  | block | RowMajor max/mean | Hilbert max/mean |
+  |---|---|---|
+  | 32 | 64 / 62.0 | **24 / 20.0** |
+  | 64 | 64 / 60.0 | **32 / 24.0** |
+  | 256 | 64 / 48.0 | **32 / 32.0** |
+
+  Hilbert is better at **every** block size and never worse — the
+  opposite verdict, on the same three orderings. The mechanism: a
+  row-major block of `side` positions *is* one entire row, boundary
+  `2·side`, while the rotor makes the curve's blocks compact regions.
+  **So the rotor is exactly what makes a linear index's contiguous
+  blocks coincide with the tree's spatial regions**, and both results
+  hold at once — worse as a chain layout, better as the leaf ordering
+  of a hierarchy.
+  Two things stated as *not* shown. The block result is combinatorial
+  and is the cost model [`MeraState`](src/backend/mera.rs) documents,
+  not a measurement of it: running the three orderings through
+  `MeraState` at a capped bond on a 4×4 grid did **not** reproduce the
+  advantage, and the comparison is confounded — relabelling the qubits
+  also reorders the gate stream, so the layout isn't isolated.
+  Recorded as an attempted measurement that didn't separate them.
+  **The overlay is measured** ([`Overlay`](src/curve.rs)): several
+  rotor assignments used together, counting lattice edges that *no*
+  member keeps inside a block. At side 32 the gain alternates —
+  **exactly 0%** at block sizes that are powers of four, **36–50%** at
+  the sizes between, and **100%** at the top. The zero half is a
+  theorem, not an observation: those blocks are quadrants and a global
+  rotor maps quadrants to quadrants, so every member induces the same
+  partition. The gain lives exactly where the rotor leaves a choice —
+  a quadrant split in two, and *which way* it splits. Two curves at
+  right angles keep **every** edge together at the top level, and the
+  second member buys more than the other six put together (2 → 4 adds
+  nothing at any level).
+  **And then the overlay becomes a register**
+  ([`overlay`](src/overlay.rs)): `OverlayRegister` holds amplitudes,
+  applies gates and agrees with the dense backend amplitude for
+  amplitude, under a single rule — *a region must be a contiguous run
+  of `2^k` chain positions under one of the overlay's members*. A gate
+  straddling two regions cannot take their union, because a set of
+  sites is not something a chain-addressed register can hold; it
+  **migrates** into the smallest member-block containing them, swallows
+  whatever that block cuts into, and pays the difference. So the layout
+  stops being advice: what a gate costs is a **width**, reported by
+  `projected` without allocating anything — one vertical lattice edge
+  on an 8×8 grid forces a 16-site block under row-major and a 2-site
+  block under the curve, on any machine.
+  The module owns **no capacity policy**. Whether a block fits is asked
+  of the [resource guard](src/guard.rs), which admits every merge
+  against the bytes *measured* available and reports both counts; the
+  only width bound in the module is structural (local basis indices are
+  `usize`). Measured across a 256× range of budgets, the demand a
+  layout puts on the register is the same number every time and only
+  the outcome changes — the cost is the layout's, the budget is the
+  machine's.
+  Summing the placement width over every lattice edge gives four exact
+  closed forms, verified at every power-of-two side from 4 to 64:
+
+  | overlay | summed placement width |
+  |---|---|
+  | one row-major (or snake) ordering | `s²(s+1)·log₂ s` |
+  | the row-major `D₄` family | `2s²·log₂ s = n·log₂ n` |
+  | one Hilbert ordering | `3s²(s−1)` |
+  | the Hilbert `D₄` family | `2s²(s−1)` |
+
+  The **Hilbert family saves exactly one third**, at every size, and
+  never more — and where several of its rotors tie at the minimal
+  level they name the *same block*, measured, every time: the tie is a
+  labelling, not a choice. The **row-major family saves `(s+1)/2`**,
+  without bound, and **two members are the whole of it** (an ordering
+  and its transpose; members 3–8 add exactly nothing, because a
+  lattice edge is horizontal or vertical). So the ranking **inverts**:
+  as one ordering the curve wins, as an overlay it loses. The
+  overlay's value is the *disagreement* between its members, and a
+  self-similar family agrees with itself.
+  Which is why the register mixes families
+  ([`Overlay::families`](src/curve.rs)). On a graph state that is
+  row-local on half the lattice and patch-local on the other — the
+  case no single family serves — the mixed overlay holds less than
+  either: at side 16, padding **120** against the Hilbert family's 168
+  and a single Hilbert ordering's 186; peak **8 396 800 B** against
+  8 454 144 and 12 615 680. The row-major family is not in that
+  comparison because it cannot be run: on a graph state over 4×4
+  patches it reaches a `cz` demanding a **32-site** region — 2³²
+  amplitudes, **68 719 476 736 bytes** — for a two-site gate, where the
+  curve runs the same circuit in **4 MiB**. A ratio between two
+  measured demands, not a verdict from a threshold. That is the mosaic
+  register's contract on the
+  layout axis — heterogeneous representations in one register, elected
+  per operation against a measured cost, every migration ledgered.
+  Padding is often *borrowed*, not spent: after each gate the register
+  tests every region for a rank-1 factorisation across its block's own
+  bipartition and hands the halves back, so a graph-state layer
+  applied twice returns all 64 sites to singletons and the peak
+  becomes history. What cannot come back is an entangled pair
+  straddling the block's cut — rank two, and the register is stuck
+  holding all of it, which is exactly the case the election exists to
+  avoid.
+  Stated as *not* shown: the election is a per-migration minimum, not
+  per-region freedom, so on a run the overlay does not beat the best
+  single family on peak width — only on padding and total memory. In
+  particular the row-major family's `(s+1)/2` placement advantage does
+  **not** survive into a run: it demands the same 32-site region the
+  single ordering does.
+  The module also carries the census bridge:
+  `PolarSpace::generators() × 2^n` gives the **stabilizer-state counts**
+  6, 60, 1080, 36,720 — reached here by counting maximal isotropic
+  flats, and independently by a sibling program's phase-space census —
+  and `v₂|Sp(2n,2)| = n²` exactly, second differences identically 2.
+  (Both sides compute `|Sp|` *from* its closed form rather than by
+  enumerating the group, so that last check is near-tautological, and
+  the test says so.)
+
 ## Quick start
 
 ```rust
@@ -1030,8 +1355,8 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 845 tests (88 unit + 750 across seventy
-integration suites + 7 doctests; one more — the 17 s measurement that
+`cargo test` runs 989 tests (88 unit + 893 across eighty-three
+integration suites + 8 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
@@ -1517,6 +1842,96 @@ entirely trivial accessors and defensive guards:
   closed form `Σ(√2)^j`; everything certified against the exact D[ω]
   ring and Ball containment, and the whole family swept through the
   benchmark harness over ten backends.
+- **pathsum_merge** — the residual-mosaic suite: the merged route
+  asserted equal to enumeration at 1e-16 over 200 random circuits ×
+  every amplitude × every branching policy; a Clifford circuit
+  reaching the solver as one leaf with nothing branched; the budget
+  refusing by name; thin magic logarithmic (`h* = 64` in under 100
+  nodes, where enumeration is 1.8e19); width asserted innocent and the
+  2D/1D gap asserted *widening*; the square family's `log2(nodes)/n`
+  asserted to settle rather than grow — the `√t` law, pinned as a
+  property of the circuit; and the election, with each single signal
+  asserted to lose to the other somewhere and the composed one
+  asserted to beat both everywhere.
+- **volqudit** — the geometric-qudit suite: `h` and the level count
+  derived off the centraliser and asserted against every code's known
+  logical count, with `V ⊆ V^⊥`, boundary rank `2n − r`, and each
+  conjugate pair asserted to anticommute with its partner and commute
+  with the whole frame; a non-isotropic frame refused by name; the
+  admissible algebra's bits asserted against `End`'s parameters;
+  transport asserted to move the frame and preserve the signature;
+  holonomy recovering orders 2 and 3 on a free qubit, a non-flat loop
+  found on a constrained one, flat loops at curvature 0, and an open
+  path refused; nesting with the inner frame priced in the outer's
+  logical coordinates; promotion collapsing two different frames to one
+  atom; and the interior — **0** for independent qudits (the control),
+  **1** for GHZ, **2** for a split toric patch — with the whole thing
+  asserted to run at 40 qubits in under half a second.
+- **curve** — the ordering suite: each ordering asserted a bijection
+  and the two curves asserted continuous where row-major is not; every
+  dilation and cutwidth law asserted against enumeration from side 2 to
+  128; the Hilbert curve asserted **worse than row-major on all four**
+  measures with the cutwidth ratio asserted to rise toward exactly 2
+  from below; the surviving half asserted separately (`side ≤ cutwidth
+  ≤ 2·side` under every ordering); the snake asserted to match
+  row-major exactly while being continuous; and the census — stabilizer
+  states 6/60/1080/36720/2423520 from `generators × 2^n`, and
+  `v₂|Sp(2n,2)| = n²` asserted both as a closed form and by reading the
+  trailing zeros of the computed order, with second differences
+  asserted identically 2.
+- **polar** — the embedding suite: every closed form asserted against
+  enumeration at `n ≤ 4` (points, totally isotropic lines, degree);
+  the doily pinned by its two defining properties — **zero triangles**
+  and the GQ axiom — and `W(5,2)` asserted to have triangles so the
+  claim cannot spread past where it was checked; doily counts matched
+  between enumeration and closed form at `n = 2, 3` with saturation
+  asserted at `n = 40`; every code in the crate asserted to be a flat
+  of the polar space; and on the effective side, idempotence of `Γ`,
+  the closure as `(⋁Vᵢ)^⊥` containing each frame, the deficit
+  `Σhᵢ − d_eff`, the throat bound asserted **tight on a nested chain
+  and slack off it**, `d_eff` asserted to factor through `Γ` where
+  `Σhᵢ` asserted not to, and `Φ` asserted equal to the loop predicate.
+- **stitch** — the symplectic sharding suite: the normal form
+  recovering `(r, h)` off the generators of four codes (toric L ∈ {2,3},
+  surface d ∈ {3,5}) with the radical asserted isotropic *and* central
+  in the span and every hyperbolic pair asserted anticommuting; every
+  selection maximal isotropic of rank `n` carving dimension exactly 1,
+  every pair of selections joined asserted *non*-isotropic (nothing is
+  fixed by two slices) and their meet always containing the radical
+  and never everything; the centraliser returning the normalizer at
+  rank `n + k` with every stabilizer and logical in it; the four toric
+  slices prepared as states with each one's basis read *off the volume*
+  rather than assumed, asserted in the code space, shown to be a frame
+  rather than an orthogonal basis, shown linearly independent, and a
+  random vector projected through the full `2^r`-element stabilizer sum
+  reassembling from them to < 1e-9; and the accounting — per-node cost
+  independent of node count, network total tracking `2^h` rather than
+  `2^n`, with the tableau-per-coefficient overhead asserted `O(n²)`
+  rather than a new exponential.
+- **lateral** — the cross-lateral distributed suite: the
+  coordinatewise link rule against gate-by-gate conjugation on 80,000
+  random strings across four window layouts (signs included) and the
+  no-third-site property per input site; the syndrome's 𝔽₂ linearity
+  over 50,000 random pairs on an L = 3 torus, and agreement with
+  `retro::signature`; erasure capacity enumerated off the code's own
+  generators at `d − 1` for toric L ∈ {2,3} and surface d ∈ {3,5}, with
+  a weight-`d` logical produced as the witness that ends it, and the
+  factor of two against the error decoder pinned at L = 2 (the weight-1
+  `X` that `Decoder` refuses by name, recovered exactly as an erasure);
+  the decoder's two distinguishable refusals (a set carrying a logical,
+  a syndrome outside the set's image) and every reachable syndrome
+  decoding to the fault that produced it; *correctable* versus *unique*
+  separated on the surface code's weight-2 boundary check; the
+  distributed frame equal to the gate-by-gate one **and** its signature
+  equal to the syndromes a dense 16-qubit register shows, on both
+  nodes; a straddling "local" Pauli refused; the wire form round-tripped
+  1,000 times; triangle violations found and tightened away with the
+  horizon floor read off the diameter; the barrier sealing clean,
+  waiting, repaired and degraded in sequence with the peers named; the
+  MDS parity exact on every 2-of-4 erasure pattern and refusing 3 by
+  name; and the dual tower's cross-scale synergy — a pattern that
+  leaves 3 slots dark under the coarse layer alone and 4 under the fine
+  layer alone, closed byte-exactly by the two crossed.
 - **device_geometries** — real machines reproduced structurally
   (Falcon-27 heavy-hex: 27 sites, 28 couplers, degree ≤ 3, the known
   adjacencies; Sycamore-class 54-site diagonal lattice; ion-trap
@@ -1992,6 +2407,26 @@ src/
                  across (reach per unit cost of the native cross-scale
                  operators; the coset class they cannot leave)
   causal.rs      backward cones, causal diamonds, dual-time resolution
+  volqudit.rs    geometric qudits: an isotropic flat as the qudit's
+                 position, the boundary it bounds, levels 2^h read off
+                 the geometry, transport and holonomy (a logical
+                 operation from motion), frame-in-frame nesting,
+                 promotion to an interface, and the compound interior
+                 no face can see
+  stitch.rs      sharding a register by its own symplectic form:
+                 volumes as F2 subspaces (meet, join, centraliser =
+                 normalizer, isotropic = stabilizer), the symplectic
+                 normal form radical + hyperbolic pairs read off a
+                 code's generators, the 2^h maximal isotropic
+                 extensions and their exact direct sum, and where the
+                 exponential goes when you spend it as machines
+  lateral.rs     cross-lateral distributed registers: the transversal
+                 link as a coordinatewise F2 frame map, the F2-linear
+                 syndrome, erasure decoding at d-1 (measured, with the
+                 logical that ends it as a witness), the delay geometry
+                 and arrival-tracked barrier, and the dual tower —
+                 the quantum code as the free fine layer of the
+                 network's erasure code
   clock.rs       the time system inside the register: a selector qudit
                  over representation-heterogeneous branches (shared
                  states, lazy interference, polynomial Gram machinery),
@@ -2052,7 +2487,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           seventy integration suites (see Testing)
+tests/           eighty-three integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
@@ -2093,7 +2528,18 @@ examples/        bell, grover, exotic_algebras, research_extension,
                  gate_memoization (entry reuse, the fusion dial, and
                  branch re-exploration over a shared prefix),
                  phase_degree (the degree law, the Clifford hierarchy
-                 rediscovered, and the sqrt(2) identified)
+                 rediscovered, and the sqrt(2) identified),
+                 lateral_network (the coordinatewise link, the frame as
+                 the wire, erasures vs errors, the horizon budget, and
+                 the two layers crossed),
+                 stitch_shards (the normal form read off a code, the
+                 pairs that cannot be held in one place, the slices on
+                 amplitudes, and where the exponential went),
+                 magic_mosaic (what collapses in the path-sum residual,
+                 what does not, and why the branching election has to
+                 be measured),
+                 geometric_qudits (the obstruction and its boundary,
+                 motion, holonomy, frame-in-frame, and the interior)
 ```
 
 Dependencies are deliberately light: `num-complex` and `rustc-hash` at
