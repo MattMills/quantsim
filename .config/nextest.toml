@@ -1,0 +1,14 @@
+# Tests that assert on how wall-clock time grows with problem size run with the machine to
+# themselves: a neighbouring test competing for cores flattens the growth they measure (seen on
+# the 32-core CI runner: 2.00x against time_laws_join_the_verdict's 3.0x floor, then a pass on the
+# rerun). One retry covers load from outside the test run.
+[[profile.default.overrides]]
+filter = """
+(binary(bounds_atlas) & test(=time_laws_join_the_verdict))
+| (binary(representation_conformance) & (
+    test(=the_phase_field_axis_certifies_the_iqp_core_and_fails_on_the_full_circuit)
+    | test(=the_braided_axis_certifies_a_braid_family_at_every_width)
+  ))
+"""
+threads-required = "num-test-threads"
+retries = 1
