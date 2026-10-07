@@ -2,24 +2,37 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [master]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
+# Jobs run on the self-hosted hippo runners. Their job-started hook cleans the workspace but
+# keeps target/, so checkouts use `clean: false` and each build is incremental against that
+# runner's previous one; ~/.cargo persists on the runner too.
 jobs:
   check:
     name: fmt + clippy + test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hippo]
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          clean: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - name: Format
-        run: cargo fmt --all -- --check
+        run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       # `--tests` restricts the build to test targets. Without it cargo
@@ -28,7 +41,9 @@ jobs:
       # redundant here because the Clippy step above already builds
       # `--all-targets` and so fails on a broken example.
       - name: Tests
-        run: cargo test --release --tests
+        run: cargo nextest run --workspace --locked --no-fail-fast --release --tests
+      - name: Doctests
+        run: cargo test --workspace --doc --locked --release
       - name: Docs
         run: cargo doc --no-deps
         env:

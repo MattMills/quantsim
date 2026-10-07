@@ -368,7 +368,7 @@ fn main() -> Result<()> {
                 _ => {}
             }
         }
-        let avg = if runs > 0 { muls / runs } else { 0 };
+        let avg = muls.checked_div(runs).unwrap_or(0);
         println!("   {n:3}   {split:2}/16          {by_order:2}/16            {by_gcd:2}/16          {avg:4}");
     }
     println!("   The lucky-gcd column is not noise to be hidden: for a modulus this");
