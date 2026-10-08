@@ -43,16 +43,13 @@ parts are swappable:
   float path and exactly 0 here), and `max_deviation_vs` turns any
   backend's output into an absolute error measurement — including the
   dense reference's own, and the certification of `Ball` radii.
-- **Opposed Mathematics** ([`opposed`](src/opposed.rs), default feature
-  `opposed-math`; the crates are re-exported as `quantsim::om`) — `D[ω]`'s
-  numerators are OM's `ℤ[ζ_8]`, so exact states cross both ways without
-  loss: an `ExactState` becomes an OM state over a common `√2^k`, and OM
-  states load into any backend. OM's Pauli Hamiltonians (TFIM,
-  Heisenberg, Fermi–Hubbard) share the `X^x Z^z` key of `PauliSum` and
-  evaluate on every backend, or exactly in `D[ω]` on an `ExactState`.
-  `tests/opposed.rs` checks that OM's gates and quantsim's build the same
-  exact state, that Born weights agree exactly, and that local gates do
-  not signal. `--no-default-features` builds without it.
+- **Exact past Clifford+T** ([`cyclotomic`](src/cyclotomic.rs)) — the same
+  evaluator over `D[ζ_N] = ℤ[1/√2, e^{2πi/N}]` for any power of two
+  `N ≥ 8`: `√T` and the π/2^k phases of the QFT are exact. The `n`-qubit
+  QFT equals `2^{-n/2} ζ^{xy}` amplitude for amplitude, phase estimation
+  gets exact outcome distributions (exact zeros included), and
+  `max_deviation_vs` measures the dense backend's QFT error absolutely
+  (`examples/exact_qft.rs`). At `N = 8` it agrees with `exact` exactly.
 - **Gates** — a registry (`name → GateDef`) with a 32-gate standard library
   (plus aliases), defined once over ℂ and projected into each algebra;
   over ℝ you automatically get the real subset. Research gates are a
@@ -2556,8 +2553,7 @@ src/
                  against a closed form
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
-  opposed.rs     bridge to Opposed Mathematics (re-exported as `om`):
-                 D[ω] ↔ ℤ[ζ_8], ExactState ↔ OM state, OM Hamiltonians
+  cyclotomic.rs  D[ζ_N] ring + CyclotomicState: exact at π/2^k phases (QFT)
   guard.rs       resource guard: measured memory admission, time budgets
   gates/         GateDef trait, FixedGate/ParamGate, standard library
   registry.rs    GateRegistry<S>: validated registration, aliases

@@ -86,6 +86,7 @@ pub mod crossview;
 pub mod curve;
 pub mod cut;
 pub mod cutsim;
+pub mod cyclotomic;
 pub mod dcs;
 pub mod discovery;
 pub mod dyadic;
@@ -109,8 +110,6 @@ pub mod memo;
 pub mod mixed;
 pub mod modwidth;
 pub mod opflow;
-#[cfg(feature = "opposed-math")]
-pub mod opposed;
 pub mod overlay;
 pub mod padic;
 pub mod pathsum;
@@ -148,11 +147,6 @@ pub use registry::GateRegistry;
 pub use rng::Prng;
 pub use scalar::{Scalar, C64};
 pub use sim::Simulator;
-
-/// The Opposed Mathematics crates (`om_core`, `om_ipg`, `om_quantum`,
-/// `om_hamiltonian`, …), bridged to quantsim in [`opposed`].
-#[cfg(feature = "opposed-math")]
-pub use opposed_mathematics as om;
 
 /// One-stop imports for typical use.
 pub mod prelude {
@@ -200,6 +194,7 @@ pub mod prelude {
     };
     pub use crate::crossview::{fwht, fwht_c, CrossView};
     pub use crate::cut::{CutGraph, MAX_EXACT_DIM, MAX_EXACT_ORDER};
+    pub use crate::cyclotomic::{CyclotomicState, DZeta};
     pub use crate::discovery::{
         discover_stabilizers, stabilizes_state, state_deviation_up_to_phase, verify_transparent,
         Insertion, StabilizerCheck, TransparencyReport,

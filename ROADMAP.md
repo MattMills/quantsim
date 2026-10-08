@@ -2637,9 +2637,12 @@ volume participates in its own interior. Remaining work:
   rotations, with checked `i128` coefficients. Natural next entries:
   a bigger-integer feature (arbitrary-precision coefficients behind a
   feature flag, lifting the depth ceiling), exact evaluation of the
-  scheduler's feedback runs (outcome-conditioned exact branches), and
-  extending the ring (e.g. `D[ζ_{16}]` for π/8-family gates — the
-  Clifford-hierarchy next level).
+  scheduler's feedback runs (outcome-conditioned exact branches).
+- **Exact D[ζ_N] evaluator — SHIPPED** (`cyclotomic::CyclotomicState<N>`):
+  the ring extended to `ℤ[1/√2, ζ_N]` for any power of two `N ≥ 8` —
+  π/8-family gates at `N = 16`, the `n`-qubit QFT at `N = 2^n` — equal to
+  the D[ω] evaluator at `N = 8`. Next: non-power-of-two `N` (π/12
+  phases), which needs reduction modulo a general `Φ_N`.
 - **Ball arithmetic — SHIPPED** (`scalar::Ball`): certified
   midpoint-radius amplitudes, quantization as a coarse-graining dial,
   containment-tested against the exact evaluator. Next: directed
