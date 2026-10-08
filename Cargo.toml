@@ -2,7 +2,7 @@
 name = "quantsim"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.78"
 description = "In-house research quantum simulator: registry-based gate library over swappable amplitude algebras (R, C, H, O, ...) with dense, sparse, and adaptive state-vector backends"
 repository = "https://github.com/MattMills/quantsim"
 publish = false
@@ -10,10 +10,22 @@ publish = false
 [dependencies]
 num-complex = "0.4"
 rustc-hash = "2"
+# Opposed Mathematics (exact cyclotomic amplitudes, IPG states, Pauli
+# Hamiltonians), bridged in `quantsim::opposed` and re-exported as
+# `quantsim::om`. Pinned to a commit; bump `rev` to update.
+opposed_mathematics = { git = "https://github.com/2bn-dev/opposed_mathematics", rev = "4f1bfc138c3f837d568365f41d742e2637d2e5d0", optional = true }
+
+[features]
+default = ["opposed-math"]
+opposed-math = ["dep:opposed_mathematics"]
 
 [dev-dependencies]
 proptest = "1"
 criterion = "0.5"
+
+[[example]]
+name = "opposed_bridge"
+required-features = ["opposed-math"]
 
 [[bench]]
 name = "gates"

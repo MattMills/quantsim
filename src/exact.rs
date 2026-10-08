@@ -128,6 +128,12 @@ impl DOmega {
         (self.c, self.k)
     }
 
+    /// `(c₀ + c₁ω + c₂ω² + c₃ω³)/√2^k`, the inverse of [`DOmega::parts`]
+    /// (any input; the result is put in canonical form).
+    pub fn from_parts(c: [i128; 4], k: u32) -> Self {
+        DOmega { c, k }.reduced()
+    }
+
     /// Canonical form: divide numerator and denominator by √2 while
     /// possible (`√2·(p,q,r,s) = (q−s, p+r, q+s, r−p)`, so divisibility
     /// is the parity condition `c₀≡c₂, c₁≡c₃ (mod 2)`).

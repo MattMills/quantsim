@@ -109,6 +109,8 @@ pub mod memo;
 pub mod mixed;
 pub mod modwidth;
 pub mod opflow;
+#[cfg(feature = "opposed-math")]
+pub mod opposed;
 pub mod overlay;
 pub mod padic;
 pub mod pathsum;
@@ -146,6 +148,11 @@ pub use registry::GateRegistry;
 pub use rng::Prng;
 pub use scalar::{Scalar, C64};
 pub use sim::Simulator;
+
+/// The Opposed Mathematics crates (`om_core`, `om_ipg`, `om_quantum`,
+/// `om_hamiltonian`, …), bridged to quantsim in [`opposed`].
+#[cfg(feature = "opposed-math")]
+pub use opposed_mathematics as om;
 
 /// One-stop imports for typical use.
 pub mod prelude {
