@@ -13,7 +13,7 @@ rustc-hash = "2"
 # Opposed Mathematics (exact cyclotomic amplitudes, IPG states, Pauli
 # Hamiltonians), bridged in `quantsim::opposed` and re-exported as
 # `quantsim::om`. Pinned to a commit; bump `rev` to update.
-opposed_mathematics = { git = "https://github.com/2bn-dev/opposed_mathematics", rev = "4f1bfc138c3f837d568365f41d742e2637d2e5d0", optional = true }
+opposed_mathematics = { git = "https://github.com/2bn-dev/opposed_mathematics", rev = "4ad1199e19a4baff3275824786020f557f7f45b9", optional = true }
 
 [features]
 default = ["opposed-math"]

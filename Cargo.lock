@@ -12,6 +12,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+
+[[package]]
 name = "anes"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -194,6 +200,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 
 [[package]]
+name = "equivalent"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -214,6 +226,12 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
+name = "foldhash"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "futures-core"
@@ -271,6 +289,17 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "zerocopy",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.15.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash",
 ]
 
 [[package]]
@@ -344,6 +373,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-integer"
+version = "0.1.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -351,6 +389,78 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
 ]
+
+[[package]]
+name = "om-apps"
+version = "0.0.1"
+source = "git+https://github.com/2bn-dev/opposed_mathematics?rev=4ad1199e19a4baff3275824786020f557f7f45b9#4ad1199e19a4baff3275824786020f557f7f45b9"
+dependencies = [
+ "hashbrown",
+ "om-core",
+ "om-ipg",
+ "om-quantum",
+]
+
+[[package]]
+name = "om-core"
+version = "0.0.1"
+source = "git+https://github.com/2bn-dev/opposed_mathematics?rev=4ad1199e19a4baff3275824786020f557f7f45b9#4ad1199e19a4baff3275824786020f557f7f45b9"
+dependencies = [
+ "hashbrown",
+ "num-integer",
+]
+
+[[package]]
+name = "om-diagram"
+version = "0.0.1"
+source = "git+https://github.com/2bn-dev/opposed_mathematics?rev=4ad1199e19a4baff3275824786020f557f7f45b9#4ad1199e19a4baff3275824786020f557f7f45b9"
+dependencies = [
+ "num-complex",
+ "om-core",
+]
+
+[[package]]
+name = "om-hamiltonian"
+version = "0.0.1"
+source = "git+https://github.com/2bn-dev/opposed_mathematics?rev=4ad1199e19a4baff3275824786020f557f7f45b9#4ad1199e19a4baff3275824786020f557f7f45b9"
+dependencies = [
+ "hashbrown",
+ "om-core",
+]
+
+[[package]]
+name = "om-ipg"
+version = "0.0.1"
+source = "git+https://github.com/2bn-dev/opposed_mathematics?rev=4ad1199e19a4baff3275824786020f557f7f45b9#4ad1199e19a4baff3275824786020f557f7f45b9"
+dependencies = [
+ "hashbrown",
+ "om-core",
+]
+
+[[package]]
+name = "om-profinite"
+version = "0.0.1"
+source = "git+https://github.com/2bn-dev/opposed_mathematics?rev=4ad1199e19a4baff3275824786020f557f7f45b9#4ad1199e19a4baff3275824786020f557f7f45b9"
+dependencies = [
+ "hashbrown",
+ "om-core",
+]
+
+[[package]]
+name = "om-quantum"
+version = "0.0.1"
+source = "git+https://github.com/2bn-dev/opposed_mathematics?rev=4ad1199e19a4baff3275824786020f557f7f45b9#4ad1199e19a4baff3275824786020f557f7f45b9"
+dependencies = [
+ "hashbrown",
+ "num-complex",
+ "om-core",
+ "om-ipg",
+]
+
+[[package]]
+name = "om-tower"
+version = "0.0.1"
+source = "git+https://github.com/2bn-dev/opposed_mathematics?rev=4ad1199e19a4baff3275824786020f557f7f45b9#4ad1199e19a4baff3275824786020f557f7f45b9"
 
 [[package]]
 name = "once_cell"
@@ -363,6 +473,21 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "opposed_mathematics"
+version = "0.0.1"
+source = "git+https://github.com/2bn-dev/opposed_mathematics?rev=4ad1199e19a4baff3275824786020f557f7f45b9#4ad1199e19a4baff3275824786020f557f7f45b9"
+dependencies = [
+ "om-apps",
+ "om-core",
+ "om-diagram",
+ "om-hamiltonian",
+ "om-ipg",
+ "om-profinite",
+ "om-quantum",
+ "om-tower",
+]
 
 [[package]]
 name = "pin-project-lite"
@@ -441,6 +566,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "num-complex",
+ "opposed_mathematics",
  "proptest",
  "rustc-hash",
 ]
