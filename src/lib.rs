@@ -274,7 +274,7 @@ pub mod prelude {
         LinearizationReport, SelfComputationCost, SelfHostedStack, VOLUME_COORDINATES,
     };
     pub use crate::sim::Simulator;
-    pub use crate::space::{SiteCircuit, SiteMatrix, SiteOp, Space};
+    pub use crate::space::{SiteCircuit, SiteMatrix, SiteOp, Space, Transition};
     pub use crate::support::{
         clear_memo, memo_len, propagate_wide, Support, WideConfig, WidePauli, WidePauliSum,
         WidePropagation, WideRotation, MEMO_CAPACITY,

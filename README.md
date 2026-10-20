@@ -1496,6 +1496,61 @@ mixed-radix space on any backend without native storage (everything but
 `dense` and `sparse` for now) all fail with `Error::UnsupportedForSpace`
 — a register is never silently read as bits.
 
+### Spaces over time
+
+A register's space can change mid-computation, so a `SiteCircuit` is a
+path of spaces (`space_path()`), not one space. Six `Transition`s, two
+kinds:
+
+| transition | what it does | cost on the native stores | exact? |
+|---|---|---|---|
+| `merge(k)` / `split(k, low)` | fuse sites `k, k+1` into one site of the product radix, or factor one back | none: in the little-endian convention a radix-4 site *is* two adjacent qubits, so no amplitude moves | always |
+| `grow(at, r)` | insert a radix-`r` site in `\|0⟩` | dense: one reallocation to the new dimension; sparse: a re-keyed map, no fill | always (an isometry) |
+| `promote(k, r)` | widen site `k` to `r` levels, old levels first | as `grow` | always (an isometry) |
+| `release(k)` | remove site `k` | as `grow` | only if site `k` is in `\|0⟩` on every branch |
+| `demote(k, r)` | narrow site `k` to `r` levels | as `grow` | only if no branch uses levels `≥ r` |
+
+```rust
+use quantsim::prelude::*;
+
+// A qutrit workspace that exists only in the middle of the computation.
+let mut c = SiteCircuit::<C64>::new(Space::new(&[3, 2])?);
+c.fourier(0)?
+    .grow(2, 3)?                    // [3, 2] → [3, 2, 3], workspace in |0⟩
+    .cshift(0, 2)?                  // copy site 0 into it
+    .cshift(2, 1)?                  // let it drive site 1
+    .cshift(0, 2)?.cshift(0, 2)?    // uncompute: 3·d ≡ 0 (mod 3)
+    .release(2)?;                   // exact: the workspace is back in |0⟩
+let sim: Simulator = Simulator::new();
+let state = sim.run_space("dense", &c)?;
+
+// A lossy step has to opt in, and then reports what it dropped.
+let mut lossy = SiteCircuit::<C64>::new(Space::new(&[3])?);
+lossy.fourier(0)?
+    .transition(Transition::Demote { site: 0, radix: 2 }, true)?;
+let (state, dropped) = sim.run_space_accounted("sparse", &lossy)?;
+assert!((dropped - 1.0 / 3.0).abs() < 1e-12);  // weight 2/3 remains
+# Ok::<(), quantsim::Error>(())
+```
+
+Each step is validated against the space the circuit has reached, so a
+gate after a merge sees the merged radix. A release or demote that would
+remove amplitude fails with `Error::WouldDiscard` and leaves the state
+untouched; opted in (`transition(t, true)`), it drops that amplitude,
+does **not** renormalize, and returns the dropped weight (summed
+`abs_sqr`, which sees every nonzero amplitude even where `born_weight`
+is indefinite). `run_space` refuses a circuit that opts in, since it has
+nowhere to report the weight; `run_space_accounted` returns it.
+Boundaries: only the native stores (`dense` and `sparse` through their
+space constructors) change shape — every other backend refuses
+`Backend::transition` with `Error::UnsupportedForSpace`, and a circuit
+with transitions runs on the native store even when it starts on qubits.
+Merging non-adjacent sites is not offered (it is a site permutation, and
+a permutation of unequal radices is not a swap). A path is not a larger
+space: the reachable states are bounded by the widest space on it, and
+that space sets the dense cost; what the path buys is that the register
+is only that wide while it needs to be.
+
 ## Conventions
 
 | topic | convention |
@@ -1516,8 +1571,8 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 1155 tests (88 unit + 1058 across ninety-five
-integration suites + 9 doctests; one more — the 17 s measurement that
+`cargo test` runs 1169 tests (88 unit + 1071 across ninety-six
+integration suites + 10 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
@@ -1818,6 +1873,16 @@ entirely trivial accessors and defensive guards:
   seed-for-seed site measurement, and qubit-space site measurement equal
   to `measure`; mixed-radix sampling and permutation bounds; and every
   refusal by name.
+- **space_transitions** — every transition's index map checked digit by
+  digit against its specification (merge and split moving no index);
+  merge then a one-site gate equal to the two-site gate, and a Bell pair
+  merged into a ququart, shifted and split back inside one circuit;
+  grow and promote matched against `mixed::CompoundRegister` built on the
+  final space (promote as `U ⊕ I`); a workspace grown, used, uncomputed
+  and released exactly; release and demote refused with the state
+  bit-for-bit unchanged, or dropping exactly the oracle's weight when
+  opted in; dense and sparse agreeing along random 60-step paths over ℂ
+  and ℍ with `weight + discarded = 1`; and every refusal by name.
 - **hermitian2** — the signature of `det` measured per algebra (ℝ, ℂ,
   split-complex, ℍ, split-quaternions, 𝕆, 𝕊) by diagonalizing its Gram
   matrix; `born_weight` agreeing with `Re(z·z̄)` and the trace form with
@@ -2647,7 +2712,9 @@ src/
                  against a closed form
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
   space.rs       Space (per-site radices, mixed-radix indexing), SiteMatrix,
-                 qudit gates, SiteCircuit (backends: backend/radix.rs)
+                 qudit gates, Transition (merge/split/grow/release/
+                 promote/demote), SiteCircuit as a path of spaces
+                 (backends: backend/radix.rs)
   hermitian2.rs  a qubit as a 2×2 Hermitian matrix over any algebra: det
                  signature measured per algebra, null cone, shears/boosts
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference

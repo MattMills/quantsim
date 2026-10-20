@@ -95,3 +95,31 @@ pub fn assert_equiv_up_to_phase(
         );
     }
 }
+
+/// A seeded Haar-ish random unitary: Gram–Schmidt on a random complex
+/// matrix.
+pub fn random_unitary(d: usize, rng: &mut Prng) -> Vec<C64> {
+    let mut cols: Vec<Vec<C64>> = Vec::with_capacity(d);
+    while cols.len() < d {
+        let mut v: Vec<C64> = (0..d)
+            .map(|_| C64::new(2.0 * rng.next_f64() - 1.0, 2.0 * rng.next_f64() - 1.0))
+            .collect();
+        for u in &cols {
+            let dot: C64 = u.iter().zip(&v).map(|(a, b)| a.conj() * b).sum();
+            for (x, y) in v.iter_mut().zip(u) {
+                *x -= dot * y;
+            }
+        }
+        let norm = v.iter().map(|x| x.norm_sqr()).sum::<f64>().sqrt();
+        if norm > 1e-6 {
+            cols.push(v.into_iter().map(|x| x / norm).collect());
+        }
+    }
+    let mut m = vec![C64::new(0.0, 0.0); d * d];
+    for (col, v) in cols.iter().enumerate() {
+        for (row, &x) in v.iter().enumerate() {
+            m[row * d + col] = x;
+        }
+    }
+    m
+}

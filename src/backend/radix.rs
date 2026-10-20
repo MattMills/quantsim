@@ -5,9 +5,9 @@
 //! [`RadixSparseState`] a hash map of nonzero amplitudes, both indexed
 //! little-endian mixed radix (see [`crate::space`]). Site-level operations
 //! are native ([`Backend::apply_sites`], [`Backend::project_digit`],
-//! [`Backend::measure_site`]); the qubit-level ones (`apply`,
-//! `apply_diagonal`, `project`, `measure`) act on radix-2 sites and refuse
-//! any other target with [`Error::UnsupportedForSpace`].
+//! [`Backend::measure_site`], [`Backend::transition`]); the qubit-level
+//! ones (`apply`, `apply_diagonal`, `project`, `measure`) act on radix-2
+//! sites and refuse any other target with [`Error::UnsupportedForSpace`].
 //!
 //! They are separate types from [`DenseState`](super::DenseState) and
 //! [`SparseState`](super::SparseState) on purpose: the qubit backends keep
@@ -24,7 +24,10 @@ use super::{validate_apply, validate_apply_diagonal, Backend, PRUNE_TOL};
 use crate::error::{Error, Result};
 use crate::math::{GateMatrix, MATRIX_ZERO_TOL};
 use crate::scalar::Scalar;
-use crate::space::{apply_sites_in_place, require_binary, validate_sites, SiteMatrix, Space};
+use crate::space::{
+    admit_discard, apply_sites_in_place, require_binary, validate_sites, SiteMatrix, Space,
+    Transition,
+};
 
 /// Heap bytes a [`Space`] holds (its radix and stride tables).
 fn space_bytes(space: &Space) -> usize {
@@ -75,6 +78,37 @@ impl<S: Scalar> RadixDenseState<S> {
     /// Direct read-only view of the amplitude vector.
     pub fn amplitudes(&self) -> &[S] {
         &self.amps
+    }
+
+    /// Move every amplitude to its index in the transition's target space,
+    /// into a fresh vector; nothing changes unless the discard is admitted
+    /// and the allocation succeeds.
+    fn move_to(&mut self, t: &Transition, to: Space, allow_discard: bool) -> Result<f64> {
+        let from = &self.space;
+        let mut dropped = 0.0;
+        if t.can_discard() {
+            for (i, a) in self.amps.iter().enumerate() {
+                if t.map_index(from, i as u64).is_none() {
+                    dropped += a.abs_sqr();
+                }
+            }
+            admit_discard(t, from, dropped, allow_discard)?;
+        }
+        let len = usize::try_from(to.dim()).map_err(|_| {
+            Error::InvalidState(format!("dense state: {to} does not fit memory indices"))
+        })?;
+        let mut amps = crate::guard::try_vec(len, S::zero(), &format!("dense state ({to})"))?;
+        for (i, &a) in self.amps.iter().enumerate() {
+            if i % (1 << 20) == 0 {
+                crate::guard::checkpoint()?;
+            }
+            if let Some(j) = t.map_index(from, i as u64) {
+                amps[j as usize] = a;
+            }
+        }
+        self.amps = amps;
+        self.space = to;
+        Ok(dropped)
     }
 
     fn project_onto(&mut self, site: usize, digit: usize, renorm: f64) {
@@ -130,6 +164,15 @@ impl<S: Scalar> Backend<S> for RadixDenseState<S> {
         check_digit(&self.space, site, digit)?;
         self.project_onto(site, digit, renorm);
         Ok(())
+    }
+
+    fn transition(&mut self, t: &Transition, allow_discard: bool) -> Result<f64> {
+        let to = t.target(&self.space)?;
+        if t.is_relabeling() {
+            self.space = to;
+            return Ok(0.0);
+        }
+        self.move_to(t, to, allow_discard)
     }
 
     fn amplitude(&self, index: u64) -> S {
@@ -250,6 +293,33 @@ impl<S: Scalar> RadixSparseState<S> {
         Ok(())
     }
 
+    /// Rebuild the map under the transition's index map; the old map stays
+    /// in place unless the discard is admitted.
+    fn move_to(&mut self, t: &Transition, to: Space, allow_discard: bool) -> Result<f64> {
+        crate::guard::admit_growth(
+            self.map.len().saturating_mul(entry_bytes::<S>()),
+            "sparse state transition",
+        )?;
+        let mut out: FxHashMap<u64, S> = FxHashMap::default();
+        out.reserve(self.map.len());
+        let mut dropped = 0.0;
+        for (count, (&i, &a)) in self.map.iter().enumerate() {
+            if count % (1 << 18) == 0 {
+                crate::guard::checkpoint()?;
+            }
+            match t.map_index(&self.space, i) {
+                Some(j) => {
+                    out.insert(j, a);
+                }
+                None => dropped += a.abs_sqr(),
+            }
+        }
+        admit_discard(t, &self.space, dropped, allow_discard)?;
+        self.map = out;
+        self.space = to;
+        Ok(dropped)
+    }
+
     fn project_onto(&mut self, site: usize, digit: usize, renorm: f64) {
         let space = &self.space;
         self.map.retain(|&i, _| space.digit(i, site) == digit);
@@ -296,6 +366,15 @@ impl<S: Scalar> Backend<S> for RadixSparseState<S> {
         check_digit(&self.space, site, digit)?;
         self.project_onto(site, digit, renorm);
         Ok(())
+    }
+
+    fn transition(&mut self, t: &Transition, allow_discard: bool) -> Result<f64> {
+        let to = t.target(&self.space)?;
+        if t.is_relabeling() {
+            self.space = to;
+            return Ok(0.0);
+        }
+        self.move_to(t, to, allow_discard)
     }
 
     fn amplitude(&self, index: u64) -> S {
