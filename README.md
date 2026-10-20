@@ -1571,7 +1571,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 1169 tests (88 unit + 1071 across ninety-six
+`cargo test` runs 1202 tests (91 unit + 1101 across ninety-nine
 integration suites + 10 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);

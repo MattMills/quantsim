@@ -100,6 +100,7 @@ pub mod heisenberg;
 pub mod hermitian2;
 pub mod horizon;
 pub mod krein;
+pub mod krein_sites;
 pub mod lateral;
 pub mod lattice;
 pub mod library;
@@ -222,6 +223,7 @@ pub mod prelude {
     pub use crate::hermitian2::{CausalClass, FormSignature, Hermitian2};
     pub use crate::horizon::{horizon, Horizon, AXES};
     pub use crate::krein::{KreinLedger, KreinMetric, KreinRegister};
+    pub use crate::krein_sites::{SiteKreinRegister, SiteMetric};
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};
