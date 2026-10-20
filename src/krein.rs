@@ -26,7 +26,8 @@
 //!   `±1` in equal number, so these metrics give exactly the **split**
 //!   signatures `(2^{n−1}, 2^{n−1})` — which is the case that matters
 //!   (twistor space is `(2, 2)`), and the boundary is stated rather than
-//!   hidden: unequal signatures need a metric this type cannot express.
+//!   hidden: unequal signatures need a qudit site, which
+//!   [`crate::krein_sites`] provides.
 //! * [`KreinRegister`] — any `Backend<C64>` plus a metric. Gates are
 //!   checked for pseudo-unitarity **against the metric restricted to
 //!   their qubits** (`η = η_Q ⊗ η_rest`, so `M†ηM = η` iff
@@ -94,6 +95,7 @@ use crate::gates::Pauli;
 use crate::hermitian2::FormSignature;
 use crate::math::GateMatrix;
 use crate::scalar::C64;
+use crate::space::SiteMatrix;
 
 /// Default tolerance for pseudo-unitarity checks.
 pub const KREIN_TOL: f64 = 1e-9;
@@ -533,20 +535,18 @@ pub fn transpose(a: &GateMatrix<C64>) -> GateMatrix<C64> {
     t
 }
 
-/// `Re tr(A†B)`, the real inner product on matrices.
-fn real_inner(a: &GateMatrix<C64>, b: &GateMatrix<C64>) -> f64 {
-    a.data()
-        .iter()
-        .zip(b.data())
-        .map(|(x, y)| (x.conj() * y).re)
-        .sum()
-}
-
 /// Inertia of the Killing form `K(X, Y) = tr(ad X · ad Y)` of the real Lie
 /// algebra spanned by `basis` (which must close under commutators). Its
 /// signature names the real form: `(n_noncompact, n_compact, n_nilpotent)`
 /// up to the convention that compact directions are negative.
 pub fn killing_signature(basis: &[GateMatrix<C64>]) -> Result<FormSignature> {
+    let sites: Vec<SiteMatrix<C64>> = basis.iter().map(SiteMatrix::from_gate).collect();
+    killing_signature_sites(&sites)
+}
+
+/// [`killing_signature`] for matrices of any dimension, such as the
+/// algebras [`crate::krein_sites`] builds on a single qudit site.
+pub fn killing_signature_sites(basis: &[SiteMatrix<C64>]) -> Result<FormSignature> {
     let n = basis.len();
     if n == 0 {
         return Ok(FormSignature {
@@ -555,23 +555,32 @@ pub fn killing_signature(basis: &[GateMatrix<C64>]) -> Result<FormSignature> {
             null: 0,
         });
     }
+    let inner = |a: &SiteMatrix<C64>, b: &SiteMatrix<C64>| -> f64 {
+        a.data()
+            .iter()
+            .zip(b.data())
+            .map(|(x, y)| (x.conj() * y).re)
+            .sum()
+    };
     // Coordinates in the basis via its Gram matrix.
     let gram: Vec<f64> = (0..n * n)
-        .map(|k| real_inner(&basis[k / n], &basis[k % n]))
+        .map(|k| inner(&basis[k / n], &basis[k % n]))
         .collect();
-    let coords = |m: &GateMatrix<C64>| -> Result<Vec<f64>> {
-        let rhs: Vec<f64> = basis.iter().map(|b| real_inner(b, m)).collect();
+    let coords = |m: &SiteMatrix<C64>| -> Result<Vec<f64>> {
+        let rhs: Vec<f64> = basis.iter().map(|b| inner(b, m)).collect();
         let c = solve_dense(n, &gram, &rhs)?;
         // Closure check: the reconstruction must be exact.
-        let mut back = GateMatrix::<C64>::zeros(m.dim())?;
+        let mut back = vec![C64::new(0.0, 0.0); m.data().len()];
         for (b, &ck) in basis.iter().zip(&c) {
-            for r in 0..m.dim() {
-                for col in 0..m.dim() {
-                    back.set(r, col, back.get(r, col) + b.get(r, col) * ck);
-                }
+            for (x, y) in back.iter_mut().zip(b.data()) {
+                *x += y * ck;
             }
         }
-        if !back.approx_eq(m, 1e-8) {
+        if back
+            .iter()
+            .zip(m.data())
+            .any(|(x, y)| (x - y).norm() > 1e-8)
+        {
             return Err(Error::InvalidState(
                 "killing_signature: the basis does not close under commutators".to_string(),
             ));
@@ -583,15 +592,15 @@ pub fn killing_signature(basis: &[GateMatrix<C64>]) -> Result<FormSignature> {
     for x in basis {
         let mut ad = vec![0.0; n * n];
         for (j, y) in basis.iter().enumerate() {
-            let xy = x.matmul(y);
-            let yx = y.matmul(x);
+            let xy = x.matmul(y)?;
+            let yx = y.matmul(x)?;
             let data: Vec<C64> = xy
                 .data()
                 .iter()
                 .zip(yx.data())
                 .map(|(a, b)| a - b)
                 .collect();
-            let comm = GateMatrix::from_vec(x.dim(), data)?;
+            let comm = SiteMatrix::from_vec(x.dim(), data)?;
             for (i, c) in coords(&comm)?.into_iter().enumerate() {
                 ad[i * n + j] = c;
             }
