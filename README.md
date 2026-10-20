@@ -1452,6 +1452,47 @@ algebras (over the split ones it goes negative and is reported, not
 clamped), and there is **no tensor product** — over 𝕆 none exists, so a
 `Hermitian2` is one closed system, not a register that composes.
 
+### Mixed-radix registers
+
+Every backend now reports its state space: `Backend::space()` returns a
+[`Space`](src/space.rs), one radix per site, with no geometry attached
+(positions and couplings stay in `lattice`, `curve` and the device
+`Topology`). The default is `num_qubits()` qubits, so every existing
+backend means exactly what it meant before. Mixed-radix registers are
+stored natively by `RadixDenseState` and `RadixSparseState`, registered
+as the space constructors of `dense` and `sparse` (so
+`sim.run_space("dense", …)` reaches them); the qubit `DenseState` and
+`SparseState` are untouched, kernels and measured footprints alike.
+Indices are little-endian mixed radix, the qubit convention generalized.
+
+```rust
+use quantsim::prelude::*;
+
+// The zigzag profile 2,3,4,5,4,3,2, with a Bell pair across its binary ends.
+let space = Space::new(&[2, 3, 4, 5, 4, 3, 2])?;
+let sim: Simulator = Simulator::new();
+let mut bell = Circuit::new(2);
+bell.h(0).cx(0, 1);
+let bound = bell.bind(sim.registry())?;
+
+let mut c = SiteCircuit::new(space.clone());
+c.fourier(3)?.cshift(3, 1)?.place(&bound, &[0, 6])?;
+let mut state = sim.run_space("dense", &c)?;
+let digit = state.measure_site(3, &mut Prng::new(1))?; // one of 0..5
+# let _ = digit;
+# Ok::<(), quantsim::Error>(())
+```
+
+Site gates (`apply_sites`) take a `SiteMatrix` of any dimension; the
+qudit set (`shift`, `clock`, `fourier`, `cshift`, `swap`) is generic over
+the algebra, and phases that do not embed (radix-3 Fourier over ℝ) are
+refused by name. Standard qubit gates run on radix-2 sites through
+`SiteCircuit::place`. Boundaries: a qubit operation on a non-binary site,
+`pauli_expectation` on a mixed space, a swap across radices, and a
+mixed-radix space on any backend without native storage (everything but
+`dense` and `sparse` for now) all fail with `Error::UnsupportedForSpace`
+— a register is never silently read as bits.
+
 ## Conventions
 
 | topic | convention |
@@ -1472,7 +1513,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 1137 tests (88 unit + 1040 across ninety-four
+`cargo test` runs 1155 tests (88 unit + 1058 across ninety-five
 integration suites + 9 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1759,6 +1800,21 @@ entirely trivial accessors and defensive guards:
   ratio; plus the algebra-sector qudit and harness rows. The algebra
   also joins the existing `reproductions`, `property_tests` and
   `gate_matrices` sweeps.
+- **space** — mixed-radix index algebra (encode/decode, strides,
+  offsets inverting sub-indices) and its refusals; the qudit Weyl
+  relations `X^d = Z^d = 1`, `ZX = ωXZ`, `FZF†X = 1` for `d = 2…7`;
+  dense and sparse on the 2,3,4,5,4,3,2 zigzag matched amplitude by
+  amplitude against the independent `mixed::CompoundRegister` over
+  seeded random one- and two-site unitaries, and against each other over
+  ℍ; permutation site gates causing no sparse fill; a qubit space giving
+  results identical to the qubit path on dense, sparse, mps and factored,
+  and the mixed-radix kernels handed a qubit space reproducing the qubit
+  kernels;
+  a Bell pair placed on the zigzag's binary ends against the oracle;
+  radix-5 measurement statistics and collapse, sparse-vs-dense
+  seed-for-seed site measurement, and qubit-space site measurement equal
+  to `measure`; mixed-radix sampling and permutation bounds; and every
+  refusal by name.
 - **hermitian2** — the signature of `det` measured per algebra (ℝ, ℂ,
   split-complex, ℍ, split-quaternions, 𝕆, 𝕊) by diagonalizing its Gram
   matrix; `born_weight` agreeing with `Re(z·z̄)` and the trace form with
@@ -2587,6 +2643,8 @@ src/
                  from trailing digits, and a journalled sweep priced
                  against a closed form
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
+  space.rs       Space (per-site radices, mixed-radix indexing), SiteMatrix,
+                 qudit gates, SiteCircuit (backends: backend/radix.rs)
   hermitian2.rs  a qubit as a 2×2 Hermitian matrix over any algebra: det
                  signature measured per algebra, null cone, shears/boosts
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
@@ -2595,7 +2653,8 @@ src/
   registry.rs    GateRegistry<S>: validated registration, aliases
   circuit.rs     Circuit<S> (chainable builders, raw + diagonal kernels,
                  append), BoundCircuit<S> (bind-time validation, inverse())
-  backend/       Backend<S> trait + dense / sparse / adaptive / factored /
+  backend/       Backend<S> trait (+ space()) + dense / sparse / radix (mixed-radix
+                 dense + sparse) / adaptive / factored /
                  mps / mera / bulk (dynamically scaled bulk–boundary
                  register: isometric gauge under an explicit record,
                  grow/release at runtime, certified per-depth ledger,

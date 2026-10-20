@@ -131,6 +131,7 @@ pub mod schedule;
 pub mod selfhost;
 pub mod shor;
 pub mod sim;
+pub mod space;
 pub mod stitch;
 pub mod support;
 pub mod surface;
@@ -156,7 +157,8 @@ pub mod prelude {
         CliffordFramedState, DenseState, DeviceState, DurationModel, FactoredState, FrameStats,
         FramedState, InterferenceRecord, InterferenceState, LatencyMap, MeraConfig, MeraState,
         MosaicEvent, MosaicPolicy, MosaicState, MpsConfig, MpsState, PauliString, PhaseFieldState,
-        PhysicalOp, Realization, SparseState, Topology, UnfoldProgram, UnfoldStep,
+        PhysicalOp, RadixDenseState, RadixSparseState, Realization, SparseState, Topology,
+        UnfoldProgram, UnfoldStep,
     };
     pub use crate::blocks::{
         preparation, propagate_blocked, propagate_blocked_with, BlockOutcome, BlockSolver,
@@ -269,6 +271,7 @@ pub mod prelude {
         LinearizationReport, SelfComputationCost, SelfHostedStack, VOLUME_COORDINATES,
     };
     pub use crate::sim::Simulator;
+    pub use crate::space::{SiteCircuit, SiteMatrix, SiteOp, Space};
     pub use crate::support::{
         clear_memo, memo_len, propagate_wide, Support, WideConfig, WidePauli, WidePauliSum,
         WidePropagation, WideRotation, MEMO_CAPACITY,

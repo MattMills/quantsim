@@ -30,6 +30,7 @@ mod mera;
 mod mosaic;
 mod mps;
 mod phase_field;
+mod radix;
 mod sparse;
 
 pub use adaptive::AdaptiveState;
@@ -50,6 +51,7 @@ pub use mera::{MeraConfig, MeraState, MERA_LOAD_MAX_QUBITS, MERA_MAX_QUBITS};
 pub use mosaic::{MosaicEvent, MosaicPolicy, MosaicState, MOSAIC_MAX_QUBITS};
 pub use mps::{MpsConfig, MpsState, MPS_LOAD_MAX_QUBITS, MPS_MAX_QUBITS, MPS_MAX_WINDOW};
 pub use phase_field::{PhaseFieldState, MAX_DYADIC_ROOT_DEPTH, MAX_FIELD_MODULUS, MAX_ROOT_ORDER};
+pub use radix::{RadixDenseState, RadixSparseState};
 pub use sparse::{SparseState, SPARSE_MAX_QUBITS};
 
 use std::collections::HashMap;
@@ -59,6 +61,7 @@ use crate::gates::Pauli;
 use crate::math::GateMatrix;
 use crate::rng::Prng;
 use crate::scalar::{Scalar, C64};
+use crate::space::{require_binary, validate_sites, SiteMatrix, Space};
 
 /// Amplitudes with squared magnitude at or below this are pruned by sparse
 /// representations after each gate.
@@ -98,6 +101,74 @@ pub trait Backend<S: Scalar> {
         }
         self.apply(&m, qubits)
     }
+    /// The register's state space (see [`crate::space`]). The default is
+    /// `num_qubits()` qubits; a backend that stores mixed-radix registers
+    /// overrides it, and then `num_qubits()` is its number of **sites**
+    /// and basis indices are little-endian mixed radix.
+    fn space(&self) -> Space {
+        Space::qubits(self.num_qubits())
+    }
+    /// Apply a unitary over the mixed-radix sub-index of `sites`
+    /// (`sites[0]` is the low digit; the matrix dimension is the product
+    /// of their radices).
+    ///
+    /// The default serves qubit-only backends: every target must have
+    /// radix 2, and the matrix goes through [`Backend::apply`]. A
+    /// non-binary target is refused with [`Error::UnsupportedForSpace`] —
+    /// never reinterpreted as bits.
+    fn apply_sites(&mut self, matrix: &SiteMatrix<S>, sites: &[usize]) -> Result<()> {
+        let space = self.space();
+        require_binary(&space, sites, "apply_sites")?;
+        validate_sites(&space, matrix, sites)?;
+        self.apply(&matrix.to_gate()?, sites)
+    }
+    /// Project site `site` onto `digit`, zeroing every other branch and
+    /// multiplying surviving amplitudes by `renorm`. The default handles
+    /// radix-2 sites through [`Backend::project`] and refuses the rest.
+    fn project_digit(&mut self, site: usize, digit: usize, renorm: f64) -> Result<()> {
+        let space = self.space();
+        require_binary(&space, &[site], "project_digit")?;
+        if digit > 1 {
+            return Err(Error::InvalidState(format!(
+                "digit {digit} out of range for site {site} of radix 2"
+            )));
+        }
+        self.project(site, digit == 1, renorm);
+        Ok(())
+    }
+    /// Measure one site in its computational basis, collapsing and
+    /// renormalizing the state: the site-level [`Backend::measure`].
+    /// A radix-2 site is measured by [`Backend::measure`] itself, so qubit
+    /// results are seed-for-seed identical; a wider site draws its digit
+    /// from the cumulative Born weights in digit order.
+    fn measure_site(&mut self, site: usize, rng: &mut Prng) -> Result<usize> {
+        let space = self.space();
+        space.validate_sites(&[site])?;
+        let r = space.radix(site);
+        if r == 2 {
+            return self.measure(site, rng).map(usize::from);
+        }
+        let mut weights = vec![0.0f64; r];
+        self.for_each_nonzero(&mut |i, a| weights[space.digit(i, site)] += a.born_weight());
+        let total: f64 = weights.iter().sum();
+        if total <= 0.0 || !total.is_finite() {
+            return Err(Error::InvalidState(format!(
+                "total Born weight {total} is not positive; cannot sample a measurement"
+            )));
+        }
+        let u = rng.next_f64() * total;
+        let mut cumulative = 0.0;
+        let mut digit = (0..r).rev().find(|&d| weights[d] > 0.0).unwrap_or(0);
+        for (d, &w) in weights.iter().enumerate() {
+            cumulative += w;
+            if w > 0.0 && u < cumulative {
+                digit = d;
+                break;
+            }
+        }
+        self.project_digit(site, digit, 1.0 / weights[digit].sqrt())?;
+        Ok(digit)
+    }
     /// Amplitude of a basis state.
     fn amplitude(&self, index: u64) -> S;
     /// Visit every stored nonzero amplitude as `(basis_index, amplitude)`.
@@ -128,7 +199,7 @@ pub trait Backend<S: Scalar> {
     /// A non-injective `map` is not unitary and is reported as
     /// [`Error::InvalidState`] rather than silently applied.
     fn apply_permutation(&mut self, label: &str, map: &dyn Fn(u64) -> u64) -> Result<()> {
-        let n = self.num_qubits();
+        let space = self.space();
         let mut entries: Vec<(u64, S)> = Vec::with_capacity(self.nonzero_count());
         self.for_each_nonzero(&mut |i, a| entries.push((i, a)));
         let mut seen: HashMap<u64, u64> = HashMap::with_capacity(entries.len());
@@ -138,9 +209,9 @@ pub trait Backend<S: Scalar> {
                 crate::guard::checkpoint()?;
             }
             let j = map(i);
-            if n < 64 && j >= (1u64 << n) {
+            if j as u128 >= space.dim() {
                 return Err(Error::InvalidState(format!(
-                    "{label} sent index {i} to {j}, outside the {n}-qubit register"
+                    "{label} sent index {i} to {j}, outside the register of {space}"
                 )));
             }
             if let Some(prev) = seen.insert(j, i) {
@@ -204,13 +275,23 @@ pub trait Backend<S: Scalar> {
                 num_qubits: self.num_qubits(),
             });
         }
+        let space = self.space();
+        if !space.is_qubits() {
+            require_binary(&space, &[qubit], "measure")?;
+        }
         let mut total = 0.0;
         let mut one_weight = 0.0;
         let mask = 1u64 << qubit;
+        let qubits = space.is_qubits();
         self.for_each_nonzero(&mut |i, a| {
             let w = a.born_weight();
             total += w;
-            if i & mask != 0 {
+            let one = if qubits {
+                i & mask != 0
+            } else {
+                space.digit(i, qubit) == 1
+            };
+            if one {
                 one_weight += w;
             }
         });
@@ -272,6 +353,13 @@ pub trait Backend<S: Scalar> {
 /// Inner-product convention: `⟨φ|ψ⟩ = Σ conj(φ_i) ψ_i`, products taken
 /// left-to-right (relevant for non-commutative and non-associative `S`).
 pub fn pauli_expectation<S: Scalar>(state: &dyn Backend<S>, ops: &[(usize, Pauli)]) -> Result<S> {
+    let space = state.space();
+    if !space.is_qubits() {
+        return Err(Error::UnsupportedForSpace {
+            operation: "pauli_expectation".into(),
+            space: space.to_string(),
+        });
+    }
     let n = state.num_qubits();
     let qubits: Vec<usize> = ops.iter().map(|&(q, _)| q).collect();
     crate::circuit::validate_targets(n, &qubits)?;
@@ -341,12 +429,14 @@ pub fn max_amplitude_deviation<S: Scalar>(a: &dyn Backend<S>, b: &dyn Backend<S>
 }
 
 type BackendCtor<S> = Box<dyn Fn(usize) -> Result<Box<dyn Backend<S>>> + Send + Sync>;
+type SpaceCtor<S> = Box<dyn Fn(Space) -> Result<Box<dyn Backend<S>>> + Send + Sync>;
 
 /// A name → constructor catalog of state representations, mirroring the
 /// gate registry: research backends register here and become selectable by
 /// name through the [`Simulator`](crate::sim::Simulator).
 pub struct BackendRegistry<S: Scalar = C64> {
     ctors: HashMap<String, BackendCtor<S>>,
+    space_ctors: HashMap<String, SpaceCtor<S>>,
 }
 
 impl<S: Scalar> Default for BackendRegistry<S> {
@@ -360,6 +450,7 @@ impl<S: Scalar> BackendRegistry<S> {
     pub fn new() -> Self {
         BackendRegistry {
             ctors: HashMap::new(),
+            space_ctors: HashMap::new(),
         }
     }
 
@@ -382,6 +473,14 @@ impl<S: Scalar> BackendRegistry<S> {
             .expect("fresh registry");
         reg.register("sparse", |n| Ok(Box::new(SparseState::<S>::new(n)?)))
             .expect("fresh registry");
+        reg.register_space("dense", |space| {
+            Ok(Box::new(RadixDenseState::<S>::new(space)?))
+        })
+        .expect("fresh registry");
+        reg.register_space("sparse", |space| {
+            Ok(Box::new(RadixSparseState::<S>::new(space)?))
+        })
+        .expect("fresh registry");
         reg.register("adaptive", |n| Ok(Box::new(AdaptiveState::<S>::new(n)?)))
             .expect("fresh registry");
         reg.register("factored", |n| Ok(Box::new(FactoredState::<S>::new(n)?)))
@@ -429,6 +528,49 @@ impl<S: Scalar> BackendRegistry<S> {
             Some(ctor) => ctor(num_qubits),
             None => Err(Error::UnknownBackend(name.to_string())),
         }
+    }
+
+    /// Register a constructor for mixed-radix spaces under a backend name
+    /// (the name may also have a qubit constructor; the two are separate
+    /// tables). Only backends that store non-binary sites natively should
+    /// register here.
+    pub fn register_space(
+        &mut self,
+        name: impl Into<String>,
+        ctor: impl Fn(Space) -> Result<Box<dyn Backend<S>>> + Send + Sync + 'static,
+    ) -> Result<()> {
+        let name = name.into();
+        if self.space_ctors.contains_key(&name) {
+            return Err(Error::DuplicateBackend(name));
+        }
+        self.space_ctors.insert(name, Box::new(ctor));
+        Ok(())
+    }
+
+    /// Instantiate a backend over `space`. A qubit space goes to the
+    /// ordinary constructor, so every backend accepts it; a mixed-radix
+    /// space needs a [`register_space`](Self::register_space) entry, and a
+    /// backend without one is refused with [`Error::UnsupportedForSpace`]
+    /// rather than handed a register it would read as bits.
+    pub fn create_with_space(&self, name: &str, space: &Space) -> Result<Box<dyn Backend<S>>> {
+        if space.is_qubits() {
+            return self.create(name, space.sites());
+        }
+        match self.space_ctors.get(name) {
+            Some(ctor) => ctor(space.clone()),
+            None if self.ctors.contains_key(name) => Err(Error::UnsupportedForSpace {
+                operation: format!("backend '{name}'"),
+                space: space.to_string(),
+            }),
+            None => Err(Error::UnknownBackend(name.to_string())),
+        }
+    }
+
+    /// Names of backends that accept mixed-radix spaces, sorted.
+    pub fn space_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.space_ctors.keys().cloned().collect();
+        names.sort();
+        names
     }
 
     /// Registered backend names, sorted.

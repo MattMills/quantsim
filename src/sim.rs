@@ -81,6 +81,20 @@ impl<S: Scalar> Simulator<S> {
         Ok(state)
     }
 
+    /// Run a [`SiteCircuit`](crate::space::SiteCircuit) over its
+    /// mixed-radix space on the named backend, returning the final state.
+    /// Backends without native mixed-radix storage are refused (see
+    /// [`BackendRegistry::create_with_space`]).
+    pub fn run_space(
+        &self,
+        backend: &str,
+        circuit: &crate::space::SiteCircuit<S>,
+    ) -> Result<Box<dyn Backend<S>>> {
+        let mut state = self.backends.create_with_space(backend, circuit.space())?;
+        circuit.run(state.as_mut())?;
+        Ok(state)
+    }
+
     /// Apply a single registry gate directly to an existing state — useful
     /// for classically controlled corrections after a mid-circuit
     /// [`Backend::measure`].
