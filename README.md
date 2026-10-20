@@ -10,6 +10,9 @@ parts are swappable:
   first non-Cayley–Dickson algebra,
   **[`SplitQuaternion`](src/scalar/split_quaternion.rs)** — the
   coquaternions held as an *inclusion/exclusion pair* (below) —
+  **[`SplitOctonion`](src/scalar/split_cayley_dickson.rs)** — the split
+  Cayley–Dickson doubling `SplitCD<T>` reaching 𝕆ₛ, an alternative
+  composition algebra with norm signature (4,4) —
   **[`Polarity<N>`](src/scalar/polarity.rs)** — `N` twisted polarities
   in one amplitude, generalizing that pair — and
   **[`Ball`](src/scalar/ball.rs)** —

@@ -542,7 +542,7 @@ impl RecursiveLattice {
 /// Cyclic Jacobi eigendecomposition of a real symmetric `n × n` matrix
 /// (row-major). Returns eigenvalues ascending and the matching
 /// eigenvectors as the *columns* of a row-major `n × n` matrix.
-fn sym_eigen(n: usize, a_in: &[f64]) -> (Vec<f64>, Vec<f64>) {
+pub(crate) fn sym_eigen(n: usize, a_in: &[f64]) -> (Vec<f64>, Vec<f64>) {
     let mut a = a_in.to_vec();
     let mut v = vec![0.0f64; n * n];
     for i in 0..n {
