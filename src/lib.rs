@@ -97,6 +97,7 @@ pub mod gates;
 pub mod guard;
 pub mod harness;
 pub mod heisenberg;
+pub mod hermitian2;
 pub mod horizon;
 pub mod lateral;
 pub mod lattice;
@@ -215,6 +216,7 @@ pub mod prelude {
         FactoredPauliSum, FactoredReport, Forward, Journal, Meeting, PauliSum, Propagation,
         Rotation, Step, XSpan,
     };
+    pub use crate::hermitian2::{CausalClass, FormSignature, Hermitian2};
     pub use crate::horizon::{horizon, Horizon, AXES};
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
