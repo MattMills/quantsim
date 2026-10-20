@@ -81,6 +81,15 @@ pub enum Error {
         /// The register's space (see `Space`'s `Display`).
         space: String,
     },
+    /// A space transition would remove amplitude and the caller did not
+    /// opt in to discarding it; the state is unchanged. See
+    /// [`crate::space::Transition`].
+    WouldDiscard {
+        /// The transition and the space it was asked of.
+        operation: String,
+        /// Summed `abs_sqr` of the amplitudes it would remove.
+        weight: f64,
+    },
     /// Requested width exceeds what the backend supports.
     TooManyQubits {
         /// Requested width.
@@ -171,6 +180,12 @@ impl fmt::Display for Error {
             }
             Error::UnsupportedForSpace { operation, space } => {
                 write!(f, "{operation} is not supported on a register of {space}")
+            }
+            Error::WouldDiscard { operation, weight } => {
+                write!(
+                    f,
+                    "{operation} would discard weight {weight:.3e}; refused (allow the discard to drop and account for it)"
+                )
             }
             Error::TooManyQubits { requested, max } => {
                 write!(

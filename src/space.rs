@@ -40,6 +40,45 @@
 //! The space says *what* the register is; the geometry says *where* its
 //! sites are; the backend says *how* it is stored. They change
 //! independently.
+//!
+//! ## A space over time
+//!
+//! A register's space need not be constant. A [`Transition`] changes it
+//! mid-computation — merge or split sites (free: in this index convention
+//! no amplitude moves), grow a site or promote a radix (isometric
+//! embeddings), release a site or demote a radix (exact only when the
+//! removed levels are empty) — so a [`SiteCircuit`] is a **path** of
+//! spaces ([`SiteCircuit::space_path`]). Removal never loses weight
+//! silently: it is refused with [`Error::WouldDiscard`], or, when the
+//! circuit opts in, dropped and its weight returned.
+//!
+//! ```
+//! use quantsim::prelude::*;
+//!
+//! // A qutrit workspace that exists only in the middle of the computation.
+//! let mut c = SiteCircuit::<C64>::new(Space::new(&[3, 2])?);
+//! c.fourier(0)?
+//!     .grow(2, 3)? // [3, 2] → [3, 2, 3], the workspace in |0⟩
+//!     .cshift(0, 2)? // copy site 0 into it
+//!     .cshift(2, 1)? // let it drive site 1
+//!     .cshift(0, 2)?
+//!     .cshift(0, 2)? // uncompute: 3·d ≡ 0 (mod 3)
+//!     .release(2)?; // exact: the workspace is back in |0⟩
+//! assert_eq!(c.final_space(), c.space());
+//! let sim: Simulator = Simulator::new();
+//! let state = sim.run_space("dense", &c)?;
+//! assert!((state.total_weight() - 1.0).abs() < 1e-12);
+//!
+//! // A lossy step must opt in, and then reports what it dropped.
+//! let mut lossy = SiteCircuit::<C64>::new(Space::new(&[3])?);
+//! lossy
+//!     .fourier(0)?
+//!     .transition(Transition::Demote { site: 0, radix: 2 }, true)?;
+//! let (state, dropped) = sim.run_space_accounted("sparse", &lossy)?;
+//! assert!((dropped - 1.0 / 3.0).abs() < 1e-12);
+//! assert!((state.total_weight() - 2.0 / 3.0).abs() < 1e-12);
+//! # Ok::<(), quantsim::Error>(())
+//! ```
 
 use crate::error::{Error, Result};
 use crate::math::GateMatrix;
@@ -430,6 +469,231 @@ fn snap_real(entries: &mut [C64]) {
     }
 }
 
+// ── transitions: the space as a path ─────────────────────────────────
+
+/// One step that changes a register's [`Space`] mid-computation.
+///
+/// Two kinds, with different costs and different guarantees:
+///
+/// * **Refactorings** keep the Hilbert space and change how it is cut into
+///   sites. [`Transition::Merge`] fuses two adjacent sites into one site of
+///   the product radix and [`Transition::Split`] undoes it. In the
+///   little-endian convention the basis index does not change at all — a
+///   radix-4 site *is* two adjacent qubits, read as one digit — so these
+///   are free: no amplitude moves.
+/// * **Embeddings** change the space by an isometry.
+///   [`Transition::Grow`] adds a site in digit 0 (`|ψ⟩ ↦ |ψ⟩ ⊗ |0⟩`) and
+///   [`Transition::Promote`] widens a site's radix, embedding its levels;
+///   both are exact. Their reverses, [`Transition::Release`] and
+///   [`Transition::Demote`], are exact only when the removed levels carry
+///   no amplitude. Otherwise the removed weight is either refused
+///   ([`Error::WouldDiscard`], state untouched) or — when the caller opts
+///   in — dropped **and returned**, never silently.
+///
+/// Merging non-adjacent sites is not offered: it is a site permutation
+/// followed by a merge, and a permutation of unequal radices is not a swap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Transition {
+    /// Fuse sites `site` and `site + 1` into one site of radix
+    /// `r_site · r_{site+1}`, with `site` as the low digit.
+    Merge {
+        /// The low site of the pair.
+        site: usize,
+    },
+    /// Split `site` into two adjacent sites, the low one of radix `low`
+    /// and the high one of radix `r / low`. `low` must divide `r`, and
+    /// both factors must be at least 2.
+    Split {
+        /// The site to split.
+        site: usize,
+        /// Radix of the new low site.
+        low: usize,
+    },
+    /// Insert a new site of radix `radix` at position `at` (`0..=sites`),
+    /// in digit 0.
+    Grow {
+        /// Position of the new site; later sites shift up by one.
+        at: usize,
+        /// Its radix.
+        radix: usize,
+    },
+    /// Remove `site`. Exact when every amplitude has digit 0 there.
+    Release {
+        /// The site to remove.
+        site: usize,
+    },
+    /// Widen `site` to `radix` levels, embedding the old levels as the
+    /// first ones.
+    Promote {
+        /// The site to widen.
+        site: usize,
+        /// Its new radix, larger than the old one.
+        radix: usize,
+    },
+    /// Narrow `site` to `radix` levels. Exact when no amplitude has a digit
+    /// at or above `radix` there.
+    Demote {
+        /// The site to narrow.
+        site: usize,
+        /// Its new radix, smaller than the old one and at least 2.
+        radix: usize,
+    },
+}
+
+impl fmt::Display for Transition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Transition::Merge { site } => write!(f, "merge sites {site} and {}", site + 1),
+            Transition::Split { site, low } => write!(f, "split site {site} with low radix {low}"),
+            Transition::Grow { at, radix } => write!(f, "grow a radix-{radix} site at {at}"),
+            Transition::Release { site } => write!(f, "release site {site}"),
+            Transition::Promote { site, radix } => {
+                write!(f, "promote site {site} to radix {radix}")
+            }
+            Transition::Demote { site, radix } => write!(f, "demote site {site} to radix {radix}"),
+        }
+    }
+}
+
+impl Transition {
+    /// Whether the transition only re-reads indices (merge, split): no
+    /// amplitude moves and nothing can be discarded.
+    pub fn is_relabeling(&self) -> bool {
+        matches!(self, Transition::Merge { .. } | Transition::Split { .. })
+    }
+
+    /// Whether the transition can remove amplitude (release, demote).
+    pub fn can_discard(&self) -> bool {
+        matches!(self, Transition::Release { .. } | Transition::Demote { .. })
+    }
+
+    /// The space this transition leads to from `from`, or why it cannot
+    /// apply there.
+    pub fn target(&self, from: &Space) -> Result<Space> {
+        let bad = |why: String| Error::UnsupportedForSpace {
+            operation: format!("{self} ({why})"),
+            space: from.to_string(),
+        };
+        let n = from.sites();
+        let mut r = from.radices().to_vec();
+        match *self {
+            Transition::Merge { site } => {
+                if site + 1 >= n {
+                    return Err(bad("needs two adjacent sites".into()));
+                }
+                let fused = r[site] * r[site + 1];
+                r.splice(site..site + 2, [fused]);
+            }
+            Transition::Split { site, low } => {
+                from.validate_sites(&[site])?;
+                if low < 2 || r[site] % low != 0 || r[site] / low < 2 {
+                    return Err(bad(format!(
+                        "radix {} has no factor pair with {low}",
+                        r[site]
+                    )));
+                }
+                let high = r[site] / low;
+                r.splice(site..site + 1, [low, high]);
+            }
+            Transition::Grow { at, radix } => {
+                if at > n {
+                    return Err(bad(format!("position {at} is past the {n} sites")));
+                }
+                r.insert(at, radix);
+            }
+            Transition::Release { site } => {
+                from.validate_sites(&[site])?;
+                if n == 1 {
+                    return Err(bad("a register keeps at least one site".into()));
+                }
+                r.remove(site);
+            }
+            Transition::Promote { site, radix } => {
+                from.validate_sites(&[site])?;
+                if radix <= r[site] {
+                    return Err(bad(format!("radix {radix} is not wider than {}", r[site])));
+                }
+                r[site] = radix;
+            }
+            Transition::Demote { site, radix } => {
+                from.validate_sites(&[site])?;
+                if radix >= r[site] {
+                    return Err(bad(format!(
+                        "radix {radix} is not narrower than {}",
+                        r[site]
+                    )));
+                }
+                r[site] = radix;
+            }
+        }
+        Space::new(&r)
+    }
+
+    /// Where basis index `index` of `from` lands in the target space
+    /// ([`Transition::target`]), or `None` when the transition removes it.
+    /// Merge and split return `index` itself.
+    pub fn map_index(&self, from: &Space, index: u64) -> Option<u64> {
+        // Split an index around one site: (below, digit, above), with the
+        // site's stride and radix in `from`.
+        let around = |site: usize| {
+            let s = from.stride(site) as u128;
+            let r = from.radix(site) as u128;
+            let i = index as u128;
+            (i % s, (i / s) % r, i / (s * r), s)
+        };
+        let i = match *self {
+            Transition::Merge { .. } | Transition::Split { .. } => index as u128,
+            Transition::Grow { at, radix } => {
+                let s = if at == from.sites() {
+                    from.dim()
+                } else {
+                    from.stride(at) as u128
+                };
+                let i = index as u128;
+                i % s + (i / s) * s * radix as u128
+            }
+            Transition::Release { site } => {
+                let (low, d, high, s) = around(site);
+                if d != 0 {
+                    return None;
+                }
+                low + high * s
+            }
+            Transition::Promote { site, radix } => {
+                let (low, d, high, s) = around(site);
+                low + d * s + high * s * radix as u128
+            }
+            Transition::Demote { site, radix } => {
+                let (low, d, high, s) = around(site);
+                if d >= radix as u128 {
+                    return None;
+                }
+                low + d * s + high * s * radix as u128
+            }
+        };
+        Some(i as u64)
+    }
+}
+
+/// Refuse a discard unless the caller opted in; `weight` is the summed
+/// `abs_sqr` of the amplitudes the transition would remove. Weight at or
+/// below [`PRUNE_TOL`](crate::backend::PRUNE_TOL) is numerical zero, as
+/// for sparse pruning — still returned by the caller, never refused.
+pub(crate) fn admit_discard(
+    t: &Transition,
+    space: &Space,
+    weight: f64,
+    allow_discard: bool,
+) -> Result<()> {
+    if weight > crate::backend::PRUNE_TOL && !allow_discard {
+        return Err(Error::WouldDiscard {
+            operation: format!("{t} on a register of {space}"),
+            weight,
+        });
+    }
+    Ok(())
+}
+
 // ── kernels shared by space-native backends ─────────────────────────
 
 /// Check a site-level application against `space`: targets valid and the
@@ -512,35 +776,80 @@ pub enum SiteOp<S: Scalar> {
     /// A bound qubit gate placed on radix-2 sites, run through the
     /// backend's qubit kernels (`apply` / `apply_diagonal`).
     Qubit(crate::circuit::BoundGate<S>),
+    /// A change of space, run through
+    /// [`Backend::transition`](crate::backend::Backend::transition).
+    Transition {
+        /// The step.
+        transition: Transition,
+        /// Whether removed amplitude may be dropped (and accounted) rather
+        /// than refused.
+        allow_discard: bool,
+    },
 }
 
-/// A gate sequence over a mixed-radix [`Space`]: the site-level
-/// counterpart of [`Circuit`](crate::circuit::Circuit).
+/// A gate sequence over a mixed-radix [`Space`] — or over a **path** of
+/// spaces, when it contains [`Transition`]s: the site-level counterpart of
+/// [`Circuit`](crate::circuit::Circuit).
 ///
-/// Every operation is validated when it is added — targets against the
-/// space, matrix dimension against the targets' radices, unitarity to
-/// [`UNITARY_TOL`](crate::math::UNITARY_TOL) — so [`SiteCircuit::run`]
-/// only has to check that the backend holds the same space. Standard
-/// qubit gates join through [`SiteCircuit::place`], which maps a bound
-/// qubit circuit onto radix-2 sites and refuses any other target.
+/// Every operation is validated when it is added against the space the
+/// circuit has reached at that point — targets, matrix dimension against
+/// the targets' radices, unitarity to
+/// [`UNITARY_TOL`](crate::math::UNITARY_TOL), and each transition's
+/// legality — so [`SiteCircuit::run`] only has to check that the backend
+/// starts in the circuit's initial space. Standard qubit gates join through
+/// [`SiteCircuit::place`], which maps a bound qubit circuit onto radix-2
+/// sites and refuses any other target.
 #[derive(Debug, Clone)]
 pub struct SiteCircuit<S: Scalar = C64> {
     space: Space,
+    path: Vec<Space>,
     ops: Vec<SiteOp<S>>,
 }
 
 impl<S: Scalar> SiteCircuit<S> {
-    /// An empty circuit over `space`.
+    /// An empty circuit starting in `space`.
     pub fn new(space: Space) -> Self {
         SiteCircuit {
+            path: vec![space.clone()],
             space,
             ops: Vec::new(),
         }
     }
 
-    /// The space this circuit acts on.
+    /// The space the circuit starts in (what a backend must hold to run it).
     pub fn space(&self) -> &Space {
         &self.space
+    }
+
+    /// The space the circuit has reached after its last operation.
+    pub fn final_space(&self) -> &Space {
+        self.path
+            .last()
+            .expect("the path always holds the initial space")
+    }
+
+    /// Every space the circuit passes through, in order: the initial space,
+    /// then one entry per transition.
+    pub fn space_path(&self) -> &[Space] {
+        &self.path
+    }
+
+    /// Whether the circuit changes its space at all.
+    pub fn has_transitions(&self) -> bool {
+        self.path.len() > 1
+    }
+
+    /// Whether any transition is allowed to discard amplitude.
+    pub fn allows_discard(&self) -> bool {
+        self.ops.iter().any(|op| {
+            matches!(
+                op,
+                SiteOp::Transition {
+                    allow_discard: true,
+                    ..
+                }
+            )
+        })
     }
 
     /// The operations, in order.
@@ -558,6 +867,10 @@ impl<S: Scalar> SiteCircuit<S> {
         self.ops.is_empty()
     }
 
+    fn current(&self) -> &Space {
+        self.final_space()
+    }
+
     /// Append a site-level unitary.
     pub fn gate(
         &mut self,
@@ -566,7 +879,7 @@ impl<S: Scalar> SiteCircuit<S> {
         sites: &[usize],
     ) -> Result<&mut Self> {
         let label = label.into();
-        validate_sites(&self.space, &matrix, sites)?;
+        validate_sites(self.current(), &matrix, sites)?;
         matrix.check_unitary(&label, crate::math::UNITARY_TOL)?;
         self.ops.push(SiteOp::Sites {
             label,
@@ -576,31 +889,33 @@ impl<S: Scalar> SiteCircuit<S> {
         Ok(self)
     }
 
+    fn radix_of(&self, site: usize) -> Result<usize> {
+        self.current().validate_sites(&[site])?;
+        Ok(self.current().radix(site))
+    }
+
     /// The radix-`d` Fourier transform on one site.
     pub fn fourier(&mut self, site: usize) -> Result<&mut Self> {
-        self.space.validate_sites(&[site])?;
-        let d = self.space.radix(site);
+        let d = self.radix_of(site)?;
         self.gate(format!("fourier{d}"), fourier(d)?, &[site])
     }
 
     /// The shift `X_d` on one site.
     pub fn shift(&mut self, site: usize) -> Result<&mut Self> {
-        self.space.validate_sites(&[site])?;
-        let d = self.space.radix(site);
+        let d = self.radix_of(site)?;
         self.gate(format!("shift{d}"), shift(d), &[site])
     }
 
     /// The clock `Z_d` on one site.
     pub fn clock(&mut self, site: usize) -> Result<&mut Self> {
-        self.space.validate_sites(&[site])?;
-        let d = self.space.radix(site);
+        let d = self.radix_of(site)?;
         self.gate(format!("clock{d}"), clock(d)?, &[site])
     }
 
     /// `|a, b⟩ ↦ |a, b + a mod d_b⟩` with `control` as `a`.
     pub fn cshift(&mut self, control: usize, target: usize) -> Result<&mut Self> {
-        self.space.validate_sites(&[control, target])?;
-        let (da, db) = (self.space.radix(control), self.space.radix(target));
+        self.current().validate_sites(&[control, target])?;
+        let (da, db) = (self.radix_of(control)?, self.radix_of(target)?);
         self.gate(
             format!("cshift{da}x{db}"),
             cshift(da, db),
@@ -610,19 +925,19 @@ impl<S: Scalar> SiteCircuit<S> {
 
     /// Swap two sites; refused unless their radices are equal.
     pub fn swap(&mut self, a: usize, b: usize) -> Result<&mut Self> {
-        self.space.validate_sites(&[a, b])?;
-        let (da, db) = (self.space.radix(a), self.space.radix(b));
+        self.current().validate_sites(&[a, b])?;
+        let (da, db) = (self.radix_of(a)?, self.radix_of(b)?);
         if da != db {
             return Err(Error::UnsupportedForSpace {
                 operation: format!("swap of site {a} (radix {da}) with site {b} (radix {db})"),
-                space: self.space.to_string(),
+                space: self.current().to_string(),
             });
         }
         self.gate(format!("swap{da}"), swap(da), &[a, b])
     }
 
-    /// Place a bound qubit circuit on this space: qubit `q` of `bound`
-    /// lands on site `map[q]`, which must have radix 2.
+    /// Place a bound qubit circuit on the current space: qubit `q` of
+    /// `bound` lands on site `map[q]`, which must have radix 2.
     pub fn place(
         &mut self,
         bound: &crate::circuit::BoundCircuit<S>,
@@ -634,7 +949,7 @@ impl<S: Scalar> SiteCircuit<S> {
                 backend: map.len(),
             });
         }
-        require_binary(&self.space, map, "place")?;
+        require_binary(self.current(), map, "place")?;
         for g in bound.gates() {
             let mut placed = g.clone();
             placed.qubits = g.qubits.iter().map(|&q| map[q]).collect();
@@ -643,9 +958,55 @@ impl<S: Scalar> SiteCircuit<S> {
         Ok(self)
     }
 
-    /// Run every operation, in order, on `backend`, which must hold this
-    /// circuit's space.
-    pub fn run(&self, backend: &mut dyn crate::backend::Backend<S>) -> Result<()> {
+    /// Append a change of space. With `allow_discard = false` a release or
+    /// demote that would remove amplitude fails at run time with
+    /// [`Error::WouldDiscard`]; with `true` it drops that amplitude and
+    /// [`SiteCircuit::run`] returns the dropped weight.
+    pub fn transition(&mut self, t: Transition, allow_discard: bool) -> Result<&mut Self> {
+        let next = t.target(self.current())?;
+        self.path.push(next);
+        self.ops.push(SiteOp::Transition {
+            transition: t,
+            allow_discard,
+        });
+        Ok(self)
+    }
+
+    /// [`Transition::Merge`] of `site` and `site + 1`.
+    pub fn merge(&mut self, site: usize) -> Result<&mut Self> {
+        self.transition(Transition::Merge { site }, false)
+    }
+
+    /// [`Transition::Split`] of `site` with low radix `low`.
+    pub fn split(&mut self, site: usize, low: usize) -> Result<&mut Self> {
+        self.transition(Transition::Split { site, low }, false)
+    }
+
+    /// [`Transition::Grow`]: a new radix-`radix` site at `at`, in digit 0.
+    pub fn grow(&mut self, at: usize, radix: usize) -> Result<&mut Self> {
+        self.transition(Transition::Grow { at, radix }, false)
+    }
+
+    /// [`Transition::Release`] of `site`, refusing any discard.
+    pub fn release(&mut self, site: usize) -> Result<&mut Self> {
+        self.transition(Transition::Release { site }, false)
+    }
+
+    /// [`Transition::Promote`] of `site` to `radix`.
+    pub fn promote(&mut self, site: usize, radix: usize) -> Result<&mut Self> {
+        self.transition(Transition::Promote { site, radix }, false)
+    }
+
+    /// [`Transition::Demote`] of `site` to `radix`, refusing any discard.
+    pub fn demote(&mut self, site: usize, radix: usize) -> Result<&mut Self> {
+        self.transition(Transition::Demote { site, radix }, false)
+    }
+
+    /// Run every operation, in order, on `backend`, which must start in
+    /// this circuit's initial space. Returns the total weight (summed
+    /// `abs_sqr`) that opted-in transitions discarded — 0 for a circuit
+    /// without them.
+    pub fn run(&self, backend: &mut dyn crate::backend::Backend<S>) -> Result<f64> {
         let held = backend.space();
         if held != self.space {
             return Err(Error::UnsupportedForSpace {
@@ -654,6 +1015,7 @@ impl<S: Scalar> SiteCircuit<S> {
             });
         }
         let _scope = crate::guard::enter();
+        let mut discarded = 0.0;
         for op in &self.ops {
             crate::guard::checkpoint()?;
             match op {
@@ -664,8 +1026,12 @@ impl<S: Scalar> SiteCircuit<S> {
                         backend.apply_diagonal(d, &g.qubits)?
                     }
                 },
+                SiteOp::Transition {
+                    transition,
+                    allow_discard,
+                } => discarded += backend.transition(transition, *allow_discard)?,
             }
         }
-        Ok(())
+        Ok(discarded)
     }
 }

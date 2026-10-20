@@ -61,7 +61,7 @@ use crate::gates::Pauli;
 use crate::math::GateMatrix;
 use crate::rng::Prng;
 use crate::scalar::{Scalar, C64};
-use crate::space::{require_binary, validate_sites, SiteMatrix, Space};
+use crate::space::{require_binary, validate_sites, SiteMatrix, Space, Transition};
 
 /// Amplitudes with squared magnitude at or below this are pruned by sparse
 /// representations after each gate.
@@ -135,6 +135,24 @@ pub trait Backend<S: Scalar> {
         }
         self.project(site, digit == 1, renorm);
         Ok(())
+    }
+    /// Change the register's space by one [`Transition`], returning the
+    /// weight (summed `abs_sqr`) it removed. A release or demote that would
+    /// remove weight above [`PRUNE_TOL`] is refused with
+    /// [`Error::WouldDiscard`] — state untouched — unless `allow_discard`,
+    /// in which case the amplitude is dropped and its weight returned,
+    /// never silently and never renormalized.
+    ///
+    /// The default refuses every transition with
+    /// [`Error::UnsupportedForSpace`]: a backend whose shape is fixed at
+    /// construction cannot change it. Native mixed-radix stores override
+    /// it.
+    fn transition(&mut self, t: &Transition, allow_discard: bool) -> Result<f64> {
+        let _ = allow_discard;
+        Err(Error::UnsupportedForSpace {
+            operation: format!("space transition ({t}) on backend '{}'", self.name()),
+            space: self.space().to_string(),
+        })
     }
     /// Measure one site in its computational basis, collapsing and
     /// renormalizing the state: the site-level [`Backend::measure`].
@@ -556,10 +574,20 @@ impl<S: Scalar> BackendRegistry<S> {
         if space.is_qubits() {
             return self.create(name, space.sites());
         }
+        self.create_native(name, space)
+    }
+
+    /// Instantiate the named backend's native mixed-radix store over
+    /// `space`, **even a qubit space**: what a register whose space will
+    /// change needs, since only native stores implement
+    /// [`Backend::transition`]. A backend without a
+    /// [`register_space`](Self::register_space) entry is refused with
+    /// [`Error::UnsupportedForSpace`].
+    pub fn create_native(&self, name: &str, space: &Space) -> Result<Box<dyn Backend<S>>> {
         match self.space_ctors.get(name) {
             Some(ctor) => ctor(space.clone()),
             None if self.ctors.contains_key(name) => Err(Error::UnsupportedForSpace {
-                operation: format!("backend '{name}'"),
+                operation: format!("backend '{name}' (no native mixed-radix store)"),
                 space: space.to_string(),
             }),
             None => Err(Error::UnknownBackend(name.to_string())),

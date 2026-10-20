@@ -80,6 +80,13 @@ fn every_variant_formats_informatively() {
             ],
         ),
         (
+            Error::WouldDiscard {
+                operation: "release site 2 on a register of radices [3, 2, 5]".into(),
+                weight: 0.25,
+            },
+            &["release site 2", "2.500e-1", "refused"],
+        ),
+        (
             Error::TooManyQubits {
                 requested: 40,
                 max: 32,

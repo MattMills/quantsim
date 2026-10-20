@@ -83,16 +83,45 @@ impl<S: Scalar> Simulator<S> {
 
     /// Run a [`SiteCircuit`](crate::space::SiteCircuit) over its
     /// mixed-radix space on the named backend, returning the final state.
-    /// Backends without native mixed-radix storage are refused (see
-    /// [`BackendRegistry::create_with_space`]).
+    /// A backend without native mixed-radix storage is refused for a
+    /// mixed-radix space and for any circuit with transitions (see
+    /// [`BackendRegistry::create_native`]). A circuit whose transitions opt
+    /// in to discarding amplitude is refused too — this method has nowhere
+    /// to report the weight — and runs through
+    /// [`Simulator::run_space_accounted`] instead.
     pub fn run_space(
         &self,
         backend: &str,
         circuit: &crate::space::SiteCircuit<S>,
     ) -> Result<Box<dyn Backend<S>>> {
-        let mut state = self.backends.create_with_space(backend, circuit.space())?;
-        circuit.run(state.as_mut())?;
-        Ok(state)
+        if circuit.allows_discard() {
+            return Err(crate::error::Error::InvalidState(
+                "run_space: the circuit opts in to discarding amplitude; \
+                 run it with run_space_accounted, which returns the discarded weight"
+                    .into(),
+            ));
+        }
+        self.run_space_accounted(backend, circuit)
+            .map(|(state, _)| state)
+    }
+
+    /// [`Simulator::run_space`] for any circuit, returning the final state
+    /// with the total weight (summed `abs_sqr`) its opted-in transitions
+    /// discarded. A circuit with transitions runs on the backend's native
+    /// mixed-radix store even when it starts on qubits
+    /// ([`BackendRegistry::create_native`]).
+    pub fn run_space_accounted(
+        &self,
+        backend: &str,
+        circuit: &crate::space::SiteCircuit<S>,
+    ) -> Result<(Box<dyn Backend<S>>, f64)> {
+        let mut state = if circuit.has_transitions() {
+            self.backends.create_native(backend, circuit.space())?
+        } else {
+            self.backends.create_with_space(backend, circuit.space())?
+        };
+        let discarded = circuit.run(state.as_mut())?;
+        Ok((state, discarded))
     }
 
     /// Apply a single registry gate directly to an existing state — useful
