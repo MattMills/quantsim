@@ -1422,6 +1422,36 @@ let sim = Simulator::<Quaternion>::new();
 let sim = Simulator::<f64>::new();
 ```
 
+### A qubit whose geometry comes from the algebra
+
+[`hermitian2`](src/hermitian2.rs) holds a qubit as a 2×2 Hermitian matrix
+`[[a, z], [z̄, b]]` over any `Scalar`, with `det = a·b − N(z)` as its
+quadratic form. Over ℂ that is the standard picture — trace as time, Bloch
+vector as space, pure states on the light cone of ℝ^{3,1} — and the tests
+certify it against the dense backend (Bloch vector against
+`pauli_expectation`, `Re tr(ρσ)` against `|⟨ψ|φ⟩|²`). Over the other
+algebras the same construction gives a different spacetime, and
+`hermitian2::signature` measures it from the algebra's own norm:
+
+| algebra | signature of `det` | pure spinors `ψψ†` null? |
+|---|---|---|
+| ℝ | (1, 2) | yes |
+| ℂ | (1, 3) | yes |
+| split-complex | (2, 2) | yes |
+| ℍ | (1, 5) | yes |
+| split-quaternions | (3, 3) | yes |
+| 𝕆 | (1, 9) | yes |
+| 𝕊 | (1, 17) | **no** — the norm stops being multiplicative |
+
+Null rotations `[[1, w], [0, 1]]`, `[[1, 0], [w, 1]]` and real boosts are
+written out entry by entry, so they need no bracketing and preserve `det`
+in every algebra, sedenions included; the general `M X M†` is offered only
+for associative algebras and refuses the rest. Boundaries, stated in the
+module: the trace form `Re tr(XY)` is a probability only over definite
+algebras (over the split ones it goes negative and is reported, not
+clamped), and there is **no tensor product** — over 𝕆 none exists, so a
+`Hermitian2` is one closed system, not a register that composes.
+
 ## Conventions
 
 | topic | convention |
@@ -1442,8 +1472,8 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 989 tests (88 unit + 893 across eighty-three
-integration suites + 8 doctests; one more — the 17 s measurement that
+`cargo test` runs 1137 tests (88 unit + 1040 across ninety-four
+integration suites + 9 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
 line coverage is 90%+ via `cargo llvm-cov`, with the remaining gap almost
@@ -1729,6 +1759,18 @@ entirely trivial accessors and defensive guards:
   ratio; plus the algebra-sector qudit and harness rows. The algebra
   also joins the existing `reproductions`, `property_tests` and
   `gate_matrices` sweeps.
+- **hermitian2** — the signature of `det` measured per algebra (ℝ, ℂ,
+  split-complex, ℍ, split-quaternions, 𝕆, 𝕊) by diagonalizing its Gram
+  matrix; `born_weight` agreeing with `Re(z·z̄)` and the trace form with
+  `tr X·tr Y − 2·det(X, Y)` in every algebra; over ℂ, pure states from the
+  dense backend landing on the null cone with the Bloch vector equal to
+  `(⟨Z⟩, ⟨X⟩, −⟨Y⟩)` and `Re tr(ρσ)` equal to `|⟨ψ|φ⟩|²`; pure spinors null
+  through 𝕆 and measurably off the cone over 𝕊; shears and boosts
+  preserving `det` in all seven algebras and keeping octonionic pure
+  states null; the entrywise shears equal to `M X M†` wherever that is
+  defined, `det` scaling by `|det M|²` over ℂ, and the octonion refusal;
+  the trace form non-negative over ℂ, ℍ, 𝕆 and negative over both split
+  algebras.
 - **closure** — cycle rank equal to `|E| − |V| + 1` on rings and grids
   with every loop verified to be a real closed walk; a tree measured to
   have no reach at all; thirty intended changes each leaving closure
@@ -2545,6 +2587,8 @@ src/
                  from trailing digits, and a journalled sweep priced
                  against a closed form
   qudit.rs       hierarchical algebraic registers, dual-algebra synthesis
+  hermitian2.rs  a qubit as a 2×2 Hermitian matrix over any algebra: det
+                 signature measured per algebra, null cone, shears/boosts
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
   guard.rs       resource guard: measured memory admission, time budgets
   gates/         GateDef trait, FixedGate/ParamGate, standard library
