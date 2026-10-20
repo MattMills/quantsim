@@ -99,6 +99,7 @@ pub mod harness;
 pub mod heisenberg;
 pub mod hermitian2;
 pub mod horizon;
+pub mod krein;
 pub mod lateral;
 pub mod lattice;
 pub mod library;
@@ -220,6 +221,7 @@ pub mod prelude {
     };
     pub use crate::hermitian2::{CausalClass, FormSignature, Hermitian2};
     pub use crate::horizon::{horizon, Horizon, AXES};
+    pub use crate::krein::{KreinLedger, KreinMetric, KreinRegister};
     pub use crate::library;
     pub use crate::lift::{self, LiftedCircuit, ResourcePrep};
     pub use crate::math::{c64, cis, GateMatrix};
@@ -260,7 +262,8 @@ pub mod prelude {
     };
     pub use crate::scalar::{
         Ball, CComplex, DirectSum, Octonion, Polarity, Polarity2, Polarity3, Polarity4, Quaternion,
-        Scalar, Sedenion, SplitComplex, SplitQuaternion, Trigintaduonion, C64, CD,
+        Scalar, Sedenion, SplitCD, SplitComplex, SplitOctonion, SplitQuaternion, Trigintaduonion,
+        C64, CD,
     };
     pub use crate::schedule::{
         FeedbackOp, GateLoop, MeasureEvent, OverlapPolicy, Schedule, ScheduleTrace,

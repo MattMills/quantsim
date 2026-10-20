@@ -16,6 +16,7 @@
 //! | [`Sedenion`]        | 𝕊                      | 16  | zero divisors; Born weights need not be conserved |
 //! | [`SplitComplex`]    | ℝ⊕ℝj, j² = +1          | 2   | non-Cayley–Dickson; indefinite Born form |
 //! | [`SplitQuaternion`] | coquaternions, `M₂(ℝ)` | 4   | ℂ embeds (full gate set); amplitudes are an inclusion/exclusion pair, net weight `\|z₊\|²−\|z₋\|²` |
+//! | [`SplitOctonion`]   | 𝕆ₛ = [`SplitCD`]`<ℍ>`   | 8   | split octonions: alternative, multiplicative norm of signature (4,4); ℂ embeds (full gate set) |
 //! | [`Polarity<N>`]     | `N` twisted polarities | 2^N | the pair generalized: `j_a²=+1`, `j_aj_b=−j_bj_a`; net weight by degree parity. `Polarity<2>` **is** the split quaternions |
 //! | [`Ball`]            | ℂ, midpoint ± radius   | 2   | coarse-grained certified arithmetic; midpoints track `C64` exactly |
 //!
@@ -39,6 +40,7 @@ mod complex;
 mod direct_sum;
 mod polarity;
 mod real;
+mod split_cayley_dickson;
 mod split_complex;
 mod split_quaternion;
 
@@ -46,6 +48,7 @@ pub use ball::Ball;
 pub use cayley_dickson::{CComplex, Octonion, Quaternion, Sedenion, Trigintaduonion, CD};
 pub use direct_sum::DirectSum;
 pub use polarity::{Polarity, Polarity2, Polarity3, Polarity4, MAX_POLARITIES};
+pub use split_cayley_dickson::{SplitCD, SplitOctonion};
 pub use split_complex::SplitComplex;
 pub use split_quaternion::SplitQuaternion;
 
