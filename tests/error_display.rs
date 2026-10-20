@@ -69,6 +69,17 @@ fn every_variant_formats_informatively() {
             &["'s'", "algebra R"],
         ),
         (
+            Error::UnsupportedForSpace {
+                operation: "apply on site 1 (radix 3)".into(),
+                space: "radices [2, 3]".into(),
+            },
+            &[
+                "apply on site 1 (radix 3)",
+                "radices [2, 3]",
+                "not supported",
+            ],
+        ),
+        (
             Error::TooManyQubits {
                 requested: 40,
                 max: 32,

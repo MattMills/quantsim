@@ -71,6 +71,16 @@ pub enum Error {
         /// Algebra label (see `Scalar::algebra_name`).
         algebra: String,
     },
+    /// An operation that needs a particular register shape was asked of a
+    /// register that does not have it: a qubit-only operation on a
+    /// non-binary site, or a mixed-radix space on a backend that only
+    /// stores qubits. See [`crate::space`].
+    UnsupportedForSpace {
+        /// What was asked.
+        operation: String,
+        /// The register's space (see `Space`'s `Display`).
+        space: String,
+    },
     /// Requested width exceeds what the backend supports.
     TooManyQubits {
         /// Requested width.
@@ -158,6 +168,9 @@ impl fmt::Display for Error {
                     f,
                     "gate '{gate}' cannot be constructed over algebra {algebra}"
                 )
+            }
+            Error::UnsupportedForSpace { operation, space } => {
+                write!(f, "{operation} is not supported on a register of {space}")
             }
             Error::TooManyQubits { requested, max } => {
                 write!(
