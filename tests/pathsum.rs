@@ -137,8 +137,13 @@ fn readout_costs_two_to_the_h_star_and_not_two_to_the_width() {
     assert_eq!(ps.internal_vars(), 0);
     let a = ps.amplitude(0);
     assert!(a.re.is_finite() && a.im.is_finite());
+    // Pin the budget: the guard otherwise measures MemAvailable, and a
+    // host with 64 GiB free would admit the allocation.
+    quantsim::guard::set_memory_limit(Some(1 << 30));
+    let refused = quantsim::DenseState::<C64>::new(32).is_err();
+    quantsim::guard::set_memory_limit(None);
     assert!(
-        quantsim::DenseState::<C64>::new(32).is_err(),
+        refused,
         "dense must refuse this width, or the comparison proves nothing"
     );
 }
