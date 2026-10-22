@@ -21,6 +21,7 @@ mod adaptive;
 mod braided_state;
 mod bulk;
 mod clifford_frame;
+mod composite;
 mod dense;
 mod device;
 mod factored;
@@ -42,6 +43,7 @@ pub use clifford_frame::{
     conjugate_by_step, CliffordFrameStats, CliffordFramedState, CliffordStep, PauliString,
     CLIFFORD_DIAGONAL_MAX, CLIFFORD_RECOGNITION_MAX,
 };
+pub use composite::{CompositeEvent, CompositePolicy, CompositeState};
 pub use dense::{DenseState, DENSE_MAX_QUBITS};
 pub use device::{ArityPolicy, DeviceState, DurationModel, LatencyMap, PhysicalOp, Topology};
 pub use factored::{FactoredState, FACTORED_MAX_QUBITS, FACTOR_MAX_QUBITS};
@@ -473,8 +475,8 @@ impl<S: Scalar> BackendRegistry<S> {
     }
 
     /// A registry with the built-in `"dense"`, `"sparse"`, `"adaptive"`,
-    /// `"factored"`, `"mps"`, `"mera"`, `"bulk"`, `"mosaic"`, `"bundle"`
-    /// and `"branched"` backends.
+    /// `"factored"`, `"mps"`, `"mera"`, `"bulk"`, `"mosaic"`, `"composite"`,
+    /// `"bundle"` and `"branched"` backends.
     /// (`"bundle"` is the graph-state
     /// [`PolarityBundle`](crate::bundle::PolarityBundle): exact and
     /// `O(n + |E|)` on the Clifford sector, refusing anything else by
@@ -511,6 +513,14 @@ impl<S: Scalar> BackendRegistry<S> {
             .expect("fresh registry");
         reg.register("mosaic", |n| Ok(Box::new(MosaicState::<S>::new(n)?)))
             .expect("fresh registry");
+        reg.register("composite", |n| {
+            Ok(Box::new(CompositeState::<S>::new(Space::qubits(n))?))
+        })
+        .expect("fresh registry");
+        reg.register_space("composite", |space| {
+            Ok(Box::new(CompositeState::<S>::new(space)?))
+        })
+        .expect("fresh registry");
         reg.register("bundle", |n| {
             let mut bundle = crate::bundle::PolarityBundle::new(n)?;
             // The Backend contract starts at |0…0⟩; the bundle's own

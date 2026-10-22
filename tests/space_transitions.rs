@@ -223,11 +223,11 @@ fn a_qubit_pair_becomes_a_ququart_and_back_inside_one_circuit() {
     assert_eq!(c.space_path()[1], Space::new(&[4]).unwrap());
     assert!(c.final_space().is_qubits());
 
-    for backend in ["dense", "sparse"] {
+    for backend in ["dense", "sparse", "composite"] {
         // A circuit that changes shape runs on the native store, even when
         // it starts and ends on qubits.
         let state = sim.run_space(backend, &c).unwrap();
-        assert!(state.name().starts_with("radix-"));
+        assert!(state.name().starts_with("radix-") || state.name() == "composite");
         assert_eq!(state.space(), Space::qubits(2));
         common::assert_close(state.probability(0), 1.0, 1e-12);
     }
@@ -417,7 +417,7 @@ fn a_workspace_grown_used_uncomputed_and_released_is_exact() {
     assert!(!c.allows_discard());
 
     let sim: Simulator = Simulator::new();
-    for backend in ["dense", "sparse"] {
+    for backend in ["dense", "sparse", "composite"] {
         let (state, discarded) = sim.run_space_accounted(backend, &c).unwrap();
         assert_eq!(discarded, 0.0);
         assert!(oracle_gap(state.as_ref(), &oracle) < 1e-10, "{backend}");
@@ -450,7 +450,7 @@ fn releasing_an_entangled_site_is_refused_or_accounted() {
         .transition(Transition::Release { site: 3 }, true)
         .unwrap();
     assert!(accounting.allows_discard());
-    for backend in ["dense", "sparse"] {
+    for backend in ["dense", "sparse", "composite"] {
         match sim.run_space(backend, &refusing) {
             Err(Error::WouldDiscard { weight, .. }) => {
                 common::assert_close(weight, entangled, 1e-10)
