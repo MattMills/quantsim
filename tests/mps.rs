@@ -62,7 +62,7 @@ fn truncation_degrades_measurably_never_silently() {
     let mut dense = DenseState::<C64>::new(6).unwrap();
     bound.run(&mut dense).unwrap();
 
-    let mut deviations = Vec::new();
+    let (mut deviations, mut ledgers) = (Vec::new(), Vec::new());
     for cap in [1usize, 2, 8] {
         let mut mps = MpsState::<C64>::with_config(
             6,
@@ -74,7 +74,11 @@ fn truncation_degrades_measurably_never_silently() {
         .unwrap();
         bound.run(&mut mps).unwrap();
         deviations.push(max_amplitude_deviation(&dense, &mps));
+        ledgers.push(mps.discarded_weight());
     }
+    // The state books what the cap cut, without a reference to compare.
+    assert!(ledgers[0] > 1e-3 && ledgers[1] > 0.0, "{ledgers:?}");
+    assert_eq!(ledgers[2], 0.0, "bond 8 cuts nothing: {ledgers:?}");
     assert!(
         deviations[0] > 0.05,
         "bond-1 (product state) must deviate substantially: {deviations:?}"
@@ -175,15 +179,21 @@ fn wide_gates_and_load_respect_documented_limits() {
         Err(Error::TooManyQubits { requested: 6, max }) => assert_eq!(max, MPS_MAX_WINDOW),
         other => panic!("expected window-cap error, got {:?}", other.err()),
     }
-    // Load compiles through a 2^n buffer admitted at REAL capacity: 20
-    // qubits (16 MiB) is admissible and works; 50 qubits (16 PiB) is
-    // inhibited by the guard with the measured numbers, not a presumed
-    // width constant.
+    // A dense load compiles through a 2^n buffer admitted at REAL
+    // capacity: 20 qubits (16 MiB) is admissible and works. A sparse
+    // load never needs that buffer (see the sparse-load tests below), so
+    // the guard's wall is reached at 50 qubits only by a support whose
+    // prefix tree is itself over capacity — refused with the measured
+    // numbers, not a presumed width constant.
     let mut mps = MpsState::<C64>::new(20).unwrap();
-    mps.load(&[(0, c64(1.0, 0.0))]).unwrap();
+    let all: Vec<(u64, C64)> = (0..1u64 << 20)
+        .map(|i| (i, c64(1.0 / 1024.0, 0.0)))
+        .collect();
+    mps.load(&all).unwrap();
+    assert_eq!(mps.max_bond_dimension(), 1, "|+⟩^20 is a product state");
     let mut wide = MpsState::<C64>::new(50).unwrap();
     assert!(matches!(
-        wide.load(&[(0, c64(1.0, 0.0))]),
+        wide.load(&huge_support(50, 1 << 17)),
         Err(Error::OutOfMemory { .. })
     ));
     const _: () = assert!(MPS_LOAD_MAX_QUBITS == 63, "structural bound only");
@@ -214,4 +224,150 @@ fn selection_places_mps_where_it_wins() {
     assert!(report.chosen.is_some());
     let chosen = report.chosen.unwrap();
     assert!(chosen == "sparse" || chosen == "mps");
+}
+
+/// `count` distinct pseudo-random basis indices on `n` qubits, uniform
+/// amplitude: a support whose prefix tree has bond ≈ `count` mid-chain.
+fn huge_support(n: usize, count: usize) -> Vec<(u64, C64)> {
+    let mut rng = Prng::new(0x5EED);
+    let mask = (1u64 << n) - 1;
+    let mut idx: Vec<u64> = (0..count).map(|_| rng.next_u64() & mask).collect();
+    idx.sort_unstable();
+    idx.dedup();
+    let amp = c64(1.0 / (idx.len() as f64).sqrt(), 0.0);
+    idx.into_iter().map(|i| (i, amp)).collect()
+}
+
+#[test]
+fn sparse_loads_compile_through_the_prefix_tree_at_any_width() {
+    // Loading a k-term superposition used to compile through a 2^n
+    // buffer, so the linear-in-width representation refused a two-term
+    // GHZ load at 31+ qubits. The support's binary prefix tree has bond
+    // ≤ k at every cut; two SVD sweeps trim it to the exact Schmidt
+    // ranks, so a loaded GHZ is bond 2 — identical to one built by gates.
+    let n = 63;
+    let top = (1u64 << n) - 1;
+    let h = FRAC_1_SQRT_2;
+    let mut mps = MpsState::<C64>::new(n).unwrap();
+    mps.load(&[(0, c64(h, 0.0)), (top, c64(0.0, h))]).unwrap();
+    assert_eq!(mps.max_bond_dimension(), 2);
+    assert!(mps.memory_bytes() < 64_000, "{}", mps.memory_bytes());
+    assert!(mps.amplitude(0).approx_eq(c64(h, 0.0), 1e-12));
+    assert!(mps.amplitude(top).approx_eq(c64(0.0, h), 1e-12));
+    assert!(mps.amplitude(1).approx_eq(c64(0.0, 0.0), 1e-12));
+    common::assert_close(mps.total_weight(), 1.0, 1e-12);
+
+    // A generic sparse support at 63 qubits: every amplitude exact, bonds
+    // bounded by the support size, the left-isometric gauge restored
+    // (the norm sits on the last site, so measurement and sampling work).
+    let mut rng = Prng::new(31);
+    let entries: Vec<(u64, C64)> = (0..12)
+        .map(|_| {
+            (
+                rng.next_u64() >> 1,
+                c64(rng.next_f64() - 0.5, rng.next_f64() - 0.5),
+            )
+        })
+        .collect();
+    let norm: f64 = entries
+        .iter()
+        .map(|(_, a)| a.norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    let entries: Vec<(u64, C64)> = entries.iter().map(|&(i, a)| (i, a / norm)).collect();
+    let mut sparse = SparseState::<C64>::new(n).unwrap();
+    sparse.load(&entries).unwrap();
+    mps.load(&entries).unwrap();
+    assert!(mps.max_bond_dimension() <= entries.len());
+    assert!(mps.is_exact());
+    assert!(max_amplitude_deviation(&sparse, &mps) < 1e-12);
+    common::assert_close(mps.total_weight(), 1.0, 1e-12);
+    let shots_mps = mps.sample(200, &mut Prng::new(5)).unwrap();
+    let shots_sparse = sparse.sample(200, &mut Prng::new(5)).unwrap();
+    assert_eq!(shots_mps, shots_sparse);
+
+    // Permutations ride on load, so they now run at full width too.
+    let flip = |i: u64| i ^ top;
+    mps.apply_permutation("flip", &flip).unwrap();
+    sparse.apply_permutation("flip", &flip).unwrap();
+    assert!(max_amplitude_deviation(&sparse, &mps) < 1e-12);
+
+    // A support wider than the bond cap is truncated — and booked.
+    let mut capped = MpsState::<C64>::with_config(
+        n,
+        MpsConfig {
+            max_bond: 8,
+            trunc_tol: 1e-12,
+        },
+    )
+    .unwrap();
+    capped.load(&huge_support(n, 64)).unwrap();
+    assert_eq!(capped.max_bond_dimension(), 8);
+    assert!(
+        capped.discarded_weight() > 0.1,
+        "{}",
+        capped.discarded_weight()
+    );
+
+    // Small widths still take the dense route where it is cheaper, and the
+    // two routes agree on the same support.
+    let mut tree = MpsState::<C64>::new(12).unwrap();
+    let small: Vec<(u64, C64)> = entries.iter().map(|&(i, a)| (i & 0xFFF, a)).collect();
+    tree.load(&small).unwrap();
+    let mut dense = DenseState::<C64>::new(12).unwrap();
+    dense.load(&small).unwrap();
+    assert!(max_amplitude_deviation(&dense, &tree) < 1e-12);
+}
+
+#[test]
+fn a_refused_load_leaves_the_state_untouched() {
+    // Regression: load reset the logical↔site layout *before* admitting
+    // its buffer, so a refused load silently scrambled any state whose
+    // qubits had been routed by SWAPs (the tensors kept the routed order,
+    // the map claimed the identity). Load is now transactional.
+    let n = 50;
+    let mut mps = MpsState::<C64>::new(n).unwrap();
+    mps.apply(
+        &GateMatrix::try_from_c64s(
+            2,
+            &[
+                c64(FRAC_1_SQRT_2, 0.0),
+                c64(FRAC_1_SQRT_2, 0.0),
+                c64(FRAC_1_SQRT_2, 0.0),
+                c64(-FRAC_1_SQRT_2, 0.0),
+            ],
+        )
+        .unwrap(),
+        &[0],
+    )
+    .unwrap();
+    let sim: Simulator = Simulator::new();
+    sim.apply(&mut mps, "cx", &[], &[0, 30]).unwrap();
+    sim.apply(&mut mps, "x", &[], &[7]).unwrap();
+    assert!(mps.routing_swaps() > 0, "the cx must have routed");
+    let before: Vec<(u64, C64)> = {
+        let mut v = Vec::new();
+        mps.for_each_nonzero(&mut |i, a| v.push((i, a)));
+        v
+    };
+    assert!(matches!(
+        mps.load(&huge_support(n, 1 << 17)),
+        Err(Error::OutOfMemory { .. })
+    ));
+    let mut after = Vec::new();
+    mps.for_each_nonzero(&mut |i, a| after.push((i, a)));
+    assert_eq!(before.len(), after.len());
+    for ((i, a), (j, b)) in before.iter().zip(&after) {
+        assert_eq!(i, j);
+        assert!(a.approx_eq(*b, 1e-15));
+    }
+    // And the state keeps evolving correctly afterwards.
+    sim.apply(&mut mps, "cx", &[], &[30, 49]).unwrap();
+    let ghz_end = (1u64 << 0) | (1u64 << 30) | (1u64 << 49) | (1u64 << 7);
+    assert!(mps
+        .amplitude(ghz_end)
+        .approx_eq(c64(FRAC_1_SQRT_2, 0.0), 1e-12));
+    assert!(mps
+        .amplitude(1u64 << 7)
+        .approx_eq(c64(FRAC_1_SQRT_2, 0.0), 1e-12));
 }

@@ -1571,7 +1571,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 1202 tests (91 unit + 1101 across ninety-nine
+`cargo test` runs 1206 tests (91 unit + 1105 across one hundred
 integration suites + 10 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -2211,6 +2211,24 @@ entirely trivial accessors and defensive guards:
   (94.53% at n=3, k=2); Deutsch–Jozsa; Bernstein–Vazirani; superdense
   coding; teleportation with real mid-circuit measurement and feed-forward;
   GHZ/Mermin correlations; sedenion Born-drift by construction.
+- **backend_differential** — every shipped backend driven through random
+  interleavings of the *whole* `Backend` trait (`apply`, `apply_diagonal`,
+  `apply_permutation`, seeded `measure`, `pauli_expectation`, `sample`,
+  `load`, `reset`) and compared after every step: amplitudes to 1e-9
+  (the bundle up to global phase), measurement outcomes, expectation
+  values and sampled counts seed-for-seed, against dense at widths 1–9
+  over the full registry and against sparse at 31/32/33/47/62/63 qubits
+  (the shift boundaries) over Clifford+T. Every refusal must leave the
+  state untouched — the check that caught an MPS `load` resetting its
+  qubit layout before the guard refused it, silently scrambling routed
+  states (13 of 16 wide trials on the old code; fixed, load is now
+  transactional).
+- **mps** — beyond the bond-dimension and truncation suite: sparse loads
+  compile through the support's prefix tree at any width (a 2-term GHZ
+  load at 63 qubits is bond 2 and ~11 KB, where it used to refuse a
+  2^63 buffer), permutations ride on that at full width, and the bond
+  cap's cuts are booked in `discarded_weight()` (zero when exact,
+  nonzero without needing a reference to compare against).
 - **backends_behavior / registry_behavior / memory_scaling /
   error_display** — measurement statistics, sampling determinism across
   representations, adaptive promotion, research-extension workflows
@@ -2250,6 +2268,22 @@ profile):
 The CD⟨ℝ⟩ column is the built-from-scratch Cayley–Dickson complex running
 within ~4% of `num_complex` — the generic-algebra machinery is essentially
 free; wider algebras pay only their arithmetic.
+
+Loading a `k`-term superposition into the MPS backend (`Backend::load`,
+and every `apply_permutation`, which rides on it) used to compile through
+a `2^n` dense buffer and a full-width SVD cascade. It now builds the
+support's binary prefix tree (bond ≤ `k` at every cut) and trims it to
+the Schmidt ranks with two SVD sweeps, falling back to the dense route
+only when the tree would be larger than `2^n`. Measured on this machine,
+random supports, same final bonds either way:
+
+| load | dense route (before) | prefix tree (now) |
+|---|---|---|
+| 64 terms, 20 qubits | 837 ms | 12 ms |
+| 64 terms, 24 qubits | 28.5 s | 19 ms |
+| 256 terms, 26 qubits (cut to the default cap 128, booked) | 255 s | 0.32 s |
+| 64 terms, 63 qubits | refused (2^63 buffer) | 77 ms, bond 64, 6.5 MB |
+| GHZ (2 terms), 63 qubits | refused | 1.7 ms, bond 2, 11 KB |
 
 Memory is asserted, not just plotted (`tests/memory_scaling.rs`): dense is
 `2^n · sizeof(S)` + O(1) and doubles per qubit *and* per algebra-dimension
@@ -2747,7 +2781,7 @@ src/
                  iqp, brickwork_2d, doped_clifford (assumption dials)
   sim.rs         Simulator<S>: registries + one-call execution
   rng.rs         deterministic xoshiro256++
-tests/           eighty-three integration suites (see Testing)
+tests/           one hundred integration suites (see Testing)
 benches/         criterion: gates.rs, width.rs
 examples/        bell, grover, exotic_algebras, research_extension,
                  research_mode, evented_memory, width_scaling,
