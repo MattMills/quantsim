@@ -101,6 +101,7 @@ pub mod hermitian2;
 pub mod horizon;
 pub mod krein;
 pub mod krein_sites;
+pub mod krein_stability;
 pub mod lateral;
 pub mod lattice;
 pub mod library;
