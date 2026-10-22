@@ -1457,6 +1457,72 @@ algebras (over the split ones it goes negative and is reported, not
 clamped), and there is **no tensor product** — over 𝕆 none exists, so a
 `Hermitian2` is one closed system, not a register that composes.
 
+### When a Krein register blows up
+
+[`krein`](src/krein.rs) and [`krein_sites`](src/krein_sites.rs) give a
+register an indefinite metric `η` and accept only pseudo-unitary gates.
+[`krein_stability`](src/krein_stability.rs) asks which *continuous*
+evolutions `exp(−iHt)` such a register can run without its path weight
+blowing up. The generator must be `η`-self-adjoint, which allows complex
+eigenvalue pairs, and Krein's theory gives the test: each real
+eigenvalue gets a **Krein signature** (the inertia of `η` on its
+generalized eigenspace), and only a collision of *opposite* signatures
+can leave the real axis. The module has a dependency-free complex
+eigensolver, the signature per eigenvalue cluster, and a four-way
+classification: `Strong` (with the opposite-signature gap), `Weak`,
+`Marginal` (a Jordan block, i.e. an exceptional point) and `Unstable`
+(with the growth rate). It also builds the Bogoliubov dynamical matrix of
+any quadratic bosonic Hamiltonian, whose evolution lies in `U(n, n)`.
+Measured in `tests/krein_stability.rs`:
+
+- **The ghost sector is a particle number.** Start a `(n, n)` site
+  register on `a_i` and evolve it by the Heisenberg generator. The
+  `η`-norm stays 1, and the negative ("ghost") sector weight equals
+  `⟨a_i†a_i⟩(t)` from the vacuum. An independent truncated Fock-space
+  simulation of the same two-mode Hamiltonian (single- and two-mode
+  squeezing, beam splitter and detuning together) agrees to `1e-9`. So
+  in the Bogoliubov reading, the question the `krein` module left open
+  ("which weight is a probability?") has an answer: the negative-sector
+  weight is not a probability, it is the expected number of quanta
+  created, and it is unbounded.
+- **Squeezing instability is an opposite-signature collision.** For
+  two-mode squeezing `g(a†b† + ab)`, the classifier reports `Unstable`
+  exactly inside `|ω_a + ω_b| < 2g` (27 of 41 sweep points), with rate
+  `√(g² − ((ω_a+ω_b)/2)²)`. The register's path weight grows at twice
+  that rate (fitted to `1e-6`). A beam splitter couples two modes of the
+  same signature, and it stays `Strong` for every coupling and detuning
+  tried, including an exact degeneracy.
+- **The stability margin is the opposite-signature gap, not the spectral
+  gap.** Take a diagonal two-mode generator and 64 seeded random
+  Bogoliubov directions normalised in operator norm. On every ray, the
+  instability threshold is at least half the opposite-signature gap, and
+  pair-squeezing the closest opposite pair reaches it exactly. If the
+  same-signature gap shrinks from `0.5` to `10⁻³`, the least ray
+  threshold stays at `1.00–1.01 ×` gap/2, with gap/2 = 1. If the
+  opposite gap shrinks over the same range, the margin follows it down
+  (least ray threshold `1.44–1.46 ×` gap/2).
+- **The PT dimer** `[[iγ, κ], [κ, −iγ]]` runs on a one-qubit
+  `KreinRegister` with `η = X`. It is `Strong` for `γ < κ`, with gap
+  `2√(κ² − γ²)` closing as `γ → κ`. It is `Marginal` at the exceptional
+  point, where the path weight from `|0⟩` is exactly `1 + 2t + 2t²`
+  (quadratic growth, not exponential). Beyond that it is `Unstable` with
+  rate `√(γ² − κ²)`.
+- **The two-mode Bogoliubov group is the AdS₄ group.** The
+  `n`-mode algebra has dimension `n(2n+1)` and Killing inertia
+  `(n(n+1), n², 0)`, which is `sp(2n, ℝ)`. At `n = 2` that is
+  `(6, 4, 0)`, the same as the AdS₄ twistor stabilizer and the `so(3, 2)`
+  qudit. So the squeezing/beam-splitter group of two bosonic modes and
+  the isometry group of AdS₄ are one real form, read from the same
+  Killing form. At `n = 1` the same check gives `su(1,1) ≅ so(2,1)`.
+
+Boundaries: the eigensolver is dense and meant for site-sized
+generators. A Jordan block of size `k` only resolves to `ε^{1/k}`, so
+the clustering tolerance (default `1e-6` relative) decides what counts
+as one eigenvalue, and growth rates below it are reported as `Marginal`.
+A minimum over seeded rays is an upper bound on the true margin, which
+is why the tests pair it with a ray that attains the lower bound. All
+claims are about `η`-self-adjoint perturbations only.
+
 ### Mixed-radix registers
 
 Every backend now reports its state space: `Backend::space()` returns a
@@ -1631,7 +1697,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 1214 tests (93 unit + 1111 across one hundred
+`cargo test` runs 1224 tests (93 unit + 1121 across one hundred and one
 integration suites + 10 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1970,6 +2036,18 @@ entirely trivial accessors and defensive guards:
   defined, `det` scaling by `|det M|²` over ℂ, and the octonion refusal;
   the trace form non-negative over ℂ, ℍ, 𝕆 and negative over both split
   algebras.
+- **krein_stability** — the complex eigensolver against triangular,
+  companion and Hermitian spectra and `spec(ST) = spec(TS)`; refusal of a
+  generator that is not `η`-self-adjoint; the zero generator `Weak` on an
+  indefinite metric and `Strong` on a definite one; the two-mode squeezing
+  band and its growth rate against the closed form; the beam splitter
+  `Strong` throughout; the ghost-sector weight equal to the vacuum
+  occupation from a truncated Fock-space oracle; path-weight growth at
+  twice the classified rate; the margin bounded below by half the
+  opposite-signature gap on 64 seeded rays and attained on the closest
+  opposite pair; the PT dimer's three phases with `1 + 2t + 2t²` at the
+  exceptional point; and the Bogoliubov algebra's Killing inertia
+  `(n(n+1), n², 0)` matching the AdS₄ stabilizer at `n = 2`.
 - **closure** — cycle rank equal to `|E| − |V| + 1` on rings and grids
   with every loop verified to be a real closed walk; a tree measured to
   have no reach at all; thirty intended changes each leaving closure
@@ -2792,6 +2870,9 @@ src/
                  (backends: backend/radix.rs)
   hermitian2.rs  a qubit as a 2×2 Hermitian matrix over any algebra: det
                  signature measured per algebra, null cone, shears/boosts
+  krein_stability.rs  Krein signatures and the stability of η-self-adjoint
+                 generators (strong/weak/marginal/unstable), complex
+                 eigensolver, Bogoliubov U(n,n) dynamics, sp(2n,ℝ)
   exact.rs       D[ω] ring + ExactState: absolute Clifford+T reference
   guard.rs       resource guard: measured memory admission, time budgets
   gates/         GateDef trait, FixedGate/ParamGate, standard library
