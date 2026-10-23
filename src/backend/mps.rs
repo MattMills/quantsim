@@ -17,12 +17,18 @@
 //!
 //! Truncation makes MPS the crate's first *approximate* backend: with a
 //! generous cap it is exact and passes conformance at reference tolerance;
-//! with a tight cap it degrades **measurably** (see the truncation tests) —
-//! never silently.
+//! with a tight cap it degrades **measurably** — never silently: every
+//! singular value the cap cuts is booked in [`MpsState::discarded_weight`].
 //!
 //! Requires a commutative division algebra (ℝ, ℂ, `CD<f64>`): the Jacobi
 //! SVD rotations assume commuting scalars. Quaternionic MPS is a roadmap
 //! item, not a silent wrong answer — construction fails loudly elsewhere.
+//!
+//! `load` compiles a sparse support through its binary prefix tree (bond
+//! at most the support size, then trimmed to the Schmidt ranks), so loads
+//! and the permutations built on them stay polynomial at full width; only
+//! a support whose tree outgrows `2^n` takes the dense compilation route.
+//! A refused load leaves the state as it was.
 //!
 //! Trait notes: `for_each_nonzero` walks the chain depth-first with
 //! branch pruning (cheap for concentrated states, exponential for generic
@@ -103,6 +109,7 @@ pub struct MpsState<S: Scalar> {
     routing_swaps: usize,
     peak_bond: usize,
     peak_elements: usize,
+    discarded: f64,
 }
 
 impl<S: Scalar> MpsState<S> {
@@ -136,6 +143,7 @@ impl<S: Scalar> MpsState<S> {
             routing_swaps: 0,
             peak_bond: 0,
             peak_elements: 0,
+            discarded: 0.0,
         };
         state.reset_chain(num_qubits);
         Ok(state)
@@ -166,6 +174,28 @@ impl<S: Scalar> MpsState<S> {
     /// `(max bond dimension, max total tensor elements)`.
     pub fn peak(&self) -> (usize, usize) {
         (self.peak_bond, self.peak_elements)
+    }
+
+    /// Total singular-value weight (Σσ²) cut by the [`MpsConfig::max_bond`]
+    /// cap since construction or reset, over every gate split and load.
+    /// Zero means nothing was truncated beyond the relative tolerance;
+    /// nonzero is the measured resolution loss — window-local, like the
+    /// MERA ledger, since the chain's gauge is not maintained between
+    /// splits.
+    pub fn discarded_weight(&self) -> f64 {
+        self.discarded
+    }
+
+    /// Whether the bond cap has cut nothing above numerical noise.
+    pub fn is_exact(&self) -> bool {
+        self.discarded < 1e-20
+    }
+
+    /// Bond rank after the cap, with the cut weight booked.
+    fn capped_rank(&mut self, svd: &crate::math::Svd<S>) -> usize {
+        let chi = svd.rank.min(self.config.max_bond).max(1);
+        self.discarded += svd.sigma[chi..].iter().map(|s| s * s).sum::<f64>();
+        chi
     }
 
     /// SWAPs inserted to route non-adjacent operands.
@@ -245,7 +275,7 @@ impl<S: Scalar> MpsState<S> {
                 }
             }
             let svd = svd_thin(rows, cols, &a, self.config.trunc_tol, 1e-14)?;
-            let chi = svd.rank.min(self.config.max_bond).max(1);
+            let chi = self.capped_rank(&svd);
             let mut site = vec![S::zero(); cur_l * 2 * chi];
             for row in 0..rows {
                 for c in 0..chi {
@@ -594,6 +624,212 @@ impl<S: Scalar> MpsState<S> {
     }
 }
 
+impl<S: Scalar> MpsState<S> {
+    /// [`Backend::load`] body: identity layout, then compile `entries`
+    /// into the chain by whichever route is cheaper — the `2^n` dense
+    /// vector split by successive SVDs, or, for a sparse support, the
+    /// support's binary prefix tree (bond dimension at cut `c` = distinct
+    /// `c`-bit prefixes, never more than the support size) compressed to
+    /// the exact Schmidt ranks by two SVD sweeps. Both end in the same
+    /// gauge: left-isometric sites with the norm on the last.
+    fn load_identity_layout(&mut self, entries: &[(u64, S)]) -> Result<()> {
+        let n = self.tensors.len();
+        // Later entries overwrite earlier ones, as in a dense buffer.
+        let mut support: Vec<(u64, S)> = entries
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeMap<u64, S>>()
+            .into_iter()
+            .filter(|&(_, a)| a.abs_sqr() > 0.0)
+            .collect();
+        if n >= 2 && !support.is_empty() {
+            let prefixes = Self::prefix_levels(n, &support);
+            let tree: u128 = (0..n)
+                .map(|s| {
+                    let right = if s + 1 == n { 1 } else { prefixes[s + 1].len() };
+                    (prefixes[s].len() * 2 * right) as u128
+                })
+                .sum();
+            if tree < 1u128 << n {
+                support.sort_unstable_by_key(|&(i, _)| i);
+                return self.load_prefix_tree(&support, &prefixes, tree as usize);
+            }
+        }
+        let mut theta = crate::guard::try_vec(
+            1usize << n,
+            S::zero(),
+            &format!("mps load compilation ({n} qubits)"),
+        )?;
+        for &(i, a) in &support {
+            theta[i as usize] = a;
+        }
+        self.site_of_logical = (0..n).collect();
+        self.logical_at_site = (0..n).collect();
+        self.tensors = (0..n).map(|_| SiteTensor::zero_site()).collect();
+        if n == 0 {
+            return Ok(());
+        }
+        if n == 1 {
+            self.tensors[0] = SiteTensor {
+                left: 1,
+                right: 1,
+                data: theta,
+            };
+            self.note_peaks();
+            return Ok(());
+        }
+        self.split_window(0, n, 1, 1, theta)
+    }
+
+    /// Sorted distinct `c`-bit prefixes of the support, for `c = 0..n`.
+    fn prefix_levels(n: usize, support: &[(u64, S)]) -> Vec<Vec<u64>> {
+        (0..n)
+            .map(|c| {
+                let mask = (1u64 << c) - 1;
+                let mut level: Vec<u64> = support.iter().map(|&(i, _)| i & mask).collect();
+                level.sort_unstable();
+                level.dedup();
+                level
+            })
+            .collect()
+    }
+
+    /// Build the prefix-tree chain (site `s` maps prefix `l` and bit `p`
+    /// to prefix `l | p << s`; the last site carries the amplitudes), then
+    /// compress it to canonical form.
+    fn load_prefix_tree(
+        &mut self,
+        support: &[(u64, S)],
+        prefixes: &[Vec<u64>],
+        elements: usize,
+    ) -> Result<()> {
+        let n = prefixes.len();
+        crate::guard::admit(
+            elements.saturating_mul(std::mem::size_of::<S>()),
+            &format!("mps sparse load ({} terms, {n} qubits)", support.len()),
+        )?;
+        let mut tensors = Vec::with_capacity(n);
+        for s in 0..n - 1 {
+            let (here, next) = (&prefixes[s], &prefixes[s + 1]);
+            let mut data = vec![S::zero(); here.len() * 2 * next.len()];
+            for (r, &child) in next.iter().enumerate() {
+                let parent = child & ((1u64 << s) - 1);
+                let l = here.binary_search(&parent).expect("prefix closure");
+                let p = ((child >> s) & 1) as usize;
+                data[(l * 2 + p) * next.len() + r] = S::one();
+            }
+            tensors.push(SiteTensor {
+                left: here.len(),
+                right: next.len(),
+                data,
+            });
+        }
+        let last = &prefixes[n - 1];
+        let mut data = vec![S::zero(); last.len() * 2];
+        for &(i, a) in support {
+            let l = last
+                .binary_search(&(i & ((1u64 << (n - 1)) - 1)))
+                .expect("prefix closure");
+            data[l * 2 + ((i >> (n - 1)) & 1) as usize] = a;
+        }
+        tensors.push(SiteTensor {
+            left: last.len(),
+            right: 1,
+            data,
+        });
+        self.tensors = tensors;
+        self.site_of_logical = (0..n).collect();
+        self.logical_at_site = (0..n).collect();
+        self.note_peaks();
+        self.canonicalize()
+    }
+
+    /// Two SVD sweeps over the whole chain: right-to-left trims every bond
+    /// to its rank (truncating at the configured tolerance and cap, as a
+    /// gate split does), left-to-right leaves the sites left-isometric
+    /// with the norm on the last site.
+    fn canonicalize(&mut self) -> Result<()> {
+        let n = self.tensors.len();
+        let tol = self.config.trunc_tol;
+        for s in (1..n).rev() {
+            crate::guard::checkpoint()?;
+            let t = &self.tensors[s];
+            let (rows, cols) = (t.left, 2 * t.right);
+            let svd = svd_thin(rows, cols, &t.data, tol, 1e-14)?;
+            let right = t.right;
+            let chi = self.capped_rank(&svd);
+            let mut site = vec![S::zero(); chi * cols];
+            site.copy_from_slice(&svd.vt[..chi.min(svd.rank) * cols]);
+            let prev = &self.tensors[s - 1];
+            let left = prev.left;
+            let mut merged = vec![S::zero(); left * 2 * chi];
+            for lp in 0..left * 2 {
+                for k in 0..rows {
+                    let x = prev.data[lp * rows + k];
+                    if x.abs_sqr() == 0.0 {
+                        continue;
+                    }
+                    for c in 0..chi {
+                        let us = svd.u[k * svd.rank + c].scale(svd.sigma[c]);
+                        merged[lp * chi + c] = merged[lp * chi + c] + x * us;
+                    }
+                }
+            }
+            self.tensors[s] = SiteTensor {
+                left: chi,
+                right,
+                data: site,
+            };
+            self.tensors[s - 1] = SiteTensor {
+                left,
+                right: chi,
+                data: merged,
+            };
+        }
+        for s in 0..n - 1 {
+            crate::guard::checkpoint()?;
+            let t = &self.tensors[s];
+            let (rows, cols) = (t.left * 2, t.right);
+            let svd = svd_thin(rows, cols, &t.data, tol, 1e-14)?;
+            let left = t.left;
+            let chi = self.capped_rank(&svd);
+            let mut site = vec![S::zero(); rows * chi];
+            for row in 0..rows {
+                for c in 0..chi {
+                    site[row * chi + c] = svd.u[row * svd.rank + c];
+                }
+            }
+            let next = &self.tensors[s + 1];
+            let right = next.right;
+            let mut merged = vec![S::zero(); chi * 2 * right];
+            for c in 0..chi {
+                for k in 0..cols {
+                    let sv = svd.vt[c * cols + k].scale(svd.sigma[c]);
+                    if sv.abs_sqr() == 0.0 {
+                        continue;
+                    }
+                    for pr in 0..2 * right {
+                        let idx = (c * 2) * right + pr;
+                        merged[idx] = merged[idx] + sv * next.data[k * 2 * right + pr];
+                    }
+                }
+            }
+            self.tensors[s] = SiteTensor {
+                left,
+                right: chi,
+                data: site,
+            };
+            self.tensors[s + 1] = SiteTensor {
+                left: chi,
+                right,
+                data: merged,
+            };
+        }
+        self.note_peaks();
+        Ok(())
+    }
+}
+
 impl<S: Scalar> Backend<S> for MpsState<S> {
     fn name(&self) -> &str {
         "mps"
@@ -720,6 +956,7 @@ impl<S: Scalar> Backend<S> for MpsState<S> {
         self.routing_swaps = 0;
         self.peak_bond = 0;
         self.peak_elements = 0;
+        self.discarded = 0.0;
         self.reset_chain(n);
     }
 
@@ -740,30 +977,24 @@ impl<S: Scalar> Backend<S> for MpsState<S> {
                 });
             }
         }
-        // Identity layout, then compile the dense vector into the chain.
-        self.site_of_logical = (0..n).collect();
-        self.logical_at_site = (0..n).collect();
-        let mut theta = crate::guard::try_vec(
-            1usize << n,
-            S::zero(),
-            &format!("mps load compilation ({n} qubits)"),
-        )?;
-        for &(i, a) in entries {
-            theta[i as usize] = a;
+        // A refused or failed load leaves the state untouched: the layout
+        // and chain are restored on any error below.
+        let saved = (
+            self.tensors.clone(),
+            self.site_of_logical.clone(),
+            self.logical_at_site.clone(),
+            self.discarded,
+        );
+        let result = self.load_identity_layout(entries);
+        if result.is_err() {
+            (
+                self.tensors,
+                self.site_of_logical,
+                self.logical_at_site,
+                self.discarded,
+            ) = saved;
         }
-        if n == 0 {
-            return Ok(());
-        }
-        if n == 1 {
-            self.tensors[0] = SiteTensor {
-                left: 1,
-                right: 1,
-                data: theta,
-            };
-            self.note_peaks();
-            return Ok(());
-        }
-        self.split_window(0, n, 1, 1, theta)
+        result
     }
 
     fn memory_bytes(&self) -> usize {
