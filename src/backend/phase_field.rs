@@ -171,9 +171,12 @@ impl Field {
     }
 }
 
+/// The representation currently holding the state.
 #[derive(Debug, Clone)]
 enum Repr {
+    /// Inside the phase-field class: the exact phase polynomial.
     Field(Field),
+    /// After leaving the class: the flat `2^n` vector.
     Dense(DenseState<C64>),
 }
 

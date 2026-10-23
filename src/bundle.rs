@@ -1303,13 +1303,17 @@ pub mod vop {
     /// The identity.
     pub const IDENTITY: Vop = 0;
 
+    /// A single-qubit Clifford up to phase, as its conjugation action
+    /// on the Paulis.
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     struct Action {
         /// Image of X: Pauli index (0=X, 1=Y, 2=Z) and sign.
         xp: u8,
+        /// Sign of X's image (`true` = negative).
         xs: bool,
         /// Image of Z.
         zp: u8,
+        /// Sign of Z's image.
         zs: bool,
     }
 
@@ -1354,13 +1358,19 @@ pub mod vop {
         }
     }
 
+    /// The 24-element local Clifford group, enumerated once.
     struct Group {
+        /// Element `v` is `actions[v]`; index 0 is the identity.
         actions: Vec<Action>,
+        /// Multiplication table, row-major: `table[a·24 + b] = a ∘ b`.
         table: Vec<Vop>,
+        /// The index of H.
         h: Vop,
+        /// The index of S.
         s: Vop,
     }
 
+    /// The group, built on first use.
     fn group() -> &'static Group {
         static GROUP: OnceLock<Group> = OnceLock::new();
         GROUP.get_or_init(|| {
@@ -1950,9 +1960,13 @@ impl PolarityBundle {
 /// What an incoming gate matrix was recognized as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Recognized {
+    /// A single-qubit Clifford, as its vertex operator.
     Local(vop::Vop),
+    /// Controlled-Z.
     Cz,
+    /// CNOT, control on the first wire.
     Cx,
+    /// SWAP.
     Swap,
 }
 

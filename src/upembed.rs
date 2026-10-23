@@ -165,7 +165,7 @@ impl Line {
     /// constant amount of bit-twiddling per step, whatever the width.
     ///
     /// Works in the Hermitian convention `i^{|x∧z|}X^xZ^z` with a `±`
-    /// sign, the same one [`conjugate_by_step`] uses, so the two agree
+    /// sign, the same one [`conjugate_by_step`](crate::backend::conjugate_by_step) uses, so the two agree
     /// wire for wire wherever both apply; the raw phase is converted
     /// back out at the end. `contract_transport_matches_the_crates_own`
     /// pins that agreement against the crate's `u64` implementation.

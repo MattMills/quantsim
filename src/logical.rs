@@ -95,7 +95,9 @@ fn is_cx(m: &GateMatrix<C64>) -> bool {
 /// One expected encoder step, precomputed from the codes' circuits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum EncStep {
+    /// Hadamard on a qubit.
     H(usize),
+    /// CNOT `(control, target)`.
     Cx(usize, usize),
 }
 

@@ -365,8 +365,12 @@ pub struct CliffordFrameStats {
     pub frame_repairs: usize,
 }
 
+/// The matrix of an absorbed gate, kept for replay when the frame is
+/// flushed into the stored state.
 enum LoggedKernel<S: Scalar> {
+    /// A general gate matrix.
     Matrix(GateMatrix<S>),
+    /// A diagonal gate, as its diagonal entries.
     Diagonal(Vec<S>),
 }
 
@@ -393,20 +397,31 @@ impl<S: Scalar> LoggedKernel<S> {
 /// one of them, which is what inflated the frame's measured bytes 6–7×
 /// past dense and diluted its fitted growth base.
 struct LoggedGate<S: Scalar> {
+    /// The gate's interned matrix.
     kernel: Rc<LoggedKernel<S>>,
+    /// The wires it acted on, in kernel order.
     qubits: Vec<usize>,
 }
 
+/// The shared mutable state behind a [`CliffordFramedState`].
 struct Core<S: Scalar> {
+    /// The stored state `|s⟩`; the represented state is `C|s⟩`.
     state: SparseState<S>,
+    /// The frame Clifford `C`, as a stabilizer tableau.
     tableau: CliffordTableau,
+    /// The gates absorbed into `C` since the last flush, in order.
     log: Vec<LoggedGate<S>>,
     /// The interning vocabulary: every distinct kernel ever logged,
     /// stored once and shared by `Rc` across the log.
     kernel_cache: Vec<Rc<LoggedKernel<S>>>,
+    /// Running counters, reported by `stats()`.
     stats: CliffordFrameStats,
+    /// Whether native measurements repair the frame (`C ← C·V`) rather
+    /// than flushing it.
     repair: bool,
+    /// High-water mark of the stored state's memory, in bytes.
     peak_inner_memory: usize,
+    /// High-water mark of the stored state's nonzero count.
     peak_stored_support: usize,
 }
 

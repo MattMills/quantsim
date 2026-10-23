@@ -234,10 +234,14 @@ pub struct ScheduleTrace {
 /// the next free sequence number and the count of past-horizon skips.
 type StaticExpansion<S> = (Vec<(u64, u64, Item<S>)>, u64, u64);
 
+/// One event waiting in the time-ordered queue.
 #[derive(Debug, Clone)]
 enum Item<S: Scalar> {
+    /// A gate to apply.
     Gate {
+        /// The gate's matrix.
         kernel: ScheduledKernel<S>,
+        /// The wires it acts on.
         qubits: Vec<usize>,
     },
     /// An owned measurement event (static events are cloned in; feedback
@@ -246,9 +250,14 @@ enum Item<S: Scalar> {
     Measure { event: MeasureEvent<S> },
 }
 
+/// A queue entry, ordered by `(time, seq)` so simultaneous events keep
+/// their insertion order.
 struct HeapEntry<S: Scalar> {
+    /// When the item fires.
     time: u64,
+    /// Insertion sequence number — the tie-break among equal times.
     seq: u64,
+    /// What fires.
     item: Item<S>,
 }
 

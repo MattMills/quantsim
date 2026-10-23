@@ -20,10 +20,10 @@
 //!
 //! so every braid generator `σ_i = (1 + γ_iγ_{i+1})/√2` is
 //! `exp(iπ/4 · P)` for a Pauli `P` of weight **one or two**
-//! ([`majorana_local_gate`](crate::braided::majorana_local_gate),
+//! ([`majorana_local_gate`],
 //! verified against the dense generators at every width and basis state).
 //! A `±π/2` Pauli rotation is Clifford, so
-//! [`CliffordFramedState`](crate::backend::CliffordFramedState) **absorbs
+//! [`CliffordFramedState`] **absorbs
 //! it into the tableau with zero amplitude work**.
 //!
 //! # What that buys, and the honest shape of it
@@ -41,7 +41,7 @@
 //!   ~170 bytes per absorbed gate: 9 437 bytes at depth 50, 847 637 at
 //!   depth 5000. The *state* does not grow — support stays 1 and the
 //!   tableau is fixed-size — but
-//!   [`CliffordFramedState`](crate::backend::CliffordFramedState) keeps
+//!   [`CliffordFramedState`] keeps
 //!   the log so a later flush can replay it, so the footprint does.
 //!   Saying "the footprint is depth-independent" would be wrong, and it
 //!   was wrong in an earlier draft of this file.

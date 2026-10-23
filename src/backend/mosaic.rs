@@ -26,7 +26,7 @@
 //! * **Gates inside a region** run natively in that region's
 //!   representation.
 //! * **Gates across regions** merge the regions (the
-//!   [`FactoredState`](super::FactoredState) geometry, generalized:
+//!   [`FactoredState`] geometry, generalized:
 //!   factors are no longer dense blocks but arbitrary backends), with
 //!   the merged representation **chosen by measurement** — predicted
 //!   sparse cost (product of supports) against predicted dense cost

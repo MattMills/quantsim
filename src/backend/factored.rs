@@ -44,6 +44,8 @@ pub const FACTOR_MAX_QUBITS: usize = 63;
 /// Maximum register width (basis indices are `u64`).
 pub const FACTORED_MAX_QUBITS: usize = 63;
 
+/// One entanglement cluster: a dense state over a subset of the qubits,
+/// unentangled with every other factor.
 #[derive(Debug, Clone)]
 struct Factor<S: Scalar> {
     /// Global qubit ids; local bit `b` ↔ `qubits[b]`.

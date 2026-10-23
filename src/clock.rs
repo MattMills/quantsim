@@ -81,11 +81,17 @@ use crate::scalar::Scalar;
 /// after selector operations.
 const BRANCH_PRUNE_TOL: f64 = 1e-24;
 
+/// A branch's system state. Branches may share one by `Rc`; surgery on a
+/// state shared across different selector values is refused.
 type Shared<S> = Rc<RefCell<Box<dyn Backend<S>>>>;
 
+/// One term `weight · |sel⟩ ⊗ |state⟩` of the branched register.
 struct Branch<S: Scalar> {
+    /// The selector value this branch is conditioned on.
     sel: usize,
+    /// The branch amplitude.
     weight: S,
+    /// The system state in this branch.
     state: Shared<S>,
 }
 

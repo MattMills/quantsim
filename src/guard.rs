@@ -69,6 +69,7 @@ thread_local! {
 /// Fraction of measured availability the guard will admit (headroom for
 /// the allocator, the rest of the process, and measurement skew).
 const ADMIT_NUM: u128 = 15;
+/// Denominator of the admitted fraction (see [`ADMIT_NUM`]).
 const ADMIT_DEN: u128 = 16;
 
 /// Override the memory budget with an explicit byte limit, or restore

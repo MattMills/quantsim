@@ -67,10 +67,15 @@ pub struct FrameStats {
     pub flushes: usize,
 }
 
+/// The shared mutable state behind a framed backend.
 struct Core<S: Scalar> {
+    /// The wrapped representation holding the stored state.
     inner: Box<dyn Backend<S>>,
+    /// Per-qubit pending single-qubit frame; `None` is the identity.
     frames: Vec<Option<GateMatrix<S>>>,
+    /// Running counters, reported by `stats()`.
     stats: FrameStats,
+    /// High-water mark of the inner state's memory, in bytes.
     peak_inner_memory: usize,
 }
 

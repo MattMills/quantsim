@@ -11,9 +11,12 @@ use crate::scalar::Scalar;
 /// already past break-even).
 const PROMOTE_DENSITY_DENOM: u64 = 4;
 
+/// The representation currently holding the state.
 #[derive(Debug, Clone)]
 enum Repr<S: Scalar> {
+    /// Before promotion: a hash map of the nonzero amplitudes.
     Sparse(SparseState<S>),
+    /// After promotion: the flat `2^n` vector.
     Dense(DenseState<S>),
 }
 
