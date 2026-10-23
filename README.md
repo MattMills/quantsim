@@ -22,7 +22,7 @@ parts are swappable:
   [ROADMAP](ROADMAP.md)): truncated p-adics, dual numbers,
   Clifford scalars.
 - **State representation** — a [`Backend<S>`](src/backend/mod.rs) trait with
-  eight shipped implementations: **dense** state vector (the BQP reference),
+  nine shipped implementations: **dense** state vector (the BQP reference),
   **sparse** hash-map state, an **adaptive** backend that promotes sparse →
   dense at ¼ density, the **factored** backend (product of dense factors
   over qubit regions — memory tracks entanglement *clusters*), **MPS**
@@ -31,9 +31,11 @@ parts are swappable:
   isometry tree — memory tracks *renormalization structure*; see below),
   **bulk** (the hierarchy in maintained isometric gauge with an
   explicit bulk record — and **dynamic width**: boundary qubits grown
-  and released at runtime; see below), and **mosaic** (regions in
+  and released at runtime; see below), **mosaic** (regions in
   heterogeneous representations with measured merges and
-  refusal-driven migration; see below).
+  refusal-driven migration; see below), and **composite** (a
+  mixed-radix register as a product of regions in any backends, the
+  partition following the space as it grows and shrinks; see below).
   Four orthogonal compression axes — support, clusters, bonds,
   hierarchy — all conformance-verified against dense, with the bulk
   register adding dynamic width and a maintained gauge on the
@@ -1559,7 +1561,7 @@ refused by name. Standard qubit gates run on radix-2 sites through
 `SiteCircuit::place`. Boundaries: a qubit operation on a non-binary site,
 `pauli_expectation` on a mixed space, a swap across radices, and a
 mixed-radix space on any backend without native storage (everything but
-`dense` and `sparse` for now) all fail with `Error::UnsupportedForSpace`
+`dense`, `sparse` and `composite` for now) all fail with `Error::UnsupportedForSpace`
 — a register is never silently read as bits.
 
 ### Spaces over time
@@ -1608,7 +1610,7 @@ does **not** renormalize, and returns the dropped weight (summed
 is indefinite). `run_space` refuses a circuit that opts in, since it has
 nowhere to report the weight; `run_space_accounted` returns it.
 Boundaries: only the native stores (`dense` and `sparse` through their
-space constructors) change shape — every other backend refuses
+space constructors, and `composite`) change shape — every other backend refuses
 `Backend::transition` with `Error::UnsupportedForSpace`, and a circuit
 with transitions runs on the native store even when it starts on qubits.
 Merging non-adjacent sites is not offered (it is a site permutation, and
@@ -1616,6 +1618,64 @@ a permutation of unequal radices is not a swap). A path is not a larger
 space: the reachable states are bounded by the widest space on it, and
 that space sets the dense cost; what the path buys is that the register
 is only that wide while it needs to be.
+
+### Composite registers: several backends, one space
+
+A native store walks a space path by moving every amplitude to the new
+index map, so its cost is set by the widest space on the path. A
+[`CompositeState`](src/backend/composite.rs) (registered as `composite`,
+qubit and space constructors) holds the same space as a **product of
+regions**, each a sub-space in its own backend, and its cost is set by
+the entanglement the path creates instead:
+
+* `grow` is a new singleton region — `|ψ⟩ ⊗ |0⟩` is literally a
+  product — so no existing amplitude is touched;
+* a gate runs natively in the region owning its targets; a gate across
+  regions merges them by support enumeration, the merged store elected
+  dense or sparse from its measured support and the merge ledgered;
+* after every multi-site step each touched site gets a rank-1 test
+  against the rest of its region (the factored backend's qubit test,
+  generalized to any radix and any region backend), and a measured or
+  projected site is split out exactly — so an uncomputed workspace is
+  its own region in `|0⟩` again before it is released;
+* promote, demote, release, merge and split run in the owning region,
+  and a removed weight is the region's times the other regions' norms —
+  the exact global figure, refused or returned under the same
+  `WouldDiscard` contract;
+* `with_regions` seats caller-built regions of **any** backend (an MPS
+  on a qubit block beside radix-sparse qutrits); they evolve natively
+  until a crossing or a transition they cannot perform converts them,
+  ledgered.
+
+Measured (`cargo run --release --example composite_register`, peak
+memory along the path):
+
+| path | radix-dense | radix-sparse | composite |
+|---|---|---|---|
+| 12 superposed qutrits served in turn by one grown workspace (copy in, phase, uncompute; released at the end) | 24.3 MiB | 25.0 MiB | **4.3 KiB** (24.3 MiB with re-separation off) |
+| the same at 39 qutrits (space `3^40`) | — | — | **12.7 KiB** |
+| a 13-qutrit stream: grow, entangle with the predecessor, measure it | 24.3 MiB | **0.7 KiB** | 4.3 KiB |
+| the same stream without the measurements (entangles all 12 sites) | **8.1 MiB**, 53 ms | 25.0 MiB | 8.1 MiB, 464 ms (one region) |
+
+So the composite wins where the state is a product of superposed
+clusters, and only because regions re-separate: with the rank-1 test
+off, the reused workspace accretes every qutrit into one region and
+costs exactly what dense does. Where the state is basis-concentrated the
+sparse store is the right choice (the composite carries per-region
+overhead on top of the same handful of amplitudes), and where the path
+entangles everything the composite collapses to one dense region and
+pays dense memory plus about 9× dense time — the rank-1 tests and the
+per-step merge of each newly grown site cost an enumeration of the
+region every step.
+
+Boundaries: commutative algebras only (a product of regions is a tensor
+product only if a gate on one factor commutes past the other factors'
+amplitudes; ℍ and 𝕆 are refused by name); regions are product factors,
+so entanglement across them forces a merge (no cross-region bond); the
+re-separation test is per site, so two entangled blocks that factor as
+blocks stay merged; and the virtual space is still a `Space`, so its
+dimension must fit the `u64` basis index even though the composite
+never allocates it.
 
 ## Conventions
 
@@ -1637,7 +1697,7 @@ surfaces both instead of papering over them.
 
 ## Testing
 
-`cargo test` runs 1212 tests (91 unit + 1111 across one hundred
+`cargo test` runs 1224 tests (93 unit + 1121 across one hundred and one
 integration suites + 10 doctests; one more — the 17 s measurement that
 the fifth CD doubling keeps the dual-algebra span full — is `#[ignore]`d
 and runs with `-- --ignored`);
@@ -1949,6 +2009,21 @@ entirely trivial accessors and defensive guards:
   bit-for-bit unchanged, or dropping exactly the oracle's weight when
   opted in; dense and sparse agreeing along random 60-step paths over ℂ
   and ℍ with `weight + discarded = 1`; and every refusal by name.
+- **composite_register** — full-registry conformance from singleton
+  qubit regions; agreement with radix-dense amplitude by amplitude along
+  twelve random 80-step paths of gates, measurements and all six
+  transitions with lossy steps opted in (dropped weight equal to dense's;
+  merges and separations both exercised, 400 seeds checked once
+  locally); grow as a new region touching no amplitude; an uncomputed
+  workspace separated before its release, and a reused workspace that
+  peaks at one pair (dim 9) with re-separation and at `3^9` without;
+  refusals and drops carrying the global weight (region weight × the
+  other regions' norms); merge across regions then split re-separating a
+  product and keeping an entangled split; measurement splitting the site
+  out, seed-for-seed with dense; an MPS GHZ region with radix regions,
+  the crossing ledgered as `mps+radix-sparse → radix-sparse` on support
+  2 of a `3·2^24` region; and a 40-qutrit stream (space `3^40`) in under
+  64 KiB.
 - **hermitian2** — the signature of `det` measured per algebra (ℝ, ℂ,
   split-complex, ℍ, split-quaternions, 𝕆, 𝕊) by diagonalizing its Gram
   matrix; `born_weight` agreeing with `Re(z·z̄)` and the trace form with
