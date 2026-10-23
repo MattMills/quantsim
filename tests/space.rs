@@ -276,7 +276,7 @@ fn qubit_gates_run_on_the_binary_sites_of_a_mixed_register() {
     ];
     oracle.apply_k(&[0, 6], &cx).unwrap();
 
-    for backend in ["dense", "sparse"] {
+    for backend in ["dense", "sparse", "composite"] {
         let state = sim.run_space(backend, &c).unwrap();
         for index in 0..space.dim() as u64 {
             let want = oracle.amplitude(&space.decode(index)).unwrap();
@@ -477,6 +477,10 @@ fn circuits_refuse_the_wrong_shapes() {
     ));
     assert_eq!(
         sim.backends().space_names(),
-        vec!["dense".to_string(), "sparse".to_string()]
+        vec![
+            "composite".to_string(),
+            "dense".to_string(),
+            "sparse".to_string()
+        ]
     );
 }
