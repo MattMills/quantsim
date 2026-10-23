@@ -448,7 +448,9 @@ pub fn max_amplitude_deviation<S: Scalar>(a: &dyn Backend<S>, b: &dyn Backend<S>
     dev
 }
 
+/// A registered width-addressed backend constructor.
 type BackendCtor<S> = Box<dyn Fn(usize) -> Result<Box<dyn Backend<S>>> + Send + Sync>;
+/// A registered [`Space`]-addressed backend constructor.
 type SpaceCtor<S> = Box<dyn Fn(Space) -> Result<Box<dyn Backend<S>>> + Send + Sync>;
 
 /// A name → constructor catalog of state representations, mirroring the
@@ -711,6 +713,8 @@ pub(crate) fn sub_index(index: u64, qubits: &[usize]) -> usize {
 /// over-budget gate is caught within a fraction of a second.
 const CHECK_STRIDE: usize = 1 << 20;
 
+/// Apply the 2×2 matrix `m` to qubit `q` of a flat amplitude vector, in
+/// place.
 pub(crate) fn apply_single_in_place<S: Scalar>(
     amps: &mut [S],
     m: &GateMatrix<S>,
@@ -734,6 +738,8 @@ pub(crate) fn apply_single_in_place<S: Scalar>(
     Ok(())
 }
 
+/// Apply a `2^k × 2^k` matrix to `qubits` (first listed = least
+/// significant matrix index bit) of a flat amplitude vector, in place.
 pub(crate) fn apply_general_in_place<S: Scalar>(
     amps: &mut [S],
     m: &GateMatrix<S>,
@@ -766,6 +772,8 @@ pub(crate) fn apply_general_in_place<S: Scalar>(
     Ok(())
 }
 
+/// Multiply a flat amplitude vector, in place, by the diagonal gate whose
+/// `2^k` entries are indexed by the bits of `qubits`.
 pub(crate) fn apply_diagonal_in_place<S: Scalar>(
     amps: &mut [S],
     entries: &[S],

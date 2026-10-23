@@ -66,6 +66,7 @@ pub const MEMO_CAPACITY: usize = 1 << 18;
 
 // ── the node ─────────────────────────────────────────────────────────
 
+/// What a [`Node`] holds: 64 bits directly, or two half-range children.
 #[derive(Debug)]
 enum Kind {
     /// 64 indices, `base .. base + 64`.
@@ -74,6 +75,7 @@ enum Kind {
     Branch(Support, Support),
 }
 
+/// An interned node of the support tree.
 #[derive(Debug)]
 struct Node {
     /// 0 for a leaf; a branch at height `h` spans `64·2^h` indices.
@@ -82,6 +84,7 @@ struct Node {
     weight: u32,
     /// Cached hash — hashing a support never walks.
     hash: u64,
+    /// The node's contents.
     kind: Kind,
 }
 
@@ -378,11 +381,16 @@ fn ptr_eq(a: &Support, b: &Support) -> bool {
 
 // ── memoized combination ─────────────────────────────────────────────
 
+/// A binary set operation on supports; part of the memo key.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Op {
+    /// Symmetric difference.
     Xor,
+    /// Intersection.
     And,
+    /// Union.
     Or,
+    /// Difference: in the left operand, not the right.
     Without,
 }
 

@@ -380,6 +380,7 @@ impl PairwiseSignature {
     }
 }
 
+/// The three Pauli axes, in signature-row order.
 const AXES: [Pauli; 3] = [Pauli::X, Pauli::Y, Pauli::Z];
 
 /// Measure the full pairwise signature of a state.

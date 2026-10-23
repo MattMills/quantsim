@@ -3,10 +3,10 @@
 //!
 //! A [`BulkState`] keeps the register as a perfect binary tree of
 //! **isometries** over a power-of-two capacity, with every scalar of
-//! state weight held in one explicit **bulk record** — the [`top`]
+//! state weight held in one explicit **bulk record** — the [`top`](BulkState::top)
 //! coefficient vector at the root. Reading the structure inward from
 //! the physical qubits (the *boundary*, at the leaves), each level is
-//! an isometric coarse-graining; reading it outward from [`top`], each
+//! an isometric coarse-graining; reading it outward from [`top`](BulkState::top), each
 //! level is a projective refinement. The state is never stored flat:
 //! it **is** the stack of per-depth isometries applied to the bulk
 //! record, and the image subspaces of the partial stacks form a nested
@@ -130,13 +130,19 @@ impl Default for BulkConfig {
 /// grown ones.
 #[derive(Debug, Clone)]
 struct Node<S: Scalar> {
+    /// First qubit of the span this subtree covers.
     lo: usize,
+    /// One past the last qubit of the span.
     hi: usize,
+    /// Up-bond dimension `u` (rows of the isometry).
     bond: usize,
+    /// `A[u][p]` for a leaf, the combiner `W[u][a][b]` otherwise.
     tensor: Vec<S>,
+    /// Left and right subtrees; `None` exactly for a single-qubit leaf.
     children: Children<S>,
 }
 
+/// A node's two subtrees, or `None` for a leaf.
 type Children<S> = Option<(Box<Node<S>>, Box<Node<S>>)>;
 
 impl<S: Scalar> Node<S> {

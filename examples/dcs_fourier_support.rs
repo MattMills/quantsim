@@ -1,7 +1,17 @@
+//! The Fourier support of the DCS output distribution.
+//!
+//! Walsh–Hadamard-transforms the measured distribution `p(x)` of
+//! [`Dcs::scaled`] circuits at `n = 6..14` and reports, per width (with
+//! its T-count), how many coefficients are nonzero, whether that support
+//! is closed under XOR (a GF(2) subspace), its rank and span size, and
+//! how many distinct coefficient magnitudes occur.
+//!
+//! Run with `cargo run --release --example dcs_fourier_support`.
 use quantsim::dcs::{self, Dcs};
 use quantsim::prelude::*;
 use std::collections::HashSet;
 
+/// In-place unnormalized Walsh–Hadamard transform (`v.len()` a power of 2).
 fn fwht(v: &mut [f64]) {
     let n = v.len();
     let mut h = 1;

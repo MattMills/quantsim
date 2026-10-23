@@ -433,6 +433,8 @@ impl<S: Scalar> BoundCircuit<S> {
 
 // Convenience constructors for every standard gate. All are thin wrappers
 // over [`Circuit::gate`]; validity is checked at bind time.
+
+/// Generate a `Circuit` builder method for each parameterless gate.
 macro_rules! fixed_gates {
     ($( $(#[$doc:meta])* $fn_name:ident($name:literal, $($q:ident),+ ); )*) => {
         impl<S: Scalar> Circuit<S> {
@@ -446,6 +448,7 @@ macro_rules! fixed_gates {
     };
 }
 
+/// Generate a `Circuit` builder method for each parameterized gate.
 macro_rules! param_gates {
     ($( $(#[$doc:meta])* $fn_name:ident($name:literal, [$($q:ident),+], [$($p:ident),+]); )*) => {
         impl<S: Scalar> Circuit<S> {

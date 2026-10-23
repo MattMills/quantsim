@@ -780,12 +780,16 @@ pub mod constellation {
         sign * a[n - 1][n - 1]
     }
 
+    /// Lattice data computed once on first use.
     struct Ctx {
         /// Adjugate of the basis-column matrix: coordinates are
         /// `adj·p / det`, exact for lattice points.
         adj: [[i64; 8]; 8],
+        /// Determinant of the basis-column matrix.
         det: i64,
+        /// Canonical representative of each of the 256 coset classes.
         reps: [Point; 256],
+        /// The shell each class representative lies on.
         shells: [Shell; 256],
     }
 

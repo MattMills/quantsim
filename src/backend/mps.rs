@@ -68,9 +68,12 @@ impl Default for MpsConfig {
     }
 }
 
+/// One site of the chain: a `left × 2 × right` tensor.
 #[derive(Debug, Clone)]
 struct SiteTensor<S: Scalar> {
+    /// Left bond dimension.
     left: usize,
+    /// Right bond dimension.
     right: usize,
     /// Index `((l * 2) + p) * right + r`.
     data: Vec<S>,
